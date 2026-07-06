@@ -43,26 +43,26 @@ O **Support Agent** é um bot de atendimento que atua como intermediário entre 
 O projeto adota uma arquitetura hexagonal (Ports & Adapters), onde o núcleo de domínio define contratos (interfaces/ports) e a infraestrutura fornece implementações concretas (adapters):
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      Use Cases                          │
-│              ProcessAgentResponseUseCase                 │
-│                                                         │
-│    ┌──────────┐   ┌──────────┐   ┌──────────────┐      │
-│    │ILLMProvider│  │IMCPClient │  │IChatProvider  │      │
-│    └─────┬────┘   └─────┬────┘   └──────┬───────┘      │
-│          │              │               │               │
-└──────────┼──────────────┼───────────────┼───────────────┘
-           │              │               │
-     ┌─────▼────┐   ┌────▼─────┐   ┌─────▼───────┐
-     │  OpenAI   │   │   MCP    │   │    Chat     │
-     │  Adapter  │   │  HTTP    │   │   Provider  │
-     ├──────────┤   │  Adapter │   │  (a definir)│
-     │ Anthropic │   └──────────┘   └─────────────┘
-     │  Adapter  │
-     ├──────────┤
-     │ DeepSeek  │
-     │(via OpenAI)│
-     └──────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             Use Cases                                      │
+│                     ProcessAgentResponseUseCase                             │
+│                                                                            │
+│  ┌──────────────┐  ┌────────────┐  ┌──────────────┐  ┌────────────────┐   │
+│  │ ILLMProvider  │  │ IMCPClient │  │ IChatProvider │  │ IQueueService  │   │
+│  └──────┬───────┘  └─────┬──────┘  └──────┬───────┘  └───────┬────────┘   │
+│         │                │                │                   │            │
+└─────────┼────────────────┼────────────────┼───────────────────┼────────────┘
+          │                │                │                   │
+    ┌─────▼───────┐  ┌─────▼──────┐  ┌─────▼─────────┐   ┌─────▼─────────┐
+    │   OpenAI    │  │    MCP     │  │    Google     │   │    QStash     │
+    │   Adapter   │  │   HTTP     │  │  ChatAdapter  │   │   Adapter     │
+    ├─────────────┤  │  Adapter   │  └───────────────┘   └───────────────┘
+    │  Anthropic  │  └────────────┘
+    │   Adapter   │
+    ├─────────────┤
+    │   DeepSeek  │
+    │(via OpenAI) │
+    └─────────────┘
 ```
 
 ---
@@ -85,12 +85,16 @@ support-agent/
 │   │       └── IQueueService.ts   # Port para processamento assíncrono (filas)
 │   │
 │   ├── infrastructure/            # Implementações concretas dos ports
+│   │   ├── chat/                  # Adapters de provedores de chat
+│   │   │   └── GoogleChatAdapter.ts   # Envio de mensagens via Google Chat Spaces API
 │   │   ├── llm/                   # Adapters de provedores LLM
 │   │   │   ├── AnthropicAdapter.ts    # Implementação para Claude (Anthropic)
 │   │   │   ├── OpenAIAdapter.ts       # Implementação para GPT / DeepSeek
 │   │   │   └── LLMFactory.ts         # Factory para criação do provider correto
-│   │   └── mcp/                   # Adapter de comunicação MCP
-│   │       └── MCPHttpAdapter.ts  # Cliente HTTP JSON-RPC 2.0 para servidor MCP
+│   │   ├── mcp/                   # Adapter de comunicação MCP
+│   │   │   └── MCPHttpAdapter.ts  # Cliente HTTP JSON-RPC 2.0 para servidor MCP
+│   │   └── queue/                 # Adapters de provedores de fila
+│   │       └── QStashAdapter.ts   # Despacho assíncrono via QStash (Upstash)
 │   │
 │   ├── repositories/              # Camada de persistência (reservada)
 │   │
@@ -150,6 +154,14 @@ Implementações concretas dos ports:
   - `tools/list` — Descobre dinamicamente as ferramentas disponíveis para o tenant
   - `tools/call` — Executa uma ferramenta específica passando nome e argumentos
   - `ensureInitialized()` — Conecta automaticamente se o handshake ainda não foi realizado
+
+#### Chat Adapter
+
+- **`GoogleChatAdapter`** — Envia mensagens para uma thread do Google Chat Spaces via API REST v1. Utiliza `google-auth-library` para autenticação OAuth2 via Application Default Credentials (ADC). O `threadId` é usado no formato `spaces/AAAAxxxx/threads/YYYYyyyy`.
+
+#### Queue Adapter
+
+- **`QStashAdapter`** — Despacha mensagens para processamento assíncrono via QStash (Upstash). Publica no endpoint `https://qstash.upstash.io/v1/publish/{workerUrl}` com header `Upstash-Retries: 3` para retentativas automáticas.
 
 ### Use Cases
 
@@ -265,11 +277,12 @@ sequenceDiagram
 ## Stack Tecnológica
 
 | Tecnologia | Versão | Função |
-|---|---|---|
+|---|---|---|---|
 | **TypeScript** | 6.x | Linguagem principal |
 | **Node.js** | ≥ 20 | Runtime (ESM nativo) |
 | **OpenAI SDK** | ^6.45.0 | Client para APIs compatíveis com OpenAI |
 | **Anthropic SDK** | ^0.110.0 | Client para API da Anthropic |
+| **google-auth-library** | ^10.9.0 | Autenticação OAuth2 para Google APIs |
 | **tsx** | ^4.23.0 | Execução direta de TypeScript em dev |
 
 ### Configuração TypeScript
@@ -287,6 +300,8 @@ sequenceDiagram
 - **npm** ≥ 10.x
 - Chaves de API para pelo menos um provedor LLM (OpenAI, Anthropic ou DeepSeek)
 - URL de um servidor MCP ativo (para integração com ferramentas)
+- Google Cloud service account com escopo `chat.messages.create` (para Google Chat)
+- Token de API do **QStash (Upstash)** e URL pública de um worker (para fila assíncrona)
 
 ---
 
@@ -328,6 +343,27 @@ const mcpClient = new MCPHttpAdapter(
 );
 ```
 
+Para o Google Chat (requer Application Default Credentials configurado):
+
+```typescript
+import { GoogleChatAdapter } from './infrastructure/chat/GoogleChatAdapter.js';
+
+const chat = new GoogleChatAdapter();
+await chat.sendMessage('spaces/AAAAxxx/threads/YYYYyyy', 'Mensagem de resposta');
+```
+
+Para a fila QStash:
+
+```typescript
+import { QStashAdapter } from './infrastructure/queue/QStashAdapter.js';
+
+const queue = new QStashAdapter(
+  'qstash-api-token',
+  'https://worker.example.com/process'
+);
+await queue.dispatchMessageProcessing('workspace-1', 'thread-1', 'Payload');
+```
+
 ---
 
 ## Status do Projeto
@@ -343,8 +379,8 @@ const mcpClient = new MCPHttpAdapter(
 | DeepSeek (via OpenAI) | ✅ Implementado |
 | Google Adapter | ⬜ Pendente |
 | MCP HTTP Adapter | ✅ Implementado |
-| ChatProvider Adapter | ⬜ Pendente (interface definida) |
-| QueueService Adapter | ⬜ Pendente (interface definida) |
+| ChatProvider Adapter (Google Chat) | ✅ Implementado |
+| QueueService Adapter (QStash) | ✅ Implementado |
 | Camada de Repositórios | ⬜ Pendente |
 | Testes unitários | ⬜ Pendente |
 | Entry point (`index.ts`) | ⬜ Pendente |
