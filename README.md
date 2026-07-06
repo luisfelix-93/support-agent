@@ -75,6 +75,7 @@ support-agent/
 │   ├── domain/                     # Núcleo de domínio (entidades + regras de negócio)
 │   │   ├── ChatContext.ts          # Contexto de conversação (thread + mensagens)
 │   │   ├── LLMConfig.ts           # Tipagem de configuração do provedor LLM
+│   │   ├── MCPServerCapabilities.ts # Tipos do handshake MCP (ServerInfo, Capabilities, InitializeResult)
 │   │   ├── Message.ts             # Entidade de mensagem (id, role, content, timestamp)
 │   │   ├── ToolCall.ts            # Entidade de chamada de ferramenta (name, parameters)
 │   │   └── ports/                 # Interfaces (contratos de fronteira)
@@ -110,10 +111,11 @@ support-agent/
 Contém as entidades centrais e as regras de negócio do sistema. Não possui dependência de nenhuma biblioteca externa.
 
 | Entidade | Descrição |
-|---|---|
+|---|---|---|
 | `Message` | Representa uma mensagem individual com `id`, `role` (user/assistant/system), `content` e `timestamp`. |
 | `ChatContext` | Agrupa um `threadID`, `workspaceId` e o histórico de `Message[]`. Contém lógica para gerenciamento do contexto (ex: futura limitação de tokens). |
 | `ToolCall` | Representa uma requisição de execução de ferramenta com `name` e `parameters`. |
+| `MCPServerInfo` / `MCPCapabilities` / `MCPInitializeResult` | Tipos do resultado do handshake MCP: identificação do servidor, capacidades suportadas e versão do protocolo negociada. |
 | `LLMConfig` | Interface de configuração com `provider`, `apiKey` e `model` opcional. Suporta os tipos: `openai`, `anthropic`, `google`, `deepseek`. |
 
 ### Ports (Interfaces)
@@ -121,9 +123,9 @@ Contém as entidades centrais e as regras de negócio do sistema. Não possui de
 Contratos que definem as fronteiras do domínio — implementados pela camada de infraestrutura.
 
 | Port | Responsabilidade |
-|---|---|
+|---|---|---|
 | `ILLMProvider` | Gera respostas a partir do `ChatContext`. Retorna um `LLMResponse` discriminado: `{ type: 'text', content }` ou `{ type: 'tool_call', tool }`. |
-| `IMCPClient` | Comunica-se com o servidor MCP para listar ferramentas disponíveis (`listTools`) e executar ferramentas (`executeTool`). |
+| `IMCPClient` | Executa o handshake MCP (`connect`), verifica status da conexão (`isConnected`), descobre ferramentas (`listTools`) e executa ferramentas (`executeTool`). |
 | `IChatProvider` | Envia mensagens para o canal de chat do usuário final (ex: Slack, WhatsApp, widget web). |
 | `IQueueService` | Despacha mensagens para processamento assíncrono via fila (ex: QStash). |
 
@@ -142,9 +144,12 @@ Implementações concretas dos ports:
 
 #### MCP Adapter
 
-- **`MCPHttpAdapter`** — Cliente HTTP que se comunica com um servidor MCP via JSON-RPC 2.0. Implementa dois métodos:
+- **`MCPHttpAdapter`** — Cliente HTTP que se comunica com um servidor MCP via JSON-RPC 2.0. Implementa o handshake completo conforme a especificação MCP:
+  - `connect()` — Handshake em 3 etapas: envia `initialize`, recebe capabilities do servidor, envia `notifications/initialized`
+  - `isConnected()` — Verifica se o handshake foi concluído
   - `tools/list` — Descobre dinamicamente as ferramentas disponíveis para o tenant
   - `tools/call` — Executa uma ferramenta específica passando nome e argumentos
+  - `ensureInitialized()` — Conecta automaticamente se o handshake ainda não foi realizado
 
 ### Use Cases
 
@@ -170,25 +175,49 @@ Implementações concretas dos ports:
 
 ## Integração MCP
 
-A comunicação com o servidor MCP segue o protocolo **JSON-RPC 2.0** sobre HTTP:
+A comunicação com o servidor MCP segue o protocolo **JSON-RPC 2.0** sobre HTTP. Antes de qualquer operação, o cliente executa um **handshake de 3 etapas**:
+
+```jsonc
+// Etapa 1 — Client → Server: initialize (request com id)
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {},
+    "clientInfo": { "name": "support-agent", "version": "1.0.0" }
+  }
+}
+
+// Etapa 2 — Server → Client: resposta com capabilities e serverInfo
+
+// Etapa 3 — Client → Server: notifications/initialized (notification sem id)
+{
+  "jsonrpc": "2.0",
+  "method": "notifications/initialized"
+}
+```
+
+Após o handshake, as operações regulares podem ser executadas:
 
 ```jsonc
 // Listar ferramentas
-{ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }
+{ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }
 
 // Executar ferramenta
 {
   "jsonrpc": "2.0",
-  "id": 1719000000,
+  "id": 3,
   "method": "tools/call",
   "params": {
-    "name": "check_logs",
-    "arguments": { "service": "api-gateway" }
+    "name": "query_loki_logs",
+    "arguments": { "query": "{app=\"api\"}", "since_minutes": 30 }
   }
 }
 ```
 
-O adapter trata respostas de erro HTTP (401, 403, 429) e erros no nível JSON-RPC (`data.error`).
+O adapter trata respostas de erro HTTP (401, 403, 429) e erros no nível JSON-RPC (`data.error`). Caso `listTools()` ou `executeTool()` sejam chamados sem `connect()` prévio, o adapter executa o handshake automaticamente.
 
 ---
 
@@ -204,6 +233,14 @@ sequenceDiagram
 
     User->>Chat: Envia mensagem
     Chat->>UC: execute(context)
+    
+    rect rgb(230, 245, 255)
+        Note over UC,MCP: Handshake MCP (se não conectado)
+        UC->>MCP: initialize
+        MCP-->>UC: capabilities + serverInfo
+        UC->>MCP: notifications/initialized
+    end
+    
     UC->>MCP: listTools()
     MCP-->>UC: tools disponíveis
     UC->>LLM: generateResponse(context)

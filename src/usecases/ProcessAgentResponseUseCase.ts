@@ -14,6 +14,12 @@ export class ProcessAgentResponseUse {
 
     async execute(context : ChatContext): Promise<void> {
         try {
+           // 0. Garante que o handshake MCP foi realizado antes de qualquer operação
+            if (!this.mcpClient.isConnected()) {
+                const initResult = await this.mcpClient.connect();
+                console.log(`[Agent] Conectado ao MCP Server: ${initResult.serverInfo.name} v${initResult.serverInfo.version}`);
+            }
+
            // 1. O bot pergunta ao MCP quais as ferramentas estão disponíveis e ativas
             const availableToolsResponse = await this.mcpClient.listTools();
             const availableTools = availableToolsResponse.tools;
