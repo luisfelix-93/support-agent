@@ -13,7 +13,10 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
   - [Domain](#domain)
   - [Ports (Interfaces)](#ports-interfaces)
   - [Infrastructure](#infrastructure)
+  - [Repositories](#repositories)
   - [Use Cases](#use-cases)
+- [API Layer](#api-layer)
+- [Multi-Tenant](#multi-tenant)
 - [Provedores LLM Suportados](#provedores-llm-suportados)
 - [Integração MCP](#integração-mcp)
 - [Fluxo de Processamento](#fluxo-de-processamento)
@@ -77,16 +80,21 @@ support-agent/
 │   │   ├── LLMConfig.ts           # Tipagem de configuração do provedor LLM
 │   │   ├── MCPServerCapabilities.ts # Tipos do handshake MCP (ServerInfo, Capabilities, InitializeResult)
 │   │   ├── Message.ts             # Entidade de mensagem (id, role, content, timestamp)
+│   │   ├── Tenant.ts             # Entidade de tenant (workspaceId, llmConfig, mcpConfig, isActive)
 │   │   ├── ToolCall.ts            # Entidade de chamada de ferramenta (name, parameters)
 │   │   └── ports/                 # Interfaces (contratos de fronteira)
 │   │       ├── IChatProvider.ts   # Port para envio de mensagens ao canal de chat
+│   │       ├── IChatRepository.ts # Port para persistência do ChatContext
 │   │       ├── ILLMProvider.ts    # Port para geração de respostas via LLM
 │   │       ├── IMCPClient.ts      # Port para comunicação com servidor MCP
-│   │       └── IQueueService.ts   # Port para processamento assíncrono (filas)
+│   │       ├── IQueueService.ts   # Port para processamento assíncrono (filas)
+│   │       └── ITenantRepository.ts # Port para persistência de tenants
 │   │
 │   ├── infrastructure/            # Implementações concretas dos ports
 │   │   ├── chat/                  # Adapters de provedores de chat
 │   │   │   └── GoogleChatAdapter.ts   # Envio de mensagens via Google Chat Spaces API
+│   │   ├── database/              # Conexão com banco de dados
+│   │   │   └── MongoConnection.ts # Singleton de conexão MongoDB
 │   │   ├── llm/                   # Adapters de provedores LLM
 │   │   │   ├── AnthropicAdapter.ts    # Implementação para Claude (Anthropic)
 │   │   │   ├── OpenAIAdapter.ts       # Implementação para GPT / DeepSeek
@@ -96,7 +104,9 @@ support-agent/
 │   │   └── queue/                 # Adapters de provedores de fila
 │   │       └── QStashAdapter.ts   # Despacho assíncrono via QStash (Upstash)
 │   │
-│   ├── repositories/              # Camada de persistência (reservada)
+│   ├── repositories/              # Implementações concretas dos repositórios
+│   │   ├── ChatRepository.ts      # Persistência do ChatContext no MongoDB (coleção threads)
+│   │   └── TenantRepository.ts    # Persistência de tenants no MongoDB (coleção tenants)
 │   │
 │   └── usecases/                  # Orquestração de lógica de aplicação
 │       └── ProcessAgentResponseUseCase.ts  # Fluxo principal do agente
@@ -118,7 +128,6 @@ support-agent/
 ├── api/
 │   └── index.ts                       # Entry point para Vercel Serverless Functions
 ├── package.json
-├── tsconfig.json
 ├── vercel.json                        # Configurações de rotas Vercel
 ├── .env.example                       # Variáveis de ambiente
 └── README.md
@@ -136,6 +145,7 @@ Contém as entidades centrais e as regras de negócio do sistema. Não possui de
 |---|---|---|
 | `Message` | Representa uma mensagem individual com `id`, `role` (user/assistant/system), `content` e `timestamp`. |
 | `ChatContext` | Agrupa um `threadID`, `workspaceId` e o histórico de `Message[]`. Contém lógica para gerenciamento do contexto (ex: futura limitação de tokens). |
+| `Tenant` | Representa um workspace/tenant com `workspaceId`, `llmConfig`, `mcpConfig` e `isActive`. Permite multi-tenant com configurações isoladas. |
 | `ToolCall` | Representa uma requisição de execução de ferramenta com `name` e `parameters`. |
 | `MCPServerInfo` / `MCPCapabilities` / `MCPInitializeResult` | Tipos do resultado do handshake MCP: identificação do servidor, capacidades suportadas e versão do protocolo negociada. |
 | `LLMConfig` | Interface de configuração com `provider`, `apiKey` e `model` opcional. Suporta os tipos: `openai`, `anthropic`, `google`, `deepseek`. |
@@ -150,6 +160,8 @@ Contratos que definem as fronteiras do domínio — implementados pela camada de
 | `IMCPClient` | Executa o handshake MCP (`connect`), verifica status da conexão (`isConnected`), descobre ferramentas (`listTools`) e executa ferramentas (`executeTool`). |
 | `IChatProvider` | Envia mensagens para o canal de chat do usuário final (ex: Slack, WhatsApp, widget web). |
 | `IQueueService` | Despacha mensagens para processamento assíncrono via fila (ex: QStash). |
+| `IChatRepository` | Persiste e recupera o `ChatContext` (histórico de conversas) por `threadId` + `workspaceId`. |
+| `ITenantRepository` | Persiste e recupera configurações de `Tenant` por `workspaceId`. |
 
 ### Infrastructure
 
@@ -181,14 +193,66 @@ Implementações concretas dos ports:
 
 - **`QStashAdapter`** — Despacha mensagens para processamento assíncrono via QStash (Upstash). Publica no endpoint `https://qstash.upstash.io/v1/publish/{workerUrl}` com header `Upstash-Retries: 3` para retentativas automáticas.
 
+#### Database
+
+- **`MongoConnection`** — Singleton que gerencia a conexão com MongoDB. Método `connect(uri, dbName)` inicia a conexão; `getDb()` retorna a instância do banco para consumo dos repositórios.
+
+### Repositories
+
+Implementações concretas dos ports de repositório utilizando MongoDB:
+
+- **`ChatRepository`** — Operações na coleção `threads`:
+  - `findById(threadId, workspaceId)` — Busca o histórico da conversa; retorna `ChatContext` vazio se não existir
+  - `save(context)` — Upsert do `ChatContext` com mensagens, `updatedAt` e chave composta `{ threadId, workspaceId }`
+
+- **`TenantRepository`** — Operações na coleção `tenants`:
+  - `findByWorkspaceId(workspaceId)` — Busca configuração do tenant; retorna `Tenant` hidratado ou `null`
+  - `save(tenant)` — Upsert do documento `Tenant`
+
 ### Use Cases
 
-- **`ProcessAgentResponseUseCase`** — Orquestra o fluxo completo de um ciclo de atendimento:
-  1. Consulta as ferramentas disponíveis no MCP
-  2. Envia o contexto para a LLM, que decide se responde direto ou requisita uma ferramenta
-  3. Se a LLM solicitou tool call → executa a ferramenta via MCP
-  4. Injeta o resultado como mensagem de sistema e re-envia para a LLM formular a resposta final
-  5. Envia a resposta final ao canal de chat
+- **`ProcessAgentResponseUseCase`** — Orquestra o fluxo completo de um ciclo de atendimento, agora consumindo repositórios e instanciando provedores dinamicamente por tenant:
+
+  **Assinatura:** `execute(workspaceId, threadId, userText): Promise<void>`
+
+  1. Busca o `Tenant` via `TenantRepository` — se inativo, recusa o atendimento
+  2. Busca o `ChatContext` via `ChatRepository` (já hidratado com histórico ou vazio)
+  3. Adiciona a mensagem do usuário ao contexto
+  4. Instancia `LLMFactory` e `MCPHttpAdapter` com as configs do tenant
+  5. Ciclo LLM → MCP → LLM:
+     - LLM decide entre texto ou tool_call
+     - Se tool_call → executa via MCP → adiciona resultado ao contexto → LLM novamente
+  6. Adiciona a resposta do assistente ao histórico
+  7. Persiste o contexto via `ChatRepository.save()`
+  8. Envia a resposta final ao canal de chat
+
+---
+
+## Multi-Tenant
+
+Cada workspace do Google Chat é tratado como um **tenant independente**. As configurações de LLM (provedor, modelo, chave de API) e MCP (URL do servidor, chave de API) são armazenadas por tenant no MongoDB (coleção `tenants`).
+
+### Estrutura do Documento Tenant
+
+```json
+{
+  "workspaceId": "spaces/AAAAxxxx",
+  "llmConfig": {
+    "provider": "openai",
+    "apiKey": "sk-...",
+    "model": "gpt-4o"
+  },
+  "mcpConfig": {
+    "url": "https://mcp.example.com",
+    "apiKey": "..."
+  },
+  "isActive": true
+}
+```
+
+- O campo `isActive` permite desativar o bot para um tenant sem remover seus dados
+- O `ProcessAgentResponseUseCase` busca o tenant dinamicamente a cada requisição
+- Provedores LLM e MCP são instanciados sob demanda — não há dependência fixa do container global
 
 ---
 
@@ -262,7 +326,10 @@ sequenceDiagram
     participant LLM as LLM Provider
 
     User->>Chat: Envia mensagem
-    Chat->>UC: execute(context)
+    Chat->>UC: execute(workspaceId, threadId, text)
+    
+    UC->>Repo: Busca Tenant + ChatContext
+    Repo-->>UC: Tenant + histórico
     
     rect rgb(230, 245, 255)
         Note over UC,MCP: Handshake MCP (se não conectado)
@@ -286,6 +353,7 @@ sequenceDiagram
         LLM-->>UC: { type: 'text', content }
     end
     
+    UC->>Repo: save(context)
     UC->>Chat: sendMessage(threadId, content)
     Chat-->>User: Resposta do agente
 ```
@@ -301,14 +369,20 @@ sequenceDiagram
 | **OpenAI SDK** | ^6.45.0 | Client para APIs compatíveis com OpenAI |
 | **Anthropic SDK** | ^0.110.0 | Client para API da Anthropic |
 | **google-auth-library** | ^10.9.0 | Autenticação OAuth2 para Google APIs |
+| **Express** | ^5.2.1 | Framework HTTP |
+| **helmet** | ^8.2.0 | Segurança HTTP (headers) |
+| **cors** | ^2.8.6 | Liberação de CORS |
+| **dotenv** | ^17.4.2 | Variáveis de ambiente em dev |
+| **MongoDB Driver** | ^7.4.0 | Driver nativo MongoDB |
 | **tsx** | ^4.23.0 | Execução direta de TypeScript em dev |
 
-### Configuração TypeScript
+### Scripts
 
-- **Module system:** `NodeNext` (ESM)
-- **Target:** `ESNext`
-- **Strict mode:** habilitado com checks extras (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`)
-- **Source maps + Declarations:** gerados para debugging e consumo como library
+| Comando | Descrição |
+|---|---|
+| `npm run dev` | Desenvolvimento com hot-reload (`tsx watch src/index.ts`) |
+| `npm run build` | Compilação TypeScript (`tsc`) |
+| `npm start` | Execução do build compilado (`node dist/index.js`) |
 
 ---
 
@@ -316,6 +390,7 @@ sequenceDiagram
 
 - **Node.js** ≥ 20.x
 - **npm** ≥ 10.x
+- **MongoDB** ≥ 6.x (local ou Atlas) — para persistência de conversas e tenants
 - Chaves de API para pelo menos um provedor LLM (OpenAI, Anthropic ou DeepSeek)
 - URL de um servidor MCP ativo (para integração com ferramentas)
 - Google Cloud service account com escopo `chat.messages.create` (para Google Chat)
@@ -351,9 +426,10 @@ As configurações são carregadas via `dotenv` no ambiente local, e injetadas p
 
 Variáveis essenciais (`.env`):
 - `PORT`: Porta do servidor local (ex: 3000)
+- `MONGODB_URI` e `MONGODB_DB_NAME`: Conexão com MongoDB (ex: `mongodb://localhost:27017` / `support-agent`)
 - `QSTASH_TOKEN` e `WORKER_URL`: Integração com Upstash (filas assíncronas)
-- `MCP_SERVER_URL` e `MCP_API_KEY`: Comunicação com o servidor MCP
-- `LLM_PROVIDER`, `LLM_API_KEY` e `LLM_MODEL`: Configurações de Inteligência Artificial
+- `MCP_SERVER_URL` e `MCP_API_KEY`: Comunicação com o servidor MCP (sobrescrito por tenant se configurado no banco)
+- `LLM_PROVIDER`, `LLM_API_KEY` e `LLM_MODEL`: Configurações de Inteligência Artificial (sobrescrito por tenant se configurado no banco)
 
 A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless Functions**. O request cycle é tratado no Express (`src/app.ts`), que é servido localmente via `src/index.ts` e exportado para a Vercel através de `api/index.ts`.
 
@@ -364,7 +440,7 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 > 🚧 **Em desenvolvimento ativo**
 
 | Componente | Status |
-|---|---|
+|---|---|---|
 | Entidades de domínio | ✅ Implementado |
 | Ports / Interfaces | ✅ Implementado |
 | OpenAI Adapter | ✅ Implementado |
@@ -374,11 +450,20 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 | MCP HTTP Adapter | ✅ Implementado |
 | ChatProvider Adapter (Google Chat) | ✅ Implementado |
 | QueueService Adapter (QStash) | ✅ Implementado |
-| Camada de Repositórios | ⬜ Pendente |
-| Testes unitários | ⬜ Pendente |
-| Entry point (`index.ts`) | ✅ Implementado |
+| MongoDB Connection | ✅ Implementado |
+| ChatRepository | ✅ Implementado |
+| TenantRepository | ✅ Implementado |
+| Domínio de Tenancy (Tenant) | ✅ Implementado |
+| Multi-tenant no Use Case | ✅ Implementado |
+| Camada de Repositórios | ✅ Implementado |
+| Express App (`app.ts`) | ✅ Implementado |
+| Composition Root (`container.ts`) | ✅ Implementado |
+| Controllers (Webhook + Worker) | ✅ Implementado |
+| Entry point dev (`index.ts`) | ✅ Implementado |
+| Entry point Vercel (`api/index.ts`) | ✅ Implementado |
 | Variáveis de ambiente (`.env`) | ✅ Implementado |
 | Deploy Serverless (Vercel) | ✅ Implementado |
+| Testes unitários | ⬜ Pendente |
 
 ---
 

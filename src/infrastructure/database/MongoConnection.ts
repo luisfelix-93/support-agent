@@ -5,7 +5,7 @@ export class MongoConnection {
     private static db: Db;
 
     static async connect(uri: string, dbName: string): Promise<Db> {
-        if (this.client) {
+        if (!this.client) {
             this.client = new MongoClient(uri);
             await this.client.connect();
             this.db = this.client.db(dbName);
