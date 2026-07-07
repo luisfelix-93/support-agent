@@ -1,58 +1,73 @@
 import crypto from "crypto";
 import type { ChatContext } from "../domain/ChatContext.js";
 import { Message } from "../domain/Message.js";
-import type { IChatProvider } from "../domain/ports/IChatProvider.js";
-import type { ILLMProvider } from "../domain/ports/ILLMProvider.js";
-import type { IMCPClient } from "../domain/ports/IMCPClient.js";
+import { ITenantRepository } from "../domain/ports/ITenantRepository.js";
+import { IChatRepository } from "../domain/ports/IChatRepository.js";
+import { LLMFactory } from "../infrastructure/llm/LLMFactory.js";
+import { IChatProvider } from "../domain/ports/IChatProvider.js";
+import { MCPHttpAdapter } from "../infrastructure/mcp/MCPHttpAdapter.js";
+import { response } from "express";
+
 
 export class ProcessAgentResponseUse {
     constructor(
-        private readonly llmProvider: ILLMProvider,
-        private readonly mcpClient: IMCPClient,
+        private readonly tenantRepository: ITenantRepository,
+        private readonly chatRepository: IChatRepository,
         private readonly chatProvider: IChatProvider
     ){}
 
-    async execute(context : ChatContext): Promise<void> {
+    async execute(workspaceId: string, threadId: string, userText: string): Promise<void> {
         try {
-           // 0. Garante que o handshake MCP foi realizado antes de qualquer operação
-            if (!this.mcpClient.isConnected()) {
-                const initResult = await this.mcpClient.connect();
-                console.log(`[Agent] Conectado ao MCP Server: ${initResult.serverInfo.name} v${initResult.serverInfo.version}`);
+            // 1. Busca os dados via repositórios (isolando a persistencia do Controller e UseCase)
+            const tenant = await this.tenantRepository.findByWorkspaceId(threadId);
+            if (!tenant || !tenant.isActive) {
+                await this.chatProvider.sendMessage(threadId, "Desculpe, não consigo te atender neste momento.");
+                return;
             }
 
-           // 1. O bot pergunta ao MCP quais as ferramentas estão disponíveis e ativas
-            const availableToolsResponse = await this.mcpClient.listTools();
-            const availableTools = availableToolsResponse.tools;
+            // O repositório já devolve um ChatContext hidratado com o histórico caso exista
+            const context = await this.chatRepository.findById(threadId, workspaceId);
 
-           // 2. Envia o contexto da conversa E o schema das ferramentas para a LLM
-           // A implementação da LLM precisará ser ajustada para receber esse schema dinâmico
-            const llmDecision = await this.llmProvider.generateResponse(context); //, availableTools);
-            
+            // 2. Aplica a regra de negócio: adiciona a nova mensagem do usuário
+            context.addMessage(new Message(crypto.randomUUID(), 'user', userText));
+
+            // 3. Instancia provedores e ferramentas dinamicamente para este tenant
+            const llmProvider = LLMFactory.create(tenant.llmConfig);
+            const mcpClient = new MCPHttpAdapter(tenant.mcpConfig.url, tenant.mcpConfig.apiKey);
+
+            if (!mcpClient.isConnected()) {
+                await mcpClient.connect();
+            }
+
+            // 4. Monta o fluxo de LLM e MCP
+            const llmDecision = await llmProvider.generateResponse(context);
+            let responseText = '';
+
             if (llmDecision.type === 'tool_call') {
-                // 3. A LLM pediu uma ferramenta. O bot bate no MCP usando o adaptador
-                const mcpResult = await this.mcpClient.executeTool(llmDecision.tool);
+                const mcpResult = await  mcpClient.executeTool(llmDecision.tool);
                 
-                // 4. O bot empacota o resultado do MCP (que já vvem formatado/truncado) 
-                // e devolve para a LLM formular a resposta humana
-                context.addMessage(new Message(
-                    crypto.randomUUID(),
-                    'system',
-                    JSON.stringify(mcpResult)
-                ));
-                const finalResponse = await this.llmProvider.generateResponse(context);//, availableTools);
+                context.addMessage(new Message(crypto.randomUUID(), 'system', JSON.stringify(mcpResult)));
+
+                const finalResponse = await llmProvider.generateResponse(context);
                 if (finalResponse.type === 'text') {
-                    console.log("Resposta final: ", finalResponse.content);
-                    await this.chatProvider.sendMessage(context.threadID, finalResponse.content);
-                } else {
-                    console.log("LLM solicitou outra chamada de ferramenta inesperadamente.");
+                    responseText = finalResponse.content;
                 }
             } else {
-                await this.chatProvider.sendMessage(context.threadID, llmDecision.content);
-1            }
+                responseText = llmDecision.content;
+            }
+            // 5. Adiciona a resposta do assistente ao contexto
+            if (responseText) {
+                context.addMessage(new Message(crypto.randomUUID(), 'assistant', responseText));
 
+                // 6. Persiste o estado atualizado
+                await this.chatRepository.save(context);
+
+                // 7. Envia a resposta ao usuário
+                await this.chatProvider.sendMessage(threadId, responseText);
+            }
         } catch (error) {
-            console.log("Erro no processamento: ", error);
-            await this.chatProvider.sendMessage(context.threadID, "Ocorreu um erro ao processar sua solicitação no sistema");
+            console.error("Erro no processamento: ", error);
+            await this.chatProvider.sendMessage(threadId, "Ocorreu um erro ao processar sua solicitação.");
         }
     }
 }
