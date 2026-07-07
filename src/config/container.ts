@@ -1,11 +1,17 @@
 import { QStashAdapter } from '../infrastructure/queue/QStashAdapter.js';
 import { GoogleChatAdapter } from '../infrastructure/chat/GoogleChatAdapter.js';
-import { MCPHttpAdapter } from '../infrastructure/mcp/MCPHttpAdapter.js';
-import { LLMFactory } from '../infrastructure/llm/LLMFactory.js';
 import { ProcessAgentResponseUse } from '../usecases/ProcessAgentResponseUseCase.js';
 import { ChatWebhookController } from '../controllers/ChatWebhookController.js';
 import { WorkerController } from '../controllers/WorkerController.js';
-import type { LLMProviderType } from '../domain/LLMConfig.js';
+import { MongoConnection } from '../infrastructure/database/MongoConnection.js';
+import { TenantRepository } from '../repositories/TenantRepository.js';
+import { ChatRepository } from '../repositories/ChatRepository.js';
+
+// ─── Database Connection ─────────────────────────────
+await MongoConnection.connect(
+    process.env.MONGODB_URI!,
+    process.env.MONGODB_DB_NAME!
+);
 
 // ─── Infrastructure Adapters ─────────────────────────
 const queueAdapter = new QStashAdapter(
@@ -15,22 +21,14 @@ const queueAdapter = new QStashAdapter(
 
 const chatAdapter = new GoogleChatAdapter();
 
-const mcpAdapter = new MCPHttpAdapter(
-    process.env.MCP_SERVER_URL!,
-    process.env.MCP_API_KEY!
-);
-
-const llmModel = process.env.LLM_MODEL;
-const llmAdapter = LLMFactory.create({
-    provider: (process.env.LLM_PROVIDER ?? 'openai') as LLMProviderType,
-    apiKey: process.env.LLM_API_KEY!,
-    ...(llmModel ? { model: llmModel } : {})
-});
+// ─── Repositories ────────────────────────────────────
+const tenantRepository = new TenantRepository();
+const chatRepository = new ChatRepository();
 
 // ─── Use Cases ───────────────────────────────────────
 const processAgentUseCase = new ProcessAgentResponseUse(
-    llmAdapter,
-    mcpAdapter,
+    tenantRepository,
+    chatRepository,
     chatAdapter
 );
 
