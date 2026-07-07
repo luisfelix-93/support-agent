@@ -101,8 +101,26 @@ support-agent/
 │   └── usecases/                  # Orquestração de lógica de aplicação
 │       └── ProcessAgentResponseUseCase.ts  # Fluxo principal do agente
 │
+│   ├── api/                           # Router factories do Express
+│   │   ├── webhookRouter.ts           # Rota para webhook do Google Chat
+│   │   └── workerRouter.ts            # Rota para worker do QStash
+│   │
+│   ├── config/                        # Configurações gerais
+│   │   └── container.ts               # Composition Root (Injeção de dependências)
+│   │
+│   ├── controllers/                   # Controllers da aplicação
+│   │   ├── ChatWebhookController.ts
+│   │   └── WorkerController.ts
+│   │
+│   ├── app.ts                         # Instância e middlewares do Express
+│   └── index.ts                       # Entry point local (dev)
+│
+├── api/
+│   └── index.ts                       # Entry point para Vercel Serverless Functions
 ├── package.json
 ├── tsconfig.json
+├── vercel.json                        # Configurações de rotas Vercel
+├── .env.example                       # Variáveis de ambiente
 └── README.md
 ```
 
@@ -305,7 +323,7 @@ sequenceDiagram
 
 ---
 
-## Instalação
+## Instalação e Execução
 
 ```bash
 # Clonar o repositório
@@ -314,55 +332,30 @@ cd support-agent
 
 # Instalar dependências
 npm install
+
+# Configurar variáveis de ambiente
+cp .env.example .env
+# (Edite o arquivo .env com suas chaves)
+
+# Iniciar servidor local
+npm run dev
 ```
 
 ---
 
-## Configuração
+## Configuração e Injeção de Dependências
 
-O sistema utiliza `LLMConfig` para determinar qual provedor de LLM será utilizado. A configuração é passada via código através do `LLMFactory`:
+O sistema utiliza um **Composition Root** (`src/config/container.ts`) para injetar todas as dependências automaticamente usando variáveis de ambiente. Você não precisa instanciar os adapters manualmente.
 
-```typescript
-import { LLMFactory } from './infrastructure/llm/LLMFactory.js';
+As configurações são carregadas via `dotenv` no ambiente local, e injetadas pela Vercel no ambiente de produção.
 
-const provider = LLMFactory.create({
-  provider: 'openai',       // 'openai' | 'anthropic' | 'deepseek'
-  apiKey: 'sk-...',
-  model: 'gpt-4o'           // opcional, usa o padrão do provider
-});
-```
+Variáveis essenciais (`.env`):
+- `PORT`: Porta do servidor local (ex: 3000)
+- `QSTASH_TOKEN` e `WORKER_URL`: Integração com Upstash (filas assíncronas)
+- `MCP_SERVER_URL` e `MCP_API_KEY`: Comunicação com o servidor MCP
+- `LLM_PROVIDER`, `LLM_API_KEY` e `LLM_MODEL`: Configurações de Inteligência Artificial
 
-Para o MCP, instancie o adapter com a URL base e a API key do servidor:
-
-```typescript
-import { MCPHttpAdapter } from './infrastructure/mcp/MCPHttpAdapter.js';
-
-const mcpClient = new MCPHttpAdapter(
-  'https://mcp.example.com',
-  'mcp-api-key'
-);
-```
-
-Para o Google Chat (requer Application Default Credentials configurado):
-
-```typescript
-import { GoogleChatAdapter } from './infrastructure/chat/GoogleChatAdapter.js';
-
-const chat = new GoogleChatAdapter();
-await chat.sendMessage('spaces/AAAAxxx/threads/YYYYyyy', 'Mensagem de resposta');
-```
-
-Para a fila QStash:
-
-```typescript
-import { QStashAdapter } from './infrastructure/queue/QStashAdapter.js';
-
-const queue = new QStashAdapter(
-  'qstash-api-token',
-  'https://worker.example.com/process'
-);
-await queue.dispatchMessageProcessing('workspace-1', 'thread-1', 'Payload');
-```
+A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless Functions**. O request cycle é tratado no Express (`src/app.ts`), que é servido localmente via `src/index.ts` e exportado para a Vercel através de `api/index.ts`.
 
 ---
 
@@ -383,8 +376,9 @@ await queue.dispatchMessageProcessing('workspace-1', 'thread-1', 'Payload');
 | QueueService Adapter (QStash) | ✅ Implementado |
 | Camada de Repositórios | ⬜ Pendente |
 | Testes unitários | ⬜ Pendente |
-| Entry point (`index.ts`) | ⬜ Pendente |
-| Variáveis de ambiente (`.env`) | ⬜ Pendente |
+| Entry point (`index.ts`) | ✅ Implementado |
+| Variáveis de ambiente (`.env`) | ✅ Implementado |
+| Deploy Serverless (Vercel) | ✅ Implementado |
 
 ---
 
