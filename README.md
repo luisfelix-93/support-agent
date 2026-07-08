@@ -168,7 +168,7 @@ Contém as entidades centrais e as regras de negócio do sistema. Não possui de
 | `Message` | Representa uma mensagem individual com `id`, `role` (user/assistant/system), `content` e `timestamp`. |
 | `ChatContext` | Agrupa um `threadID`, `workspaceId` e o histórico de `Message[]`. |
 | `Tenant` | Workspace configurado com `workspaceId`, `llmConfig`, `mcpConfig` e `isActive`. |
-| `User` | Usuário do sistema com `id`, `name`, `email`, `password` (value object), `role` e `tenantId` opcional. |
+| `User` | Usuário do sistema com `id`, `name`, `email`, `password` (value object) e `workspaceId: string[]`. |
 | `Password` | Value object que encapsula senha hasheada (SHA-256). Criado via `Password.create(plain)` no entry point; comparado via `password.compare(plain)` no login. |
 | `SpaceMapping` | Mapeia um `spaceId` do Google Chat ao `workspaceId` do tenant correspondente. |
 | `ToolCall` | Requisição de execução de ferramenta com `name` e `parameters`. |
@@ -187,7 +187,7 @@ Contratos que definem as fronteiras do domínio — implementados pela camada de
 | `IChatRepository` | Persiste e recupera `ChatContext` por `threadId` + `workspaceId`. |
 | `ITenantRepository` | Persiste e recupera `Tenant` por `workspaceId`. |
 | `ISpaceMappingRepository` | Persiste e recupera mapeamentos `spaceId → workspaceId`. |
-| `IUserRepository` | Persiste e recupera `User` por `id` ou `email`; atualiza `tenantId`. |
+| `IUserRepository` | Persiste e recupera `User` por `id` ou `email`; adiciona `workspaceId` ao array. |
 
 ### Infrastructure
 
@@ -231,7 +231,7 @@ Implementações concretas dos ports de repositório utilizando MongoDB:
 |---|---|---|
 | `ChatRepository` | `threads` | `findById`, `save` |
 | `TenantRepository` | `tenants` | `findByWorkspaceId`, `save` |
-| `UserRepository` | `users` | `findById`, `findByEmail`, `save`, `updateTenantId` |
+| `UserRepository` | `users` | `findById`, `findByEmail`, `save`, `addWorkspaceId` |
 | `SpaceMappingRepository` | `space_mappings` | `findBySpaceId`, `save` |
 
 ### Use Cases
@@ -243,7 +243,7 @@ Implementações concretas dos ports de repositório utilizando MongoDB:
 | `LoginUserUseCase` | Valida credenciais e emite um JWT assinado com `jose` (HS256). Expõe `verify()` estático para o middleware. |
 | `RegisterTenantUseCase` | Registra um novo tenant (workspace). Valida duplicidade de `workspaceId`. |
 | `RegisterSpaceUseCase` | Registra um espaço do Google Chat e associa ao tenant via `workspaceId`. Exige que o tenant exista. |
-| `AssociateTenantToUserUseCase` | Vincula um `workspaceId` de tenant a um usuário existente (`updateTenantId`). |
+| `AssociateTenantToUserUseCase` | Vincula um `workspaceId` de tenant a um usuário existente via `addWorkspaceId()`. |
 
 ---
 
@@ -256,7 +256,7 @@ O sistema utiliza **JWT (JSON Web Tokens)** assinados com HS256 via biblioteca [
 ```
 POST /api/auth/login
   → valida email + senha (SHA-256)
-  → emite JWT com payload { sub, email, role, tenantId }
+  → emite JWT com payload { sub, email, workspaceIds }
   → token expira conforme JWT_EXPIRES_IN (padrão: 8h)
 ```
 
@@ -267,10 +267,9 @@ O `authMiddleware` extrai o Bearer token do header `Authorization`, verifica a a
 ```typescript
 // req.user após validação
 {
-  sub: string;       // user id
+  sub: string;         // user id
   email: string;
-  role: string;
-  tenantId?: string;
+  workspaceIds: string[];
 }
 ```
 
@@ -306,7 +305,7 @@ sequenceDiagram
     participant Cliente
     participant API
 
-    Cliente->>API: POST /onboarding/users<br/>{ name, email, password, role }
+    Cliente->>API: POST /onboarding/users<br/>{ name, email, password }
     API-->>Cliente: 201 { id }
 
     Cliente->>API: POST /auth/login<br/>{ email, password }
@@ -330,8 +329,7 @@ POST /api/onboarding/users
 {
   "name": "Luis Felix",
   "email": "luis@empresa.com",
-  "password": "senha123",
-  "role": "admin"
+  "password": "senha123"
 }
 ```
 
@@ -531,6 +529,8 @@ sequenceDiagram
 | **MongoDB Driver** | ^7.4.0 | Driver nativo MongoDB |
 | **jose** | ^6.x | JWT ESM-native (assinar e verificar tokens HS256) |
 | **tsx** | ^4.23.0 | Execução direta de TypeScript em dev |
+| **Vitest** | ^4.1.10 | Runner de testes unitários |
+| **@vitest/coverage-v8** | ^4.1.10 | Relatório de cobertura de código |
 
 ### Scripts
 
@@ -539,6 +539,55 @@ sequenceDiagram
 | `npm run dev` | Desenvolvimento com hot-reload (`tsx watch src/index.ts`) |
 | `npm run build` | Compilação TypeScript (`tsc`) |
 | `npm start` | Execução do build compilado (`node dist/index.js`) |
+| `npm test` | Executa testes unitários (`vitest run`) |
+| `npm run test:watch` | Modo watch (`vitest`) |
+| `npm run test:coverage` | Relatório de cobertura (`vitest run --coverage`) |
+
+---
+
+## Testes
+
+O projeto utiliza **Vitest** como framework de testes. Os testes estão organizados lado a lado com o código-fonte (`*.test.ts`) seguindo o padrão de co-locação.
+
+### Cobertura
+
+| Camada | Arquivos testados | Testes |
+|---|---|---|
+| Domínio | `Password` | 11 |
+| Infraestrutura | `GoogleChatAdapter`, `MCPHttpAdapter` | 15 |
+| Use Cases | Todos os 6 use cases | 29 |
+| **Total** | **9 arquivos** | **55** |
+
+### Estrutura
+
+```
+src/
+├── domain/
+│   └── Password.test.ts
+├── infrastructure/
+│   ├── chat/
+│   │   └── GoogleChatAdapter.test.ts
+│   └── mcp/
+│       └── MCPHttpAdapter.test.ts
+└── usecases/
+    ├── AssociateTenantToUserUseCase.test.ts
+    ├── LoginUserUseCase.test.ts
+    ├── ProcessAgentResponseUseCase.test.ts
+    ├── RegisterSpaceUseCase.test.ts
+    ├── RegisterTenantUseCase.test.ts
+    └── RegisterUserUseCase.test.ts
+```
+
+### Práticas
+
+- **Mocks**: repositórios mockados com `vi.fn()`, HTTP global mockado com `vi.stubGlobal('fetch', ...)`, JWT testado com `process.env` temporário
+- **Isolamento**: sem dependência de banco de dados ou serviços externos
+- **Factory functions**: funções reutilizáveis (`makeUserRepo`, `makeTenantRepo`, etc.) para criar mocks tipados
+- **Cobertura**: configurada com `@vitest/coverage-v8` nos diretórios `usecases`, `infrastructure` e `domain`
+
+### CI/CD
+
+O pipeline do **GitHub Actions** (`.github/workflows/ci-cd.yml`) executa `npm test` em todo PR para a branch `main`. Após o merge, faz deploy automático na Vercel.
 
 ---
 
@@ -623,7 +672,8 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 | Entry point dev (`index.ts`) | ✅ Implementado |
 | Entry point Vercel (`api/index.ts`) | ✅ Implementado |
 | Deploy Serverless (Vercel) | ✅ Implementado |
-| Testes unitários | ⬜ Pendente |
+| Testes unitários | ✅ Implementado |
+| Pipeline CI/CD (GitHub Actions) | ✅ Implementado |
 
 ---
 
