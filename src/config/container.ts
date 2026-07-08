@@ -6,6 +6,15 @@ import { WorkerController } from '../controllers/WorkerController.js';
 import { MongoConnection } from '../infrastructure/database/MongoConnection.js';
 import { TenantRepository } from '../repositories/TenantRepository.js';
 import { ChatRepository } from '../repositories/ChatRepository.js';
+import { UserRepository } from '../repositories/UserRepository.js';
+import { SpaceMappingRepository } from '../repositories/SpaceMappingRepository.js';
+import { RegisterUserUseCase } from '../usecases/RegisterUserUseCase.js';
+import { LoginUserUseCase } from '../usecases/LoginUserUseCase.js';
+import { RegisterTenantUseCase } from '../usecases/RegisterTenantUseCase.js';
+import { RegisterSpaceUseCase } from '../usecases/RegisterSpaceUseCase.js';
+import { AssociateTenantToUserUseCase } from '../usecases/AssociateTenantToUserUseCase.js';
+import { OnboardingController } from '../controllers/OnboardingController.js';
+import { AuthController } from '../controllers/AuthController.js';
 
 // ─── Database Connection ─────────────────────────────
 await MongoConnection.connect(
@@ -24,14 +33,30 @@ const chatAdapter = new GoogleChatAdapter();
 // ─── Repositories ────────────────────────────────────
 const tenantRepository = new TenantRepository();
 const chatRepository = new ChatRepository();
+const userRepository = new UserRepository();
+const spaceMappingRepository = new SpaceMappingRepository();
 
 // ─── Use Cases ───────────────────────────────────────
 const processAgentUseCase = new ProcessAgentResponseUse(
+    spaceMappingRepository,
     tenantRepository,
     chatRepository,
     chatAdapter
 );
 
+const registerUserUseCase = new RegisterUserUseCase(userRepository);
+const loginUserUseCase = new LoginUserUseCase(userRepository);
+const registerTenantUseCase = new RegisterTenantUseCase(tenantRepository);
+const registerSpaceUseCase = new RegisterSpaceUseCase(spaceMappingRepository, tenantRepository);
+const associateTenantUseCase = new AssociateTenantToUserUseCase(userRepository, tenantRepository);
+
 // ─── Controllers ─────────────────────────────────────
 export const webhookController = new ChatWebhookController(queueAdapter);
 export const workerController = new WorkerController(processAgentUseCase);
+export const authController = new AuthController(loginUserUseCase);
+export const onboardingController = new OnboardingController(
+    registerUserUseCase,
+    registerTenantUseCase,
+    registerSpaceUseCase,
+    associateTenantUseCase
+);

@@ -16,6 +16,8 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
   - [Repositories](#repositories)
   - [Use Cases](#use-cases)
 - [API Layer](#api-layer)
+- [Autenticação e Autorização (JWT)](#autenticação-e-autorização-jwt)
+- [Onboarding](#onboarding)
 - [Multi-Tenant](#multi-tenant)
 - [Provedores LLM Suportados](#provedores-llm-suportados)
 - [Integração MCP](#integração-mcp)
@@ -75,61 +77,81 @@ O projeto adota uma arquitetura hexagonal (Ports & Adapters), onde o núcleo de 
 ```
 support-agent/
 ├── src/
-│   ├── domain/                     # Núcleo de domínio (entidades + regras de negócio)
-│   │   ├── ChatContext.ts          # Contexto de conversação (thread + mensagens)
-│   │   ├── LLMConfig.ts           # Tipagem de configuração do provedor LLM
-│   │   ├── MCPServerCapabilities.ts # Tipos do handshake MCP (ServerInfo, Capabilities, InitializeResult)
-│   │   ├── Message.ts             # Entidade de mensagem (id, role, content, timestamp)
-│   │   ├── Tenant.ts             # Entidade de tenant (workspaceId, llmConfig, mcpConfig, isActive)
-│   │   ├── ToolCall.ts            # Entidade de chamada de ferramenta (name, parameters)
-│   │   └── ports/                 # Interfaces (contratos de fronteira)
-│   │       ├── IChatProvider.ts   # Port para envio de mensagens ao canal de chat
-│   │       ├── IChatRepository.ts # Port para persistência do ChatContext
-│   │       ├── ILLMProvider.ts    # Port para geração de respostas via LLM
-│   │       ├── IMCPClient.ts      # Port para comunicação com servidor MCP
-│   │       ├── IQueueService.ts   # Port para processamento assíncrono (filas)
-│   │       └── ITenantRepository.ts # Port para persistência de tenants
+│   ├── domain/                          # Núcleo de domínio (entidades + regras de negócio)
+│   │   ├── ChatContext.ts               # Contexto de conversação (thread + mensagens)
+│   │   ├── LLMConfig.ts                # Tipagem de configuração do provedor LLM
+│   │   ├── MCPServerCapabilities.ts     # Tipos do handshake MCP
+│   │   ├── Message.ts                  # Entidade de mensagem
+│   │   ├── Password.ts                 # Value object — hash SHA-256 na criação, compare em login
+│   │   ├── SpaceMapping.ts             # Mapeamento spaceId → workspaceId
+│   │   ├── Tenant.ts                   # Entidade de tenant (workspaceId, llmConfig, mcpConfig)
+│   │   ├── ToolCall.ts                 # Entidade de chamada de ferramenta
+│   │   ├── User.ts                     # Entidade de usuário (id, name, email, password, role)
+│   │   └── ports/                      # Interfaces (contratos de fronteira)
+│   │       ├── IChatProvider.ts
+│   │       ├── IChatRepository.ts
+│   │       ├── ILLMProvider.ts
+│   │       ├── IMCPClient.ts
+│   │       ├── IQueueService.ts
+│   │       ├── ISpaceMappingRepository.ts
+│   │       ├── ITenantRepository.ts
+│   │       └── IUserRepository.ts
 │   │
-│   ├── infrastructure/            # Implementações concretas dos ports
-│   │   ├── chat/                  # Adapters de provedores de chat
-│   │   │   └── GoogleChatAdapter.ts   # Envio de mensagens via Google Chat Spaces API
-│   │   ├── database/              # Conexão com banco de dados
-│   │   │   └── MongoConnection.ts # Singleton de conexão MongoDB
-│   │   ├── llm/                   # Adapters de provedores LLM
-│   │   │   ├── AnthropicAdapter.ts    # Implementação para Claude (Anthropic)
-│   │   │   ├── OpenAIAdapter.ts       # Implementação para GPT / DeepSeek
-│   │   │   └── LLMFactory.ts         # Factory para criação do provider correto
-│   │   ├── mcp/                   # Adapter de comunicação MCP
-│   │   │   └── MCPHttpAdapter.ts  # Cliente HTTP JSON-RPC 2.0 para servidor MCP
-│   │   └── queue/                 # Adapters de provedores de fila
-│   │       └── QStashAdapter.ts   # Despacho assíncrono via QStash (Upstash)
+│   ├── infrastructure/                  # Implementações concretas dos ports
+│   │   ├── chat/
+│   │   │   └── GoogleChatAdapter.ts
+│   │   ├── database/
+│   │   │   └── MongoConnection.ts
+│   │   ├── llm/
+│   │   │   ├── AnthropicAdapter.ts
+│   │   │   ├── OpenAIAdapter.ts
+│   │   │   └── LLMFactory.ts
+│   │   ├── mcp/
+│   │   │   └── MCPHttpAdapter.ts
+│   │   └── queue/
+│   │       └── QStashAdapter.ts
 │   │
-│   ├── repositories/              # Implementações concretas dos repositórios
-│   │   ├── ChatRepository.ts      # Persistência do ChatContext no MongoDB (coleção threads)
-│   │   └── TenantRepository.ts    # Persistência de tenants no MongoDB (coleção tenants)
+│   ├── repositories/                    # Implementações concretas dos repositórios
+│   │   ├── ChatRepository.ts
+│   │   ├── SpaceMappingRepository.ts    # Coleção space_mappings
+│   │   ├── TenantRepository.ts
+│   │   └── UserRepository.ts           # Coleção users
 │   │
-│   └── usecases/                  # Orquestração de lógica de aplicação
-│       └── ProcessAgentResponseUseCase.ts  # Fluxo principal do agente
-│
-│   ├── api/                           # Router factories do Express
-│   │   ├── webhookRouter.ts           # Rota para webhook do Google Chat
-│   │   └── workerRouter.ts            # Rota para worker do QStash
+│   ├── usecases/                        # Orquestração de lógica de aplicação
+│   │   ├── AssociateTenantToUserUseCase.ts
+│   │   ├── LoginUserUseCase.ts
+│   │   ├── ProcessAgentResponseUseCase.ts
+│   │   ├── RegisterSpaceUseCase.ts
+│   │   ├── RegisterTenantUseCase.ts
+│   │   └── RegisterUserUseCase.ts
 │   │
-│   ├── config/                        # Configurações gerais
-│   │   └── container.ts               # Composition Root (Injeção de dependências)
+│   ├── api/
+│   │   ├── middlewares/
+│   │   │   └── authMiddleware.ts        # Valida Bearer JWT e injeta req.user
+│   │   ├── types/
+│   │   │   └── express.d.ts            # Module augmentation — tipagem de req.user
+│   │   ├── authRouter.ts               # POST /api/auth/login
+│   │   ├── onboardingRouter.ts         # POST /api/onboarding/*
+│   │   ├── webhookRouter.ts
+│   │   └── workerRouter.ts
 │   │
-│   ├── controllers/                   # Controllers da aplicação
+│   ├── config/
+│   │   └── container.ts               # Composition Root
+│   │
+│   ├── controllers/
+│   │   ├── AuthController.ts
 │   │   ├── ChatWebhookController.ts
+│   │   ├── OnboardingController.ts
 │   │   └── WorkerController.ts
 │   │
-│   ├── app.ts                         # Instância e middlewares do Express
-│   └── index.ts                       # Entry point local (dev)
+│   ├── app.ts
+│   └── index.ts
 │
 ├── api/
 │   └── index.ts                       # Entry point para Vercel Serverless Functions
 ├── package.json
-├── vercel.json                        # Configurações de rotas Vercel
-├── .env.example                       # Variáveis de ambiente
+├── vercel.json
+├── .env.example
 └── README.md
 ```
 
@@ -142,26 +164,30 @@ support-agent/
 Contém as entidades centrais e as regras de negócio do sistema. Não possui dependência de nenhuma biblioteca externa.
 
 | Entidade | Descrição |
-|---|---|---|
+|---|---|
 | `Message` | Representa uma mensagem individual com `id`, `role` (user/assistant/system), `content` e `timestamp`. |
-| `ChatContext` | Agrupa um `threadID`, `workspaceId` e o histórico de `Message[]`. Contém lógica para gerenciamento do contexto (ex: futura limitação de tokens). |
-| `Tenant` | Representa um workspace/tenant com `workspaceId`, `llmConfig`, `mcpConfig` e `isActive`. Permite multi-tenant com configurações isoladas. |
-| `ToolCall` | Representa uma requisição de execução de ferramenta com `name` e `parameters`. |
-| `MCPServerInfo` / `MCPCapabilities` / `MCPInitializeResult` | Tipos do resultado do handshake MCP: identificação do servidor, capacidades suportadas e versão do protocolo negociada. |
-| `LLMConfig` | Interface de configuração com `provider`, `apiKey` e `model` opcional. Suporta os tipos: `openai`, `anthropic`, `google`, `deepseek`. |
+| `ChatContext` | Agrupa um `threadID`, `workspaceId` e o histórico de `Message[]`. |
+| `Tenant` | Workspace configurado com `workspaceId`, `llmConfig`, `mcpConfig` e `isActive`. |
+| `User` | Usuário do sistema com `id`, `name`, `email`, `password` (value object), `role` e `tenantId` opcional. |
+| `Password` | Value object que encapsula senha hasheada (SHA-256). Criado via `Password.create(plain)` no entry point; comparado via `password.compare(plain)` no login. |
+| `SpaceMapping` | Mapeia um `spaceId` do Google Chat ao `workspaceId` do tenant correspondente. |
+| `ToolCall` | Requisição de execução de ferramenta com `name` e `parameters`. |
+| `LLMConfig` | Interface com `provider`, `apiKey` e `model` opcional. Suporta: `openai`, `anthropic`, `google`, `deepseek`. |
 
 ### Ports (Interfaces)
 
 Contratos que definem as fronteiras do domínio — implementados pela camada de infraestrutura.
 
 | Port | Responsabilidade |
-|---|---|---|
-| `ILLMProvider` | Gera respostas a partir do `ChatContext`. Retorna um `LLMResponse` discriminado: `{ type: 'text', content }` ou `{ type: 'tool_call', tool }`. |
-| `IMCPClient` | Executa o handshake MCP (`connect`), verifica status da conexão (`isConnected`), descobre ferramentas (`listTools`) e executa ferramentas (`executeTool`). |
-| `IChatProvider` | Envia mensagens para o canal de chat do usuário final (ex: Slack, WhatsApp, widget web). |
-| `IQueueService` | Despacha mensagens para processamento assíncrono via fila (ex: QStash). |
-| `IChatRepository` | Persiste e recupera o `ChatContext` (histórico de conversas) por `threadId` + `workspaceId`. |
-| `ITenantRepository` | Persiste e recupera configurações de `Tenant` por `workspaceId`. |
+|---|---|
+| `ILLMProvider` | Gera respostas a partir do `ChatContext`. Retorna `{ type: 'text' }` ou `{ type: 'tool_call' }`. |
+| `IMCPClient` | Handshake MCP, listagem e execução de ferramentas. |
+| `IChatProvider` | Envia mensagens ao canal de chat do usuário final. |
+| `IQueueService` | Despacha tarefas para processamento assíncrono. |
+| `IChatRepository` | Persiste e recupera `ChatContext` por `threadId` + `workspaceId`. |
+| `ITenantRepository` | Persiste e recupera `Tenant` por `workspaceId`. |
+| `ISpaceMappingRepository` | Persiste e recupera mapeamentos `spaceId → workspaceId`. |
+| `IUserRepository` | Persiste e recupera `User` por `id` ou `email`; atualiza `tenantId`. |
 
 ### Infrastructure
 
@@ -201,30 +227,159 @@ Implementações concretas dos ports:
 
 Implementações concretas dos ports de repositório utilizando MongoDB:
 
-- **`ChatRepository`** — Operações na coleção `threads`:
-  - `findById(threadId, workspaceId)` — Busca o histórico da conversa; retorna `ChatContext` vazio se não existir
-  - `save(context)` — Upsert do `ChatContext` com mensagens, `updatedAt` e chave composta `{ threadId, workspaceId }`
-
-- **`TenantRepository`** — Operações na coleção `tenants`:
-  - `findByWorkspaceId(workspaceId)` — Busca configuração do tenant; retorna `Tenant` hidratado ou `null`
-  - `save(tenant)` — Upsert do documento `Tenant`
+| Repositório | Coleção | Operações |
+|---|---|---|
+| `ChatRepository` | `threads` | `findById`, `save` |
+| `TenantRepository` | `tenants` | `findByWorkspaceId`, `save` |
+| `UserRepository` | `users` | `findById`, `findByEmail`, `save`, `updateTenantId` |
+| `SpaceMappingRepository` | `space_mappings` | `findBySpaceId`, `save` |
 
 ### Use Cases
 
-- **`ProcessAgentResponseUseCase`** — Orquestra o fluxo completo de um ciclo de atendimento, agora consumindo repositórios e instanciando provedores dinamicamente por tenant:
+| Use Case | Descrição |
+|---|---|
+| `ProcessAgentResponseUseCase` | Fluxo principal do agente: resolve tenant via `spaceId`, executa ciclo LLM→MCP→LLM e persiste o contexto. |
+| `RegisterUserUseCase` | Cria um novo usuário. Valida unicidade do email e aplica `Password.create()` antes de persistir. |
+| `LoginUserUseCase` | Valida credenciais e emite um JWT assinado com `jose` (HS256). Expõe `verify()` estático para o middleware. |
+| `RegisterTenantUseCase` | Registra um novo tenant (workspace). Valida duplicidade de `workspaceId`. |
+| `RegisterSpaceUseCase` | Registra um espaço do Google Chat e associa ao tenant via `workspaceId`. Exige que o tenant exista. |
+| `AssociateTenantToUserUseCase` | Vincula um `workspaceId` de tenant a um usuário existente (`updateTenantId`). |
 
-  **Assinatura:** `execute(workspaceId, threadId, userText): Promise<void>`
+---
 
-  1. Busca o `Tenant` via `TenantRepository` — se inativo, recusa o atendimento
-  2. Busca o `ChatContext` via `ChatRepository` (já hidratado com histórico ou vazio)
-  3. Adiciona a mensagem do usuário ao contexto
-  4. Instancia `LLMFactory` e `MCPHttpAdapter` com as configs do tenant
-  5. Ciclo LLM → MCP → LLM:
-     - LLM decide entre texto ou tool_call
-     - Se tool_call → executa via MCP → adiciona resultado ao contexto → LLM novamente
-  6. Adiciona a resposta do assistente ao histórico
-  7. Persiste o contexto via `ChatRepository.save()`
-  8. Envia a resposta final ao canal de chat
+## Autenticação e Autorização (JWT)
+
+O sistema utiliza **JWT (JSON Web Tokens)** assinados com HS256 via biblioteca [`jose`](https://github.com/panva/jose) (ESM-native, compatível com `"type": "module"`).
+
+### Fluxo de Autenticação
+
+```
+POST /api/auth/login
+  → valida email + senha (SHA-256)
+  → emite JWT com payload { sub, email, role, tenantId }
+  → token expira conforme JWT_EXPIRES_IN (padrão: 8h)
+```
+
+### Middleware
+
+O `authMiddleware` extrai o Bearer token do header `Authorization`, verifica a assinatura com `jose` e injeta `req.user` na request:
+
+```typescript
+// req.user após validação
+{
+  sub: string;       // user id
+  email: string;
+  role: string;
+  tenantId?: string;
+}
+```
+
+Rotas protegidas retornam `401` se o token estiver ausente, inválido ou expirado.
+
+### Variáveis de Ambiente
+
+```env
+JWT_SECRET=sua_chave_secreta_aqui   # mínimo 32 caracteres recomendado
+JWT_EXPIRES_IN=8h                   # aceita: 8h | 1d | 7d | etc.
+```
+
+---
+
+## Onboarding
+
+O fluxo de onboarding configura o agente para um novo cliente em 4 etapas independentes.
+
+### Endpoints
+
+| Método | Rota | Auth | Descrição |
+|---|---|---|---|
+| `POST` | `/api/auth/login` | Público | Autentica e retorna JWT |
+| `POST` | `/api/onboarding/users` | Público | Cria usuário (sem tenant) |
+| `POST` | `/api/onboarding/tenants` | Público | Registra tenant (workspace Google) |
+| `POST` | `/api/onboarding/spaces` | Público | Registra espaço Google Chat |
+| `POST` | `/api/onboarding/associate-tenant` | 🔒 JWT | Vincula tenant ao usuário autenticado |
+
+### Fluxo Recomendado
+
+```mermaid
+sequenceDiagram
+    participant Cliente
+    participant API
+
+    Cliente->>API: POST /onboarding/users<br/>{ name, email, password, role }
+    API-->>Cliente: 201 { id }
+
+    Cliente->>API: POST /auth/login<br/>{ email, password }
+    API-->>Cliente: 200 { token }
+
+    Cliente->>API: POST /onboarding/tenants<br/>{ workspaceId, llmConfig, mcpConfig }
+    API-->>Cliente: 201 { workspaceId }
+
+    Cliente->>API: POST /onboarding/spaces<br/>{ spaceId, workspaceId }
+    API-->>Cliente: 201 { spaceId }
+
+    Cliente->>API: POST /onboarding/associate-tenant<br/>Authorization: Bearer <token><br/>{ workspaceId }
+    API-->>Cliente: 200 { message: "Tenant associated successfully." }
+```
+
+### Payloads de Exemplo
+
+**Criar usuário**
+```json
+POST /api/onboarding/users
+{
+  "name": "Luis Felix",
+  "email": "luis@empresa.com",
+  "password": "senha123",
+  "role": "admin"
+}
+```
+
+**Registrar tenant**
+```json
+POST /api/onboarding/tenants
+{
+  "workspaceId": "spaces/AAAAxxxx",
+  "llmConfig": {
+    "provider": "openai",
+    "apiKey": "sk-...",
+    "model": "gpt-4o"
+  },
+  "mcpConfig": {
+    "url": "https://mcp.example.com",
+    "apiKey": "mcp-key-..."
+  }
+}
+```
+
+**Registrar espaço Google Chat**
+```json
+POST /api/onboarding/spaces
+{
+  "spaceId": "spaces/AAAAxxxx",
+  "workspaceId": "spaces/AAAAxxxx"
+}
+```
+
+**Associar tenant ao usuário** *(requer Bearer token)*
+```json
+POST /api/onboarding/associate-tenant
+Authorization: Bearer <jwt>
+
+{
+  "workspaceId": "spaces/AAAAxxxx"
+}
+```
+
+### Respostas de Erro
+
+| Código | Situação |
+|---|---|
+| `400` | Campos obrigatórios ausentes |
+| `401` | Token JWT ausente ou inválido |
+| `404` | Tenant ou usuário não encontrado |
+| `409` | Email ou `workspaceId` já cadastrado |
+| `500` | Erro interno |
 
 ---
 
@@ -363,7 +518,7 @@ sequenceDiagram
 ## Stack Tecnológica
 
 | Tecnologia | Versão | Função |
-|---|---|---|---|
+|---|---|---|
 | **TypeScript** | 6.x | Linguagem principal |
 | **Node.js** | ≥ 20 | Runtime (ESM nativo) |
 | **OpenAI SDK** | ^6.45.0 | Client para APIs compatíveis com OpenAI |
@@ -374,6 +529,7 @@ sequenceDiagram
 | **cors** | ^2.8.6 | Liberação de CORS |
 | **dotenv** | ^17.4.2 | Variáveis de ambiente em dev |
 | **MongoDB Driver** | ^7.4.0 | Driver nativo MongoDB |
+| **jose** | ^6.x | JWT ESM-native (assinar e verificar tokens HS256) |
 | **tsx** | ^4.23.0 | Execução direta de TypeScript em dev |
 
 ### Scripts
@@ -426,10 +582,12 @@ As configurações são carregadas via `dotenv` no ambiente local, e injetadas p
 
 Variáveis essenciais (`.env`):
 - `PORT`: Porta do servidor local (ex: 3000)
-- `MONGODB_URI` e `MONGODB_DB_NAME`: Conexão com MongoDB (ex: `mongodb://localhost:27017` / `support-agent`)
+- `MONGODB_URI` e `MONGODB_DB_NAME`: Conexão com MongoDB
 - `QSTASH_TOKEN` e `WORKER_URL`: Integração com Upstash (filas assíncronas)
-- `MCP_SERVER_URL` e `MCP_API_KEY`: Comunicação com o servidor MCP (sobrescrito por tenant se configurado no banco)
-- `LLM_PROVIDER`, `LLM_API_KEY` e `LLM_MODEL`: Configurações de Inteligência Artificial (sobrescrito por tenant se configurado no banco)
+- `MCP_SERVER_URL` e `MCP_API_KEY`: Comunicação com o servidor MCP
+- `LLM_PROVIDER`, `LLM_API_KEY` e `LLM_MODEL`: Configurações de LLM
+- `JWT_SECRET`: Chave secreta para assinar tokens JWT (mínimo 32 caracteres recomendado)
+- `JWT_EXPIRES_IN`: Tempo de expiração do token (ex: `8h`, `1d`, `7d`)
 
 A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless Functions**. O request cycle é tratado no Express (`src/app.ts`), que é servido localmente via `src/index.ts` e exportado para a Vercel através de `api/index.ts`.
 
@@ -440,28 +598,30 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 > 🚧 **Em desenvolvimento ativo**
 
 | Componente | Status |
-|---|---|---|
+|---|---|
 | Entidades de domínio | ✅ Implementado |
 | Ports / Interfaces | ✅ Implementado |
 | OpenAI Adapter | ✅ Implementado |
 | Anthropic Adapter | ✅ Implementado |
 | DeepSeek (via OpenAI) | ✅ Implementado |
-| Google Adapter | ⬜ Pendente |
+| Google LLM Adapter | ⬜ Pendente |
 | MCP HTTP Adapter | ✅ Implementado |
 | ChatProvider Adapter (Google Chat) | ✅ Implementado |
 | QueueService Adapter (QStash) | ✅ Implementado |
 | MongoDB Connection | ✅ Implementado |
 | ChatRepository | ✅ Implementado |
 | TenantRepository | ✅ Implementado |
-| Domínio de Tenancy (Tenant) | ✅ Implementado |
+| UserRepository | ✅ Implementado |
+| SpaceMappingRepository | ✅ Implementado |
 | Multi-tenant no Use Case | ✅ Implementado |
-| Camada de Repositórios | ✅ Implementado |
 | Express App (`app.ts`) | ✅ Implementado |
 | Composition Root (`container.ts`) | ✅ Implementado |
 | Controllers (Webhook + Worker) | ✅ Implementado |
+| Onboarding Controllers + Routers | ✅ Implementado |
+| Auth Controller + Router (Login) | ✅ Implementado |
+| JWT Middleware (`authMiddleware`) | ✅ Implementado |
 | Entry point dev (`index.ts`) | ✅ Implementado |
 | Entry point Vercel (`api/index.ts`) | ✅ Implementado |
-| Variáveis de ambiente (`.env`) | ✅ Implementado |
 | Deploy Serverless (Vercel) | ✅ Implementado |
 | Testes unitários | ⬜ Pendente |
 

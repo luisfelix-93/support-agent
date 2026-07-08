@@ -7,19 +7,32 @@ import { LLMFactory } from "../infrastructure/llm/LLMFactory.js";
 import { IChatProvider } from "../domain/ports/IChatProvider.js";
 import { MCPHttpAdapter } from "../infrastructure/mcp/MCPHttpAdapter.js";
 import { response } from "express";
+import { ISpaceMappingRepository } from "../domain/ports/ISpaceMappingRepository.js";
 
 
 export class ProcessAgentResponseUse {
     constructor(
+        private readonly spaceMappingRepository: ISpaceMappingRepository,
         private readonly tenantRepository: ITenantRepository,
         private readonly chatRepository: IChatRepository,
         private readonly chatProvider: IChatProvider
     ){}
 
-    async execute(workspaceId: string, threadId: string, userText: string): Promise<void> {
+    async execute(spaceId: string, threadId: string, userText: string): Promise<void> {
         try {
+
+            // 0. Descobre a qual Tenant esse espaço de chat pertence
+            const mapping = await this.spaceMappingRepository.findBySpaceId(spaceId);
+
+            if (!mapping) {
+                await this.chatProvider.sendMessage(threadId, "Este espaço não está configurado.");
+                return;
+            }
+
+            const workspaceId = mapping.workspaceId;
+
             // 1. Busca os dados via repositórios (isolando a persistencia do Controller e UseCase)
-            const tenant = await this.tenantRepository.findByWorkspaceId(threadId);
+            const tenant = await this.tenantRepository.findByWorkspaceId(workspaceId);
             if (!tenant || !tenant.isActive) {
                 await this.chatProvider.sendMessage(threadId, "Desculpe, não consigo te atender neste momento.");
                 return;
