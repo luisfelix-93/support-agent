@@ -15,14 +15,14 @@ export class OnboardingController {
     // ─── POST /api/onboarding/users ──────────────────────
     async registerUser(req: Request, res: Response): Promise<void> {
         try {
-            const { name, email, password, role } = req.body;
+            const { name, email, password } = req.body;
 
-            if (!name || !email || !password || !role) {
-                res.status(400).json({ error: 'Fields "name", "email", "password" and "role" are required.' });
+            if (!name || !email || !password) {
+                res.status(400).json({ error: 'Fields "name", "email" and "password" are required.' });
                 return;
             }
 
-            const result = await this.registerUserUseCase.execute({ name, email, password, role });
+            const result = await this.registerUserUseCase.execute({ name, email, password });
             res.status(201).json(result);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to register user.';

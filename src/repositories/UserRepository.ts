@@ -31,8 +31,7 @@ export class UserRepository implements IUserRepository {
                     name: user.name,
                     email: user.email,
                     password: user.password.getValue(),
-                    tenantId: user.tenantId ?? null,
-                    role: user.role,
+                    workspaceId: user.workspaceId,
                     updatedAt: user.updatedAt,
                 },
                 $setOnInsert: {
@@ -43,10 +42,13 @@ export class UserRepository implements IUserRepository {
         );
     }
 
-    async updateTenantId(userId: string, tenantId: string): Promise<void> {
+    async addWorkspaceId(userId: string, workspaceId: string): Promise<void> {
         await this.collection.updateOne(
             { id: userId },
-            { $set: { tenantId, updatedAt: new Date() } }
+            {
+                $addToSet: { workspaceId: workspaceId },
+                $set: { updatedAt: new Date() },
+            }
         );
     }
 
@@ -56,8 +58,7 @@ export class UserRepository implements IUserRepository {
             doc.name,
             doc.email,
             Password.restore(doc.password),
-            doc.tenantId ?? undefined,
-            doc.role,
+            Array.isArray(doc.workspaceId) ? doc.workspaceId : [],
             new Date(doc.createdAt),
             new Date(doc.updatedAt)
         );

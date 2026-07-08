@@ -9,8 +9,7 @@ interface LoginInput {
 export interface JwtPayload {
     sub: string;
     email: string;
-    role: string;
-    tenantId?: string;
+    workspaceIds: string[];
 }
 
 export class LoginUserUseCase {
@@ -39,8 +38,7 @@ export class LoginUserUseCase {
 
         const token = await new SignJWT({
             email: user.email,
-            role: user.role,
-            tenantId: user.tenantId,
+            workspaceIds: user.workspaceId,
         })
             .setProtectedHeader({ alg: 'HS256' })
             .setSubject(user.id)
@@ -61,8 +59,7 @@ export class LoginUserUseCase {
         return {
             sub: payload.sub as string,
             email: payload['email'] as string,
-            role: payload['role'] as string,
-            tenantId: payload['tenantId'] as string | undefined,
+            workspaceIds: (payload['workspaceIds'] as string[]) ?? [],
         };
     }
 }

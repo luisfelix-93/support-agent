@@ -23,6 +23,6 @@ export class AssociateTenantToUserUseCase {
             throw new Error(`Tenant with workspaceId '${input.workspaceId}' not found.`);
         }
 
-        await this.userRepository.updateTenantId(input.userId, input.workspaceId);
+        await this.userRepository.addWorkspaceId(input.userId, input.workspaceId);
     }
 }

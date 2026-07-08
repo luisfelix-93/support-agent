@@ -7,7 +7,6 @@ interface RegisterUserInput {
     name: string;
     email: string;
     password: string;
-    role: string;
 }
 
 export class RegisterUserUseCase {
@@ -25,8 +24,7 @@ export class RegisterUserUseCase {
             input.name,
             input.email,
             Password.create(input.password),
-            undefined,
-            input.role,
+            [],          // workspaceId começa vazio — associado depois via AssociateTenantToUserUseCase
             now,
             now
         );
