@@ -6,9 +6,8 @@ export class User {
         public readonly name: string,
         public readonly email: string,
         public readonly password: Password,
-        public readonly tenantId: string,
-        public readonly role: string,
+        public readonly workspaceId: string[],
         public readonly createdAt: Date,
         public readonly updatedAt: Date
     ) { }
-}
+}
