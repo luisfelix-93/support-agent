@@ -1,4 +1,4 @@
-import type { SpaceMapping } from '../SpaceMapping';
+import type { SpaceMapping } from '../SpaceMapping.js';
 
 export interface ISpaceMappingRepository {
     findBySpaceId(spaceId: string): Promise<SpaceMapping | null>;

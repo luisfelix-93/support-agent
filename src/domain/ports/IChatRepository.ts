@@ -1,4 +1,4 @@
-import type { ChatContext } from "../ChatContext";
+import type { ChatContext } from "../ChatContext.js";
 
 export interface IChatRepository {
     //  Retorna o contexto da thread. Se não existir, retorna uma instancia nova/vazia

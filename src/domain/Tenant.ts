@@ -1,4 +1,4 @@
-import { LLMConfig } from "./LLMConfig";
+import { LLMConfig } from "./LLMConfig.js";
 
 export interface MCPConfig {
     url: string,

@@ -1,4 +1,4 @@
-import type { Tenant } from "../Tenant";
+import type { Tenant } from "../Tenant.js";
 
 export interface ITenantRepository {
     findByWorkspaceId(workspaceId: string): Promise<Tenant | null>;

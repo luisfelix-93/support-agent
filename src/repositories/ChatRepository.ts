@@ -1,8 +1,8 @@
 import { Collection } from "mongodb";
-import { IChatRepository } from "../domain/ports/IChatRepository";
-import { MongoConnection } from "../infrastructure/database/MongoConnection";
-import { ChatContext } from "../domain/ChatContext";
-import { Message } from "../domain/Message";
+import { IChatRepository } from "../domain/ports/IChatRepository.js";
+import { MongoConnection } from "../infrastructure/database/MongoConnection.js";
+import { ChatContext } from "../domain/ChatContext.js";
+import { Message } from "../domain/Message.js";
 
 export class ChatRepository implements IChatRepository {
         private get collection(): Collection {
@@ -30,7 +30,7 @@ export class ChatRepository implements IChatRepository {
                 threadId: context.threadID,
                 workspaceId: context.workspaceId,
                 updatedAt: new Date(),
-                messages: context.messages.map(m => ({
+                messages: context.messages.map((m: Message) => ({
                     id: m.id,
                     role: m.role,
                     content: m.content,

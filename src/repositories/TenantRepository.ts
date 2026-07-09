@@ -1,7 +1,7 @@
 import { Collection } from "mongodb";
-import { MongoConnection } from "../infrastructure/database/MongoConnection";
-import { Tenant } from "../domain/Tenant";
-import { ITenantRepository } from "../domain/ports/ITenantRepository";
+import { MongoConnection } from "../infrastructure/database/MongoConnection.js";
+import { Tenant } from "../domain/Tenant.js";
+import { ITenantRepository } from "../domain/ports/ITenantRepository.js";
 
 export class TenantRepository implements ITenantRepository {
     private get collection(): Collection {
