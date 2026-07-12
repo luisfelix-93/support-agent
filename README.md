@@ -522,6 +522,38 @@ SLACK_BOT_TOKEN=xoxb-...          # Bot token (começa com xoxb-)
 SLACK_SIGNING_SECRET=...           # Signing Secret do app
 ```
 
+### Troubleshooting — `challenge_failed` no Event Subscriptions
+
+Ao cadastrar a **Request URL** no painel do Slack, o Slack envia um POST com o seguinte body para verificar o endpoint:
+
+```json
+{
+  "type": "url_verification",
+  "token": "...",
+  "challenge": "..."
+}
+```
+
+O endpoint deve responder imediatamente com `{ "challenge": "<valor>" }`. Se o Slack retornar o erro `challenge_failed` com o body da resposta vazio `{}`, a causa mais comum em deploys na **Vercel** é o **body parser automático da plataforma**.
+
+**Causa raiz:** A Vercel consome o stream do body da requisição antes de repassar o request ao handler Express. Com o stream já lido, o `express.json()` não consegue parsear o body, fazendo com que `req.body` fique `{}`. Sem o body, o `SlackWebhookController` não identifica `payload.type === 'url_verification'` e falha em retornar o `challenge`.
+
+**Correção aplicada em `api/index.ts`:**
+
+```typescript
+// Desabilita o body parser automático da Vercel.
+// Sem isso, req.body fica {} e o url_verification falha com challenge_failed.
+export const config = {
+    api: {
+        bodyParser: false,
+    },
+};
+
+export default app;
+```
+
+Isso garante que o `express.json()` (configurado em `app.ts` com o callback `verify` que captura `req.rawBody`) seja o único responsável pelo parsing — necessário tanto para o `url_verification` quanto para a validação de assinatura HMAC-SHA256 dos eventos subsequentes.
+
 ---
 
 ## Fluxo de Processamento
