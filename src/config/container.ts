@@ -1,7 +1,9 @@
 import { QStashAdapter } from '../infrastructure/queue/QStashAdapter.js';
 import { GoogleChatAdapter } from '../infrastructure/chat/GoogleChatAdapter.js';
+import { SlackChatAdapter } from '../infrastructure/chat/SlackChatAdapter.js';
 import { ProcessAgentResponseUse } from '../usecases/ProcessAgentResponseUseCase.js';
 import { ChatWebhookController } from '../controllers/ChatWebhookController.js';
+import { SlackWebhookController } from '../controllers/SlackWebhookController.js';
 import { WorkerController } from '../controllers/WorkerController.js';
 import { MongoConnection } from '../infrastructure/database/MongoConnection.js';
 import { TenantRepository } from '../repositories/TenantRepository.js';
@@ -22,13 +24,17 @@ await MongoConnection.connect(
     process.env.MONGODB_DB_NAME!
 );
 
-// ─── Infrastructure Adapters ─────────────────────────
+// ─── Infrastructure Adapters ─────────────────────
 const queueAdapter = new QStashAdapter(
     process.env.QSTASH_TOKEN!,
     process.env.WORKER_URL!
 );
 
 const chatAdapter = new GoogleChatAdapter();
+
+const slackChatAdapter = new SlackChatAdapter(
+    process.env.SLACK_BOT_TOKEN!
+);
 
 // ─── Repositories ────────────────────────────────────
 const tenantRepository = new TenantRepository();
@@ -50,7 +56,7 @@ const registerTenantUseCase = new RegisterTenantUseCase(tenantRepository);
 const registerSpaceUseCase = new RegisterSpaceUseCase(spaceMappingRepository, tenantRepository);
 const associateTenantUseCase = new AssociateTenantToUserUseCase(userRepository, tenantRepository);
 
-// ─── Controllers ─────────────────────────────────────
+// ─── Controllers ────────────────────────────────────
 export const webhookController = new ChatWebhookController(queueAdapter);
 export const workerController = new WorkerController(processAgentUseCase);
 export const authController = new AuthController(loginUserUseCase);
@@ -59,4 +65,8 @@ export const onboardingController = new OnboardingController(
     registerTenantUseCase,
     registerSpaceUseCase,
     associateTenantUseCase
+);
+export const slackWebhookController = new SlackWebhookController(
+    queueAdapter,
+    process.env.SLACK_SIGNING_SECRET!
 );

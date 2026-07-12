@@ -21,6 +21,7 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
 - [Multi-Tenant](#multi-tenant)
 - [Provedores LLM Suportados](#provedores-llm-suportados)
 - [Integração MCP](#integração-mcp)
+- [Integração Slack](#integração-slack)
 - [Fluxo de Processamento](#fluxo-de-processamento)
 - [Stack Tecnológica](#stack-tecnológica)
 - [Pré-requisitos](#pré-requisitos)
@@ -40,6 +41,7 @@ O **Support Agent** é um bot de atendimento que atua como intermediário entre 
 - 🔧 Descoberta e execução dinâmica de ferramentas via MCP (JSON-RPC 2.0)
 - 🔄 Ciclo de decisão agentic: a LLM decide autonomamente se responde diretamente ou se precisa de dados adicionais
 - 🏗️ Arquitetura extensível — novos provedores e ferramentas podem ser adicionados sem alterar a lógica central
+- 💬 Suporte multi-plataforma de chat: **Google Chat** e **Slack** prontos para uso
 
 ---
 
@@ -61,10 +63,10 @@ O projeto adota uma arquitetura hexagonal (Ports & Adapters), onde o núcleo de 
     ┌─────▼───────┐  ┌─────▼──────┐  ┌─────▼─────────┐   ┌─────▼─────────┐
     │   OpenAI    │  │    MCP     │  │    Google     │   │    QStash     │
     │   Adapter   │  │   HTTP     │  │  ChatAdapter  │   │   Adapter     │
-    ├─────────────┤  │  Adapter   │  └───────────────┘   └───────────────┘
-    │  Anthropic  │  └────────────┘
-    │   Adapter   │
-    ├─────────────┤
+    ├─────────────┤  │  Adapter   │  ├───────────────┤   └───────────────┘
+    │  Anthropic  │  └────────────┘  │    Slack      │
+    │   Adapter   │                  │  ChatAdapter  │
+    ├─────────────┤                  └───────────────┘
     │   DeepSeek  │
     │(via OpenAI) │
     └─────────────┘
@@ -99,7 +101,8 @@ support-agent/
 │   │
 │   ├── infrastructure/                  # Implementações concretas dos ports
 │   │   ├── chat/
-│   │   │   └── GoogleChatAdapter.ts
+│   │   │   ├── GoogleChatAdapter.ts
+│   │   │   └── SlackChatAdapter.ts
 │   │   ├── database/
 │   │   │   └── MongoConnection.ts
 │   │   ├── llm/
@@ -132,6 +135,7 @@ support-agent/
 │   │   │   └── express.d.ts            # Module augmentation — tipagem de req.user
 │   │   ├── authRouter.ts               # POST /api/auth/login
 │   │   ├── onboardingRouter.ts         # POST /api/onboarding/*
+│   │   ├── slackRouter.ts              # POST /api/slack/events
 │   │   ├── webhookRouter.ts
 │   │   └── workerRouter.ts
 │   │
@@ -142,6 +146,7 @@ support-agent/
 │   │   ├── AuthController.ts
 │   │   ├── ChatWebhookController.ts
 │   │   ├── OnboardingController.ts
+│   │   ├── SlackWebhookController.ts
 │   │   └── WorkerController.ts
 │   │
 │   ├── app.ts
@@ -211,9 +216,10 @@ Implementações concretas dos ports:
   - `tools/call` — Executa uma ferramenta específica passando nome e argumentos
   - `ensureInitialized()` — Conecta automaticamente se o handshake ainda não foi realizado
 
-#### Chat Adapter
+#### Chat Adapters
 
 - **`GoogleChatAdapter`** — Envia mensagens para uma thread do Google Chat Spaces via API REST v1. Utiliza `google-auth-library` para autenticação OAuth2 via Application Default Credentials (ADC). O `threadId` é usado no formato `spaces/AAAAxxxx/threads/YYYYyyyy`.
+- **`SlackChatAdapter`** — Envia mensagens para um canal/thread do Slack via `chat.postMessage`. Autentica com Bearer token (`SLACK_BOT_TOKEN`). Usa a convenção `"CHANNEL_ID:thread_ts"` para o `threadId`, permitindo respostas dentro da thread correta sem quebrar a interface `IChatProvider`.
 
 #### Queue Adapter
 
@@ -468,6 +474,56 @@ O adapter trata respostas de erro HTTP (401, 403, 429) e erros no nível JSON-RP
 
 ---
 
+## Integração Slack
+
+O Support Agent suporta o **Slack** como plataforma de chat. A integração utiliza a [Slack Events API](https://api.slack.com/events) para receber mensagens e a [Web API](https://api.slack.com/web) (`chat.postMessage`) para enviar respostas.
+
+### Segurança — Verificação de Assinatura
+
+Todo request do Slack inclui o header `x-slack-signature` (HMAC-SHA256). O `SlackWebhookController` valida esse header usando o `SLACK_SIGNING_SECRET` antes de processar qualquer evento:
+
+```
+Sig base string: "v0:{timestamp}:{rawBody}"
+HMAC-SHA256 → comparação com timingSafeEqual (anti timing-attack)
+Timestamp > 5 min → rejeitado (anti replay-attack)
+```
+
+### Endpoint
+
+```
+POST /api/slack/events
+```
+
+### Fluxo de Eventos
+
+| Tipo de evento | Comportamento |
+|---|---|
+| `url_verification` | Responde com `{ challenge }` imediatamente (instalação do app) |
+| `event_callback` com `message` | Valida assinatura → filtra bots → enfileira no QStash |
+| Mensagem com `bot_id` ou `subtype: bot_message` | Ignorada (evita loops) |
+
+### Convenção de `threadId`
+
+A interface `IChatProvider.sendMessage(threadId, content)` é agnóstica à plataforma. Para o Slack, `threadId` é codificado como `"CHANNEL_ID:thread_ts"` pelo controller e decodificado pelo adapter ao enviar.
+
+### Como Configurar o App no Slack
+
+1. Acesse [api.slack.com/apps](https://api.slack.com/apps) → **Create New App**
+2. Em **Event Subscriptions**, habilite e defina a **Request URL**: `https://<seu-dominio>/api/slack/events`
+3. Adicione o evento `message.channels` (canais) ou `message.im` (DMs)
+4. Em **OAuth & Permissions**, adicione o scope `chat:write` e instale o app
+5. Copie o **Bot User OAuth Token** (`xoxb-...`) → `SLACK_BOT_TOKEN`
+6. Em **Basic Information > App Credentials**, copie o **Signing Secret** → `SLACK_SIGNING_SECRET`
+
+### Variáveis de Ambiente
+
+```env
+SLACK_BOT_TOKEN=xoxb-...          # Bot token (começa com xoxb-)
+SLACK_SIGNING_SECRET=...           # Signing Secret do app
+```
+
+---
+
 ## Fluxo de Processamento
 
 ```mermaid
@@ -554,9 +610,10 @@ O projeto utiliza **Vitest** como framework de testes. Os testes estão organiza
 | Camada | Arquivos testados | Testes |
 |---|---|---|
 | Domínio | `Password` | 11 |
-| Infraestrutura | `GoogleChatAdapter`, `MCPHttpAdapter` | 15 |
+| Infraestrutura | `GoogleChatAdapter`, `MCPHttpAdapter`, `SlackChatAdapter` | 26 |
+| Controllers | `SlackWebhookController` | 9 |
 | Use Cases | Todos os 6 use cases | 29 |
-| **Total** | **9 arquivos** | **55** |
+| **Total** | **12 arquivos** | **75** |
 
 ### Estrutura
 
@@ -566,9 +623,12 @@ src/
 │   └── Password.test.ts
 ├── infrastructure/
 │   ├── chat/
-│   │   └── GoogleChatAdapter.test.ts
+│   │   ├── GoogleChatAdapter.test.ts
+│   │   └── SlackChatAdapter.test.ts
 │   └── mcp/
 │       └── MCPHttpAdapter.test.ts
+├── controllers/
+│   └── SlackWebhookController.test.ts
 └── usecases/
     ├── AssociateTenantToUserUseCase.test.ts
     ├── LoginUserUseCase.test.ts
@@ -637,6 +697,8 @@ Variáveis essenciais (`.env`):
 - `LLM_PROVIDER`, `LLM_API_KEY` e `LLM_MODEL`: Configurações de LLM
 - `JWT_SECRET`: Chave secreta para assinar tokens JWT (mínimo 32 caracteres recomendado)
 - `JWT_EXPIRES_IN`: Tempo de expiração do token (ex: `8h`, `1d`, `7d`)
+- `SLACK_BOT_TOKEN`: Bot token do app Slack (começa com `xoxb-`)
+- `SLACK_SIGNING_SECRET`: Signing secret para validação de assinatura HMAC-SHA256
 
 A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless Functions**. O request cycle é tratado no Express (`src/app.ts`), que é servido localmente via `src/index.ts` e exportado para a Vercel através de `api/index.ts`.
 
@@ -656,6 +718,7 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 | Google LLM Adapter | ⬜ Pendente |
 | MCP HTTP Adapter | ✅ Implementado |
 | ChatProvider Adapter (Google Chat) | ✅ Implementado |
+| ChatProvider Adapter (Slack) | ✅ Implementado |
 | QueueService Adapter (QStash) | ✅ Implementado |
 | MongoDB Connection | ✅ Implementado |
 | ChatRepository | ✅ Implementado |
@@ -666,6 +729,7 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 | Express App (`app.ts`) | ✅ Implementado |
 | Composition Root (`container.ts`) | ✅ Implementado |
 | Controllers (Webhook + Worker) | ✅ Implementado |
+| Slack Webhook Controller + Router | ✅ Implementado |
 | Onboarding Controllers + Routers | ✅ Implementado |
 | Auth Controller + Router (Login) | ✅ Implementado |
 | JWT Middleware (`authMiddleware`) | ✅ Implementado |
