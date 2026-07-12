@@ -20,6 +20,10 @@ export class SlackWebhookController {
     ) {}
 
     async handle(req: Request, res: Response): Promise<Response> {
+        const rawBody: string | undefined = (req as Request & { rawBody?: string }).rawBody;
+
+
+        
         try {
             const payload = req.body;
 
@@ -31,7 +35,6 @@ export class SlackWebhookController {
 
             // ── 2. Verificação de assinatura ──────────────────────────────────
             // O rawBody deve ter sido capturado pelo middleware antes do express.json().
-            const rawBody: string | undefined = (req as Request & { rawBody?: string }).rawBody;
             const isValid = this.verifySignature(req, rawBody ?? '');
             if (!isValid) {
                 console.warn('[SlackWebhookController] Assinatura inválida recebida.');
@@ -94,6 +97,11 @@ export class SlackWebhookController {
                 .createHmac('sha256', this.signingSecret)
                 .update(sigBaseString)
                 .digest('hex');
+        
+        console.log('[DEBUG] Slack Signature:', slackSignature);
+        console.log('[DEBUG] Computed Signature:', computedSig);
+        console.log('[DEBUG] RawBody Length:', rawBody.length);
+        console.log('[DEBUG] Secret Injetado Válido?', !!this.signingSecret);
 
         // Comparação segura para evitar timing attacks
         try {
