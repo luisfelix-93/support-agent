@@ -75,6 +75,53 @@ describe('GeminiAdapter', () => {
         }
     });
 
+    it('deve passar as ferramentas dinâmicas para a chamada da API do Gemini', async () => {
+        mockGenerateContent.mockResolvedValueOnce({
+            candidates: [
+                {
+                    content: {
+                        parts: [{ text: 'Usando ferramenta.' }],
+                    },
+                },
+            ],
+        });
+
+        const context = new ChatContext('thread-2.5', 'workspace-1', [
+            new Message('msg-1', 'user', 'Listar ferramentas'),
+        ]);
+
+        const tools = [
+            {
+                name: 'custom_mcp_tool',
+                description: 'Uma ferramenta customizada',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        param1: { type: 'string' }
+                    },
+                    required: ['param1']
+                }
+            }
+        ];
+
+        await adapter.generateResponse(context, tools);
+
+        const callArgs = mockGenerateContent.mock.calls[0][0];
+        expect(callArgs.config.tools).toHaveLength(1);
+        expect(callArgs.config.tools[0].functionDeclarations).toHaveLength(1);
+        expect(callArgs.config.tools[0].functionDeclarations[0]).toEqual({
+            name: 'custom_mcp_tool',
+            description: 'Uma ferramenta customizada',
+            parameters: {
+                type: 'object',
+                properties: {
+                    param1: { type: 'string' }
+                },
+                required: ['param1']
+            }
+        });
+    });
+
     it('deve filtrar mensagens de sistema e enviá-las como systemInstruction', async () => {
         mockGenerateContent.mockResolvedValueOnce({
             candidates: [

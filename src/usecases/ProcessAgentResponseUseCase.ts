@@ -51,16 +51,25 @@ export class ProcessAgentResponseUse {
                 await mcpClient.connect();
             }
 
+            // Buscar as ferramentas dinamicamente do MCP Server
+            let mcpTools: any[] = [];
+            try {
+                const toolsResponse = await mcpClient.listTools();
+                mcpTools = toolsResponse.tools || [];
+            } catch (toolsError) {
+                console.error("Erro ao obter ferramentas do MCP: ", toolsError);
+            }
+
             // 4. Monta o fluxo de LLM e MCP
-            const llmDecision = await llmProvider.generateResponse(context);
+            const llmDecision = await llmProvider.generateResponse(context, mcpTools);
             let responseText = '';
 
             if (llmDecision.type === 'tool_call') {
-                const mcpResult = await  mcpClient.executeTool(llmDecision.tool);
+                const mcpResult = await mcpClient.executeTool(llmDecision.tool);
                 
                 context.addMessage(new Message(crypto.randomUUID(), 'system', JSON.stringify(mcpResult)));
 
-                const finalResponse = await llmProvider.generateResponse(context);
+                const finalResponse = await llmProvider.generateResponse(context, mcpTools);
                 if (finalResponse.type === 'text') {
                     responseText = finalResponse.content;
                 }

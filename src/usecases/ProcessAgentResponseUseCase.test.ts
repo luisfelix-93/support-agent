@@ -22,6 +22,7 @@ vi.mock('../infrastructure/mcp/MCPHttpAdapter.js', () => ({
         return {
             isConnected: vi.fn().mockReturnValue(true),
             connect: vi.fn().mockResolvedValue(undefined),
+            listTools: vi.fn().mockResolvedValue({ tools: [] }),
             executeTool: vi.fn().mockResolvedValue({ result: 'tool-output' }),
             close: vi.fn().mockResolvedValue(undefined),
         };
