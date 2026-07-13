@@ -7,7 +7,7 @@ export class QStashAdapter implements IQueueService {
     ){}
 
     async dispatchMessageProcessing(workspaceId: string, threadId: string, content: string): Promise<void> {
-        const qstashUrl = `https://qstash.upstash.io/v1/publish/${this.workerUrl}`;
+        const qstashUrl = `https://qstash.upstash.io/v2/publish/${this.workerUrl}`;
         try {
             const response = await fetch(qstashUrl, {
                 method: 'POST',

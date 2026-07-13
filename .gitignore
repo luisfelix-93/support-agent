@@ -18,6 +18,7 @@ docs/
 .env.test
 .env.production
 .env*.local
+.env
 
 # Logs
 logs/
