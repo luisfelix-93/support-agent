@@ -7,12 +7,13 @@ export class QStashAdapter implements IQueueService {
     ){}
 
     async dispatchMessageProcessing(workspaceId: string, threadId: string, content: string): Promise<void> {
-        const qstashUrl = `https://qstash.upstash.io/v2/publish/${this.workerUrl}`;
+        const destination = this.workerUrl.trim();
+        const qstashUrl = `https://qstash.upstash.io/v2/publish/${destination}`;
         try {
             const response = await fetch(qstashUrl, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${this.qstashToken}`,
+                    'Authorization': `Bearer ${this.qstashToken.trim()}`,
                     'Content-Type': 'application/json',
                     'Upstash-Retries': '3'
                 },
@@ -24,6 +25,8 @@ export class QStashAdapter implements IQueueService {
             });
 
             if (!response.ok) {
+                const errorBody = await response.text().catch(() => 'unable to read body');
+                console.error(`[QStash] Resposta de erro: ${response.status} - ${errorBody}`);
                 throw new Error(`Falha ao publicar no QStash: Status ${response.status}`);
             }
             const result = await response.json();
