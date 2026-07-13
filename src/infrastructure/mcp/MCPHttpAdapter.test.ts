@@ -235,5 +235,52 @@ describe('MCPHttpAdapter', () => {
 
             expect(result).toEqual(toolCallResult);
         });
+
+        it('deve lançar erro de timeout se o servidor não responder a tempo', async () => {
+            const shortTimeoutAdapter = new MCPHttpAdapter('https://mcp.example.com', 'my-api-key', 20);
+            
+            fetchMock.mockImplementationOnce(async () => {
+                setTimeout(() => {
+                    mockSse.sendEvent('endpoint', '/message?sessionId=123');
+                }, 5);
+                return new Response(mockSse.stream, { status: 200 });
+            });
+
+            fetchMock.mockImplementationOnce(async (url, init) => {
+                const body = JSON.parse(init?.body as string);
+                setTimeout(() => {
+                    mockSse.sendEvent('message', {
+                        jsonrpc: '2.0',
+                        id: body.id,
+                        result: INIT_RESULT
+                    });
+                }, 5);
+                return new Response(null, { status: 204 });
+            });
+
+            await shortTimeoutAdapter.connect();
+            fetchMock.mockClear();
+
+            fetchMock.mockImplementationOnce(async () => {
+                return new Response(null, { status: 204 });
+            });
+
+            await expect(shortTimeoutAdapter.executeTool({ name: 'slow_tool', parameters: {} }))
+                .rejects.toThrow('Timeout de 0.02s aguardando resposta da ferramenta');
+            
+            await shortTimeoutAdapter.close();
+        });
+
+        it('deve rejeitar requisições pendentes se a conexão SSE for encerrada prematuramente', async () => {
+            fetchMock.mockImplementationOnce(async () => {
+                setTimeout(() => {
+                    mockSse.close();
+                }, 10);
+                return new Response(null, { status: 204 });
+            });
+
+            await expect(adapter.executeTool({ name: 'hanging_tool', parameters: {} }))
+                .rejects.toThrow('Conexão SSE encerrada pelo servidor antes de receber resposta');
+        });
     });
 });

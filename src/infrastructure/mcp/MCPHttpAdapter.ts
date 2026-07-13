@@ -39,7 +39,8 @@ export class MCPHttpAdapter implements IMCPClient {
 
     constructor(
         private readonly baseUrl: string,
-        private readonly apiKey: string
+        private readonly apiKey: string,
+        private readonly requestTimeoutMs: number = 25000
     ){}
 
     /**
@@ -291,6 +292,12 @@ export class MCPHttpAdapter implements IMCPClient {
             if (!hasResolvedEndpoint) {
                 rejectEndpoint(new Error("[MCP Client] Conexão SSE encerrada antes de receber o endpoint"));
             }
+
+            // Rejeita todas as requisições que estavam aguardando resposta
+            for (const [id, req] of this.pendingRequests.entries()) {
+                req.reject(new Error("[MCP Client] Conexão SSE encerrada pelo servidor antes de receber resposta"));
+                this.pendingRequests.delete(id);
+            }
         } catch (error: any) {
             if (error.name === 'AbortError') {
                 console.log("[MCP Client] SSE reader abortado pelo cliente com sucesso");
@@ -371,6 +378,13 @@ export class MCPHttpAdapter implements IMCPClient {
             this.pendingRequests.set(requestId, { resolve, reject });
         });
 
+        let timeoutId: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<any>((_, reject) => {
+            timeoutId = setTimeout(() => {
+                reject(new Error(`[MCP Client] Timeout de ${this.requestTimeoutMs / 1000}s aguardando resposta da ferramenta`));
+            }, this.requestTimeoutMs);
+        });
+
         try {
             const response = await fetch(this.postUrl, {
                 method: 'POST',
@@ -391,11 +405,16 @@ export class MCPHttpAdapter implements IMCPClient {
             }
 
             // A resposta real JSON-RPC com o resultado virá assincronamente pelo stream SSE.
-            // Retorna a promise que resolverá quando o evento de resposta correspondente chegar.
-            return await responsePromise;
+            // Retorna a promise que resolverá quando o evento de resposta correspondente chegar ou o timeout expirar.
+            const result = await Promise.race([responsePromise, timeoutPromise]);
+            return result;
         } catch (error) {
-            this.pendingRequests.delete(requestId);
             throw error;
+        } finally {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+            this.pendingRequests.delete(requestId);
         }
     }
 

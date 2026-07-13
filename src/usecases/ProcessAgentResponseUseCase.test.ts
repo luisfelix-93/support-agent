@@ -15,17 +15,19 @@ vi.mock('../infrastructure/llm/LLMFactory.js', () => ({
     },
 }));
 
+const mockMCPHttpAdapterInstance = {
+    isConnected: vi.fn().mockReturnValue(true),
+    connect: vi.fn().mockResolvedValue(undefined),
+    listTools: vi.fn().mockResolvedValue({ tools: [] }),
+    executeTool: vi.fn().mockResolvedValue({ result: 'tool-output' }),
+    close: vi.fn().mockResolvedValue(undefined),
+};
+
 // Mock do MCPHttpAdapter para não fazer chamadas HTTP reais
 // IMPORTANTE: usar `function` (não arrow function) para que possa ser chamada com `new`
 vi.mock('../infrastructure/mcp/MCPHttpAdapter.js', () => ({
     MCPHttpAdapter: vi.fn().mockImplementation(function () {
-        return {
-            isConnected: vi.fn().mockReturnValue(true),
-            connect: vi.fn().mockResolvedValue(undefined),
-            listTools: vi.fn().mockResolvedValue({ tools: [] }),
-            executeTool: vi.fn().mockResolvedValue({ result: 'tool-output' }),
-            close: vi.fn().mockResolvedValue(undefined),
-        };
+        return mockMCPHttpAdapterInstance;
     }),
 }));
 
@@ -79,6 +81,7 @@ describe('ProcessAgentResponseUseCase', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mockMCPHttpAdapterInstance.executeTool.mockReset().mockResolvedValue({ result: 'tool-output' });
 
         spaceMappingRepo = makeSpaceMappingRepo({ findBySpaceId: vi.fn().mockResolvedValue(fakeMapping) });
         tenantRepo = makeTenantRepo({ findByWorkspaceId: vi.fn().mockResolvedValue(fakeTenant) });
@@ -111,6 +114,34 @@ describe('ProcessAgentResponseUseCase', () => {
 
         expect(mockLlmProvider.generateResponse).toHaveBeenCalledTimes(2);
         expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-1', 'Resultado processado com sucesso.');
+    });
+
+    it('deve lidar com erro na execução da ferramenta MCP e passar o erro para o LLM', async () => {
+        const mockLlmProvider = {
+            generateResponse: vi.fn()
+                .mockResolvedValueOnce({ type: 'tool_call', tool: { name: 'query_logs', parameters: {} } })
+                .mockResolvedValueOnce({ type: 'text', content: 'Erro no Loki, tente novamente de outra forma.' }),
+        };
+        vi.mocked(LLMFactory.create).mockReturnValue(mockLlmProvider as any);
+        
+        mockMCPHttpAdapterInstance.executeTool.mockRejectedValue(new Error('Conexão encerrada pelo servidor antes de receber resposta'));
+
+        await useCase.execute('spaces/AAAA1111', 'thread-1', 'Quais são os logs de erro?', chatProvider);
+
+        // Verifica que o executeTool foi chamado e falhou
+        expect(mockMCPHttpAdapterInstance.executeTool).toHaveBeenCalled();
+        
+        // O LLM deve ser chamado 2 vezes (primeira para decidir chamar a ferramenta, segunda com o erro no contexto)
+        expect(mockLlmProvider.generateResponse).toHaveBeenCalledTimes(2);
+        
+        // Verifica que o contexto de chat recebeu a mensagem de erro do sistema
+        const lastCallArgs = mockLlmProvider.generateResponse.mock.calls[1];
+        const contextArg = lastCallArgs[0];
+        const systemMessage = contextArg.messages.find((m: any) => m.role === 'system');
+        expect(systemMessage).toBeDefined();
+        expect(JSON.parse(systemMessage.content).error).toContain('Falha na execução da ferramenta');
+        
+        expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-1', 'Erro no Loki, tente novamente de outra forma.');
     });
 
     it('deve enviar mensagem de espaço não configurado se o space mapping não existir', async () => {

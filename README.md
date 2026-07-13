@@ -480,6 +480,20 @@ No fluxo de processamento de mensagens (`ProcessAgentResponseUseCase`), a busca 
 3. Cada adaptador de LLM faz o mapeamento dinâmico das ferramentas para o formato proprietário do provedor correspondente (ex: `tools` no OpenAI, `functionDeclarations` no Gemini, e `tools` com `input_schema` no Anthropic).
 4. Se nenhuma ferramenta for retornada pelo servidor MCP, os adaptadores omitem o campo de ferramentas na chamada da API da LLM, evitando erros comuns causados por arrays vazios de ferramentas.
 
+### Resiliência e Tratamento de Timeouts
+
+Para evitar que o agente fique travado ("mudo") durante execuções de longa duração ou diante de quedas bruscas de conexão do servidor MCP, o sistema adota as seguintes estratégias:
+
+1. **Timeout do Cliente MCP (`Promise.race`)**:
+   - Um timeout (padrão de `25s`, configurável via construtor/ambiente) foi implementado para todas as requisições JSON-RPC via POST. Caso o servidor não responda a tempo, a promessa é rejeitada e uma exceção de tempo limite é lançada.
+2. **Rejeição Automática ao Fechar Stream**:
+   - O `MCPHttpAdapter` monitora ativamente o encerramento do stream SSE. Caso a conexão SSE seja encerrada pelo servidor (por inatividade ou reinicialização do proxy), todas as promessas pendentes no mapa `pendingRequests` são imediatamente rejeitadas, impedindo vazamentos de memória e travamento indefinido do fluxo de execução.
+3. **Tratamento de Exceções no Use Case**:
+   - A chamada `mcpClient.executeTool` dentro do `ProcessAgentResponseUseCase` é envolvida por um bloco `try-catch`.
+   - Se a execução falhar ou estourar o timeout de 25s, o erro é capturado e enviado de volta no histórico da conversa como uma mensagem de sistema (`system`). O LLM é acionado de novo com esse contexto de erro, podendo justificar a falha para o usuário ou tentar caminhos alternativos de resposta, mantendo o agente sempre ativo.
+4. **Timeout Estendido de Fila (QStash)**:
+   - Adicionamos o cabeçalho `'Upstash-Timeout': '90s'` no envio de mensagens de fila para o QStash. Isso garante que o Upstash não encerre prematuramente a conexão HTTP com o worker local antes de a chamada da ferramenta (25s) e a re-análise do LLM terem finalizado.
+
 ---
 
 ## Integração Slack
