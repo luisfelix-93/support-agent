@@ -68,10 +68,8 @@ export class ProcessAgentResponseUse {
                 let mcpResult: any;
                 try {
                     mcpResult = await mcpClient.executeTool(llmDecision.tool);
-                } catch (toolError: any) {
-                    console.error(`[ProcessAgentResponseUseCase] Erro ao executar ferramenta ${llmDecision.tool.name}:`, toolError);
                     mcpResult = {
-                        error: `Falha na execução da ferramenta: ${toolError.message || toolError}`
+                        error: `Falha na execução da ferramenta: ${toolError?.message ?? (typeof toolError === 'string' ? toolError : JSON.stringify(toolError))}`
                     };
                 }
                 
