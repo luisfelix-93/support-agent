@@ -59,7 +59,7 @@ export class SlackWebhookController {
                     const threadId = `${channel}:${thread_ts}`;
                     const userText: string = event.text;
 
-                    await this.queueService.dispatchMessageProcessing(spaceId, threadId, userText);
+                    await this.queueService.dispatchMessageProcessing(spaceId, threadId, userText, 'slack');
                 }
             }
 

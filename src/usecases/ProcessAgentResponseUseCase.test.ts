@@ -82,7 +82,7 @@ describe('ProcessAgentResponseUseCase', () => {
         tenantRepo = makeTenantRepo({ findByWorkspaceId: vi.fn().mockResolvedValue(fakeTenant) });
         chatRepo = makeChatRepo();
         chatProvider = makeChatProvider();
-        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo, chatProvider);
+        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo);
     });
 
     it('deve processar fluxo de texto (sem tool call) e enviar resposta', async () => {
@@ -91,7 +91,7 @@ describe('ProcessAgentResponseUseCase', () => {
         };
         vi.mocked(LLMFactory.create).mockReturnValue(mockLlmProvider as any);
 
-        await useCase.execute('spaces/AAAA1111', 'thread-1', 'Olá!');
+        await useCase.execute('spaces/AAAA1111', 'thread-1', 'Olá!', chatProvider);
 
         expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-1', 'Olá! Como posso ajudar?');
         expect(chatRepo.save).toHaveBeenCalledOnce();
@@ -105,7 +105,7 @@ describe('ProcessAgentResponseUseCase', () => {
         };
         vi.mocked(LLMFactory.create).mockReturnValue(mockLlmProvider as any);
 
-        await useCase.execute('spaces/AAAA1111', 'thread-1', 'Quais são os logs de erro?');
+        await useCase.execute('spaces/AAAA1111', 'thread-1', 'Quais são os logs de erro?', chatProvider);
 
         expect(mockLlmProvider.generateResponse).toHaveBeenCalledTimes(2);
         expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-1', 'Resultado processado com sucesso.');
@@ -113,9 +113,9 @@ describe('ProcessAgentResponseUseCase', () => {
 
     it('deve enviar mensagem de espaço não configurado se o space mapping não existir', async () => {
         spaceMappingRepo = makeSpaceMappingRepo({ findBySpaceId: vi.fn().mockResolvedValue(null) });
-        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo, chatProvider);
+        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo);
 
-        await useCase.execute('spaces/DESCONHECIDO', 'thread-1', 'Olá!');
+        await useCase.execute('spaces/DESCONHECIDO', 'thread-1', 'Olá!', chatProvider);
 
         expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-1', 'Este espaço não está configurado.');
         expect(chatRepo.save).not.toHaveBeenCalled();
@@ -129,9 +129,9 @@ describe('ProcessAgentResponseUseCase', () => {
             false // isActive = false
         );
         tenantRepo = makeTenantRepo({ findByWorkspaceId: vi.fn().mockResolvedValue(inactiveTenant) });
-        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo, chatProvider);
+        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo);
 
-        await useCase.execute('spaces/AAAA1111', 'thread-1', 'Olá!');
+        await useCase.execute('spaces/AAAA1111', 'thread-1', 'Olá!', chatProvider);
 
         expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-1', 'Desculpe, não consigo te atender neste momento.');
         expect(chatRepo.save).not.toHaveBeenCalled();
@@ -143,7 +143,7 @@ describe('ProcessAgentResponseUseCase', () => {
         };
         vi.mocked(LLMFactory.create).mockReturnValue(mockLlmProvider as any);
 
-        await useCase.execute('spaces/AAAA1111', 'thread-1', 'Olá!');
+        await useCase.execute('spaces/AAAA1111', 'thread-1', 'Olá!', chatProvider);
 
         expect(chatProvider.sendMessage).toHaveBeenCalledWith(
             'thread-1',
