@@ -17,6 +17,7 @@ export class ProcessAgentResponseUse {
     ){}
 
     async execute(spaceId: string, threadId: string, userText: string, chatProvider: IChatProvider): Promise<void> {
+        let mcpClient: MCPHttpAdapter | null = null;
         try {
 
             // 0. Descobre a qual Tenant esse espaço de chat pertence
@@ -44,7 +45,7 @@ export class ProcessAgentResponseUse {
 
             // 3. Instancia provedores e ferramentas dinamicamente para este tenant
             const llmProvider = LLMFactory.create(tenant.llmConfig);
-            const mcpClient = new MCPHttpAdapter(tenant.mcpConfig.url, tenant.mcpConfig.apiKey);
+            mcpClient = new MCPHttpAdapter(tenant.mcpConfig.url, tenant.mcpConfig.apiKey);
 
             if (!mcpClient.isConnected()) {
                 await mcpClient.connect();
@@ -79,6 +80,14 @@ export class ProcessAgentResponseUse {
         } catch (error) {
             console.error("Erro no processamento: ", error);
             await chatProvider.sendMessage(threadId, "Ocorreu um erro ao processar sua solicitação.");
+        } finally {
+            if (mcpClient) {
+                try {
+                    await mcpClient.close();
+                } catch (closeError) {
+                    console.error("Erro ao fechar o cliente MCP: ", closeError);
+                }
+            }
         }
     }
 }
