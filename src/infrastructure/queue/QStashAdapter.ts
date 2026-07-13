@@ -15,7 +15,8 @@ export class QStashAdapter implements IQueueService {
                 headers: {
                     'Authorization': `Bearer ${this.qstashToken.trim()}`,
                     'Content-Type': 'application/json',
-                    'Upstash-Retries': '3'
+                    'Upstash-Retries': '3',
+                    'Upstash-Timeout': '90s'
                 },
                 body: JSON.stringify({
                     workspaceId,

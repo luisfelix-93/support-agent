@@ -65,7 +65,15 @@ export class ProcessAgentResponseUse {
             let responseText = '';
 
             if (llmDecision.type === 'tool_call') {
-                const mcpResult = await mcpClient.executeTool(llmDecision.tool);
+                let mcpResult: any;
+                try {
+                    mcpResult = await mcpClient.executeTool(llmDecision.tool);
+                } catch (toolError: any) {
+                    console.error(`[ProcessAgentResponseUseCase] Erro ao executar ferramenta ${llmDecision.tool.name}:`, toolError);
+                    mcpResult = {
+                        error: `Falha na execução da ferramenta: ${toolError?.message ?? (typeof toolError === 'string' ? toolError : JSON.stringify(toolError))}`
+                    };
+                }
                 
                 context.addMessage(new Message(crypto.randomUUID(), 'system', JSON.stringify(mcpResult)));
 
