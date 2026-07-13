@@ -1,20 +1,41 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MCPHttpAdapter } from './MCPHttpAdapter.js';
 
-// Helper para criar uma resposta JSON-RPC de sucesso mockada
-function jsonRpcResponse(result: unknown, status = 200): Response {
-    return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), {
-        status,
-        headers: { 'Content-Type': 'application/json' },
-    });
-}
+// Classe auxiliar para mockar streams SSE nos testes
+class SSEMockStream {
+    private controller!: ReadableStreamDefaultController<Uint8Array>;
+    public stream: ReadableStream<Uint8Array>;
+    private encoder = new TextEncoder();
 
-// Helper para uma resposta JSON-RPC de erro
-function jsonRpcErrorResponse(code: number, message: string): Response {
-    return new Response(
-        JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code, message } }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-    );
+    constructor() {
+        this.stream = new ReadableStream({
+            start: (controller) => {
+                this.controller = controller;
+            }
+        });
+    }
+
+    sendEvent(event: string, data: any) {
+        let block = `event: ${event}\n`;
+        if (typeof data === 'object') {
+            block += `data: ${JSON.stringify(data)}\n\n`;
+        } else {
+            block += `data: ${data}\n\n`;
+        }
+        if (this.controller) {
+            this.controller.enqueue(this.encoder.encode(block));
+        }
+    }
+
+    close() {
+        if (this.controller) {
+            try {
+                this.controller.close();
+            } catch (err) {
+                // já fechado
+            }
+        }
+    }
 }
 
 const INIT_RESULT = {
@@ -26,14 +47,65 @@ const INIT_RESULT = {
 describe('MCPHttpAdapter', () => {
     let adapter: MCPHttpAdapter;
     let fetchMock: ReturnType<typeof vi.fn>;
+    let mockSse: SSEMockStream;
+    let toolCallResult: any = {};
 
     beforeEach(() => {
-        fetchMock = vi.fn();
+        mockSse = new SSEMockStream();
+        toolCallResult = {};
+        
+        fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+            const method = init?.method ?? 'GET';
+            
+            if (method === 'GET' && url.includes('/sse')) {
+                setTimeout(() => {
+                    mockSse.sendEvent('endpoint', '/message?sessionId=123');
+                }, 5);
+
+                return new Response(mockSse.stream, {
+                    status: 200,
+                    headers: { 'Content-Type': 'text/event-stream' }
+                });
+            }
+
+            if (method === 'POST' && url.includes('/message')) {
+                const body = JSON.parse(init?.body as string);
+                
+                setTimeout(() => {
+                    if (body.method === 'initialize') {
+                        mockSse.sendEvent('message', {
+                            jsonrpc: '2.0',
+                            id: body.id,
+                            result: INIT_RESULT
+                        });
+                    } else if (body.method === 'tools/list') {
+                        mockSse.sendEvent('message', {
+                            jsonrpc: '2.0',
+                            id: body.id,
+                            result: { tools: [] }
+                        });
+                    } else if (body.method === 'tools/call') {
+                        mockSse.sendEvent('message', {
+                            jsonrpc: '2.0',
+                            id: body.id,
+                            result: toolCallResult
+                        });
+                    }
+                }, 5);
+
+                return new Response(null, { status: 204 });
+            }
+
+            return new Response(null, { status: 404 });
+        });
+
         vi.stubGlobal('fetch', fetchMock);
         adapter = new MCPHttpAdapter('https://mcp.example.com', 'my-api-key');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await adapter.close();
+        mockSse.close();
         vi.unstubAllGlobals();
     });
 
@@ -45,11 +117,6 @@ describe('MCPHttpAdapter', () => {
 
     describe('connect()', () => {
         it('deve realizar o handshake completo e retornar o resultado do servidor', async () => {
-            // Passo 1: resposta do initialize
-            fetchMock.mockResolvedValueOnce(jsonRpcResponse(INIT_RESULT));
-            // Passo 2: resposta do notifications/initialized
-            fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
-
             const result = await adapter.connect();
 
             expect(result.protocolVersion).toBe('2025-03-26');
@@ -57,59 +124,87 @@ describe('MCPHttpAdapter', () => {
             expect(adapter.isConnected()).toBe(true);
         });
 
-        it('deve enviar o método "initialize" no primeiro request', async () => {
-            fetchMock.mockResolvedValueOnce(jsonRpcResponse(INIT_RESULT));
-            fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
-
+        it('deve enviar o método "initialize" no primeiro request de POST', async () => {
             await adapter.connect();
 
-            const firstCall = fetchMock.mock.calls[0];
-            const body = JSON.parse(firstCall[1].body);
+            // Chamada 0: GET /sse
+            // Chamada 1: POST /message (initialize)
+            const initializeCall = fetchMock.mock.calls[1];
+            const body = JSON.parse(initializeCall[1].body);
             expect(body.method).toBe('initialize');
             expect(body.params.protocolVersion).toBe('2025-03-26');
         });
 
         it('deve enviar a notification "notifications/initialized" após o initialize', async () => {
-            fetchMock.mockResolvedValueOnce(jsonRpcResponse(INIT_RESULT));
-            fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
-
             await adapter.connect();
 
-            const secondCall = fetchMock.mock.calls[1];
-            const body = JSON.parse(secondCall[1].body);
+            // Chamada 0: GET /sse
+            // Chamada 1: POST /message (initialize)
+            // Chamada 2: POST /message (notifications/initialized)
+            const thirdCall = fetchMock.mock.calls[2];
+            const body = JSON.parse(thirdCall[1].body);
             expect(body.method).toBe('notifications/initialized');
-            // Notification não deve ter `id`
             expect(body.id).toBeUndefined();
         });
 
         it('deve reutilizar a conexão existente se já estiver inicializado', async () => {
-            fetchMock.mockResolvedValueOnce(jsonRpcResponse(INIT_RESULT));
-            fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
-
             await adapter.connect();
             const fetchCallsAfterFirst = fetchMock.mock.calls.length;
 
-            // Segunda chamada ao connect() não deve fazer novos requests
             await adapter.connect();
             expect(fetchMock.mock.calls.length).toBe(fetchCallsAfterFirst);
         });
 
         it('deve lançar erro se a resposta do initialize não tiver protocolVersion', async () => {
-            fetchMock.mockResolvedValueOnce(jsonRpcResponse({ serverInfo: { name: 'test' } }));
+            fetchMock.mockImplementationOnce(async () => {
+                setTimeout(() => {
+                    mockSse.sendEvent('endpoint', '/message?sessionId=123');
+                }, 5);
+                return new Response(mockSse.stream, { status: 200 });
+            });
+
+            fetchMock.mockImplementationOnce(async (url, init) => {
+                const body = JSON.parse(init?.body as string);
+                setTimeout(() => {
+                    mockSse.sendEvent('message', {
+                        jsonrpc: '2.0',
+                        id: body.id,
+                        result: { serverInfo: { name: 'test' } } // Sem protocolVersion
+                    });
+                }, 5);
+                return new Response(null, { status: 204 });
+            });
 
             await expect(adapter.connect()).rejects.toThrow(
                 "campo 'protocolVersion' ausente"
             );
         });
 
-        it('deve lançar erro em caso de status HTTP 401', async () => {
+        it('deve lançar erro em caso de status HTTP 401 no GET do SSE', async () => {
             fetchMock.mockResolvedValueOnce(new Response(null, { status: 401 }));
 
             await expect(adapter.connect()).rejects.toThrow('API Key inválida ou ausente');
         });
 
-        it('deve lançar erro em caso de erro JSON-RPC retornado pelo servidor', async () => {
-            fetchMock.mockResolvedValueOnce(jsonRpcErrorResponse(-32600, 'Invalid Request'));
+        it('deve lançar erro em caso de erro JSON-RPC retornado pelo servidor no stream', async () => {
+            fetchMock.mockImplementationOnce(async () => {
+                setTimeout(() => {
+                    mockSse.sendEvent('endpoint', '/message?sessionId=123');
+                }, 5);
+                return new Response(mockSse.stream, { status: 200 });
+            });
+
+            fetchMock.mockImplementationOnce(async (url, init) => {
+                const body = JSON.parse(init?.body as string);
+                setTimeout(() => {
+                    mockSse.sendEvent('message', {
+                        jsonrpc: '2.0',
+                        id: body.id,
+                        error: { code: -32600, message: 'Invalid Request' }
+                    });
+                }, 5);
+                return new Response(null, { status: 204 });
+            });
 
             await expect(adapter.connect()).rejects.toThrow('Erro JSON-RPC');
         });
@@ -117,16 +212,12 @@ describe('MCPHttpAdapter', () => {
 
     describe('executeTool()', () => {
         beforeEach(async () => {
-            // Realiza o handshake antes de cada teste de executeTool
-            fetchMock.mockResolvedValueOnce(jsonRpcResponse(INIT_RESULT));
-            fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
             await adapter.connect();
             fetchMock.mockClear(); // Limpa chamadas do connect
         });
 
         it('deve enviar o método "tools/call" com o nome e parâmetros corretos', async () => {
-            const toolResult = { content: [{ type: 'text', text: 'dados retornados' }] };
-            fetchMock.mockResolvedValueOnce(jsonRpcResponse(toolResult));
+            toolCallResult = { content: [{ type: 'text', text: 'dados retornados' }] };
 
             await adapter.executeTool({ name: 'query_logs', parameters: { level: 'error' } });
 
@@ -138,12 +229,11 @@ describe('MCPHttpAdapter', () => {
         });
 
         it('deve retornar o resultado da ferramenta', async () => {
-            const toolResult = { content: [{ type: 'text', text: 'resultado' }] };
-            fetchMock.mockResolvedValueOnce(jsonRpcResponse(toolResult));
+            toolCallResult = { content: [{ type: 'text', text: 'resultado' }] };
 
             const result = await adapter.executeTool({ name: 'my_tool', parameters: {} });
 
-            expect(result).toEqual(toolResult);
+            expect(result).toEqual(toolCallResult);
         });
     });
 });

@@ -19,4 +19,9 @@ export interface IMCPClient {
 
     // Executa uma ferramenta específica no servidor MCP e devolve o resultado cru
     executeTool(tool: ToolCall): Promise<any>;
+
+    /**
+     * Fecha conexões abertas e libera recursos.
+     */
+    close(): Promise<void>;
 }

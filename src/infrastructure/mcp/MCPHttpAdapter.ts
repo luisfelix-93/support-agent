@@ -17,46 +17,33 @@ const CLIENT_INFO = {
 } as const;
 
 /**
- * Adaptador HTTP para comunicação com o MCP Server.
+ * Adaptador HTTP para comunicação com o MCP Server via transporte SSE (Server-Sent Events).
  * 
- * Implementa o protocolo MCP sobre HTTP usando JSON-RPC 2.0.
- * O fluxo completo é:
- *   1. connect()       → Handshake (initialize + initialized notification)
- *   2. listTools()     → Descobre ferramentas disponíveis
- *   3. executeTool()   → Executa uma ferramenta específica
- * 
- * Nenhum método de operação (listTools, executeTool) pode ser chamado
- * antes do handshake ser concluído com sucesso.
+ * Implementa o protocolo MCP sobre HTTP de acordo com a especificação de transporte oficial:
+ *   1. connect()       → Conecta ao stream SSE GET /sse?api_key=...
+ *                      → Escuta o evento 'endpoint' enviado pelo servidor para obter a URL de POST das mensagens
+ *                      → Executa o handshake de inicialização MCP (initialize + notification/initialized)
+ *   2. listTools()     → Envia tools/list via POST e escuta a resposta pelo stream SSE
+ *   3. executeTool()   → Envia tools/call via POST e escuta a resposta pelo stream SSE
+ *   4. close()         → Aborta a requisição SSE, fecha streams e limpa requests pendentes
  */
 export class MCPHttpAdapter implements IMCPClient {
-    private readonly messageUrl: string;
     private initialized: boolean = false;
     private requestCounter: number = 1;
     private serverCapabilities: MCPCapabilities | null = null;
 
+    private abortController: AbortController | null = null;
+    private sseReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    private postUrl: string | null = null;
+    private pendingRequests = new Map<number, { resolve: (val: any) => void; reject: (err: Error) => void }>();
+
     constructor(
         private readonly baseUrl: string,
         private readonly apiKey: string
-    ){
-        this.messageUrl = `${this.baseUrl}/message?api_key=${this.apiKey}`;
-    }
+    ){}
 
     /**
-     * Realiza o handshake MCP completo com o servidor.
-     * 
-     * O handshake segue a especificação MCP e consiste em 3 etapas:
-     * 
-     *   Passo 1 — Client envia `initialize` (JSON-RPC request)
-     *     → Informa versão do protocolo, capabilities do client e clientInfo
-     * 
-     *   Passo 2 — Server responde com suas capabilities e serverInfo
-     *     → Client armazena as capabilities negociadas
-     * 
-     *   Passo 3 — Client envia `notifications/initialized` (JSON-RPC notification, sem id)
-     *     → Sinaliza que o client está pronto para operar
-     * 
-     * @throws Error se o handshake falhar ou se o servidor retornar erro JSON-RPC
-     * @returns MCPInitializeResult com as capacidades negociadas do servidor
+     * Realiza a conexão SSE e o handshake MCP completo com o servidor.
      */
     async connect(): Promise<MCPInitializeResult> {
         if (this.initialized) {
@@ -68,71 +55,117 @@ export class MCPHttpAdapter implements IMCPClient {
             };
         }
 
-        console.log("[MCP Handshake] Iniciando handshake com o servidor MCP...");
+        const cleanBaseUrl = this.baseUrl.trim().replace(/\/+$/, '');
+        const cleanApiKey = this.apiKey.trim();
+        const sseUrl = `${cleanBaseUrl}/sse?api_key=${cleanApiKey}`;
 
-        // ───────────────────────────────────────────────
-        // Passo 1: Enviar request `initialize`
-        // ───────────────────────────────────────────────
-        const initializePayload = {
-            jsonrpc: "2.0",
-            id: this.getNextId(),
-            method: "initialize",
-            params: {
-                protocolVersion: MCP_PROTOCOL_VERSION,
-                capabilities: {
-                    // O client não expõe roots nem sampling por enquanto
+        console.log(`[MCP Handshake] Iniciando conexão SSE com o servidor em: ${sseUrl}`);
+
+        this.abortController = new AbortController();
+
+        try {
+            const response = await fetch(sseUrl, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'text/event-stream'
                 },
-                clientInfo: CLIENT_INFO
+                signal: this.abortController.signal
+            });
+
+            if (!response.ok) {
+                const statusMessages: Record<number, string> = {
+                    401: "API Key inválida ou ausente",
+                    403: "Acesso negado ao recurso",
+                    429: "Rate limit excedido — tente novamente em instantes"
+                };
+                const detail = statusMessages[response.status] ?? `HTTP Status ${response.status}`;
+                throw new Error(`[MCP Client] Falha ao conectar no SSE: ${detail}`);
             }
-        };
 
-        console.log("[MCP Handshake] Passo 1/3 — Enviando request 'initialize'...");
-        const initResult = await this.sendJsonRpc(initializePayload);
+            if (!response.body) {
+                throw new Error(`[MCP Client] O corpo da resposta SSE está vazio`);
+            }
 
-        // Valida a resposta do servidor
-        if (!initResult || !initResult.protocolVersion) {
-            throw new Error(
-                "[MCP Handshake] Resposta inválida do servidor: campo 'protocolVersion' ausente."
+            this.sseReader = response.body.getReader();
+
+            // Promise para capturar a primeira URL de POST enviada pelo evento 'endpoint'
+            let resolveEndpoint: (url: string) => void;
+            let rejectEndpoint: (err: Error) => void;
+            const endpointPromise = new Promise<string>((resolve, reject) => {
+                resolveEndpoint = resolve;
+                rejectEndpoint = reject;
+            });
+
+            // Inicia leitura assíncrona do stream SSE em segundo plano
+            this.startReadingStream(resolveEndpoint!, rejectEndpoint!);
+
+            // Aguarda obter o endpoint das mensagens POST
+            console.log("[MCP Handshake] Aguardando evento 'endpoint' do servidor SSE...");
+            const relativeOrAbsolutePostUrl = await endpointPromise;
+
+            if (relativeOrAbsolutePostUrl.startsWith('http://') || relativeOrAbsolutePostUrl.startsWith('https://')) {
+                this.postUrl = relativeOrAbsolutePostUrl;
+            } else {
+                this.postUrl = `${cleanBaseUrl}${relativeOrAbsolutePostUrl.startsWith('/') ? '' : '/'}${relativeOrAbsolutePostUrl}`;
+            }
+
+            console.log(`[MCP Handshake] Endpoint de mensagens configurado: ${this.postUrl}`);
+
+            // ───────────────────────────────────────────────
+            // Passo 1: Enviar request `initialize`
+            // ───────────────────────────────────────────────
+            const initializePayload = {
+                jsonrpc: "2.0",
+                id: this.getNextId(),
+                method: "initialize",
+                params: {
+                    protocolVersion: MCP_PROTOCOL_VERSION,
+                    capabilities: {},
+                    clientInfo: CLIENT_INFO
+                }
+            };
+
+            console.log("[MCP Handshake] Passo 1/3 — Enviando request 'initialize'...");
+            const initResult = await this.sendJsonRpc(initializePayload);
+
+            if (!initResult || !initResult.protocolVersion) {
+                throw new Error(
+                    "[MCP Handshake] Resposta inválida do servidor: campo 'protocolVersion' ausente."
+                );
+            }
+
+            const serverInfo = initResult.serverInfo ?? { name: "unknown", version: "unknown" };
+            this.serverCapabilities = initResult.capabilities ?? {};
+
+            console.log(
+                `[MCP Handshake] Passo 2/3 — Servidor respondeu: ` +
+                `${serverInfo.name} v${serverInfo.version} ` +
+                `(protocolo: ${initResult.protocolVersion})`
             );
+
+            // ───────────────────────────────────────────────
+            // Passo 3: Enviar notification `initialized`
+            // ───────────────────────────────────────────────
+            const initializedNotification = {
+                jsonrpc: "2.0",
+                method: "notifications/initialized"
+            };
+
+            console.log("[MCP Handshake] Passo 3/3 — Enviando notification 'initialized'...");
+            await this.sendNotification(initializedNotification);
+
+            this.initialized = true;
+            console.log("[MCP Handshake] ✅ Handshake concluído com sucesso!");
+
+            return {
+                protocolVersion: initResult.protocolVersion,
+                capabilities: this.serverCapabilities!,
+                serverInfo
+            };
+        } catch (error) {
+            await this.close();
+            throw error;
         }
-
-        const serverInfo = initResult.serverInfo ?? { name: "unknown", version: "unknown" };
-        this.serverCapabilities = initResult.capabilities ?? {};
-
-        console.log(
-            `[MCP Handshake] Passo 2/3 — Servidor respondeu: ` +
-            `${serverInfo.name} v${serverInfo.version} ` +
-            `(protocolo: ${initResult.protocolVersion})`
-        );
-
-        // ───────────────────────────────────────────────
-        // Passo 3: Enviar notification `initialized`
-        // (notification = sem campo `id` no JSON-RPC)
-        // ───────────────────────────────────────────────
-        const initializedNotification = {
-            jsonrpc: "2.0",
-            method: "notifications/initialized"
-            // Sem `id` → é uma notification, não espera resposta
-        };
-
-        console.log("[MCP Handshake] Passo 3/3 — Enviando notification 'initialized'...");
-        await this.sendNotification(initializedNotification);
-
-        this.initialized = true;
-
-        const result: MCPInitializeResult = {
-            protocolVersion: initResult.protocolVersion,
-            capabilities: this.serverCapabilities!,
-            serverInfo
-        };
-
-        console.log("[MCP Handshake] ✅ Handshake concluído com sucesso!");
-        console.log(
-            `[MCP Handshake] Capabilities do servidor:`,
-            JSON.stringify(this.serverCapabilities, null, 2)
-        );
-
-        return result;
     }
 
     /**
@@ -144,7 +177,6 @@ export class MCPHttpAdapter implements IMCPClient {
 
     /**
      * Busca dinamicamente as ferramentas suportadas pelo tenant.
-     * O handshake deve ter sido realizado antes de chamar este método.
      */
     async listTools(): Promise<any> {
         await this.ensureInitialized();
@@ -158,8 +190,7 @@ export class MCPHttpAdapter implements IMCPClient {
     }
 
     /**
-     * Executa uma ferramenta específica (ex: query_loki_logs, search_knowledge_base).
-     * O handshake deve ter sido realizado antes de chamar este método.
+     * Executa uma ferramenta específica.
      */
     async executeTool(tool: ToolCall): Promise<any> {
         await this.ensureInitialized();
@@ -178,13 +209,42 @@ export class MCPHttpAdapter implements IMCPClient {
         return this.sendJsonRpc(payload);
     }
 
+    /**
+     * Fecha as conexões abertas do stream SSE e aborta requests pendentes.
+     */
+    async close(): Promise<void> {
+        console.log("[MCP Client] Encerrando conexões e limpando recursos...");
+        
+        if (this.sseReader) {
+            try {
+                await this.sseReader.cancel();
+            } catch (err) {
+                // silencia
+            }
+            this.sseReader = null;
+        }
+
+        if (this.abortController) {
+            this.abortController.abort();
+            this.abortController = null;
+        }
+
+        // Rejeita todas as requisições que estavam aguardando resposta
+        for (const [id, req] of this.pendingRequests.entries()) {
+            req.reject(new Error("[MCP Client] Conexão encerrada pelo cliente"));
+            this.pendingRequests.delete(id);
+        }
+
+        this.postUrl = null;
+        this.initialized = false;
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // Métodos privados
     // ─────────────────────────────────────────────────────────────────
 
     /**
-     * Garante que o handshake foi realizado. Se não foi, executa automaticamente.
-     * Isso dá resiliência: se alguém chamar listTools() sem connect(), ele auto-conecta.
+     * Garante que o handshake foi realizado. Se não foi, conecta automaticamente.
      */
     private async ensureInitialized(): Promise<void> {
         if (!this.initialized) {
@@ -194,12 +254,125 @@ export class MCPHttpAdapter implements IMCPClient {
     }
 
     /**
-     * Envia um payload JSON-RPC que espera resposta (request com `id`).
-     * Trata erros HTTP e erros JSON-RPC.
+     * Loop em segundo plano para leitura e parseamento do stream SSE.
+     */
+    private async startReadingStream(
+        resolveEndpoint: (url: string) => void,
+        rejectEndpoint: (err: Error) => void
+    ) {
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let hasResolvedEndpoint = false;
+
+        try {
+            while (this.sseReader) {
+                const { value, done } = await this.sseReader.read();
+                if (done) {
+                    console.log("[MCP Client] SSE Connection fechada pelo servidor");
+                    break;
+                }
+
+                buffer += decoder.decode(value, { stream: true });
+
+                let eventBoundary = buffer.indexOf('\n\n');
+                while (eventBoundary !== -1) {
+                    const block = buffer.substring(0, eventBoundary).trim();
+                    buffer = buffer.substring(eventBoundary + 2);
+
+                    this.parseAndHandleSSEBlock(block, (url) => {
+                        hasResolvedEndpoint = true;
+                        resolveEndpoint(url);
+                    });
+
+                    eventBoundary = buffer.indexOf('\n\n');
+                }
+            }
+            
+            if (!hasResolvedEndpoint) {
+                rejectEndpoint(new Error("[MCP Client] Conexão SSE encerrada antes de receber o endpoint"));
+            }
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                console.log("[MCP Client] SSE reader abortado pelo cliente com sucesso");
+            } else {
+                console.error("[MCP Client] Erro na leitura do stream SSE:", error);
+                if (!hasResolvedEndpoint) {
+                    rejectEndpoint(error);
+                }
+                for (const [id, req] of this.pendingRequests.entries()) {
+                    req.reject(error);
+                    this.pendingRequests.delete(id);
+                }
+            }
+        }
+    }
+
+    /**
+     * Processa um bloco individual de evento SSE.
+     */
+    private parseAndHandleSSEBlock(block: string, resolveEndpoint: (url: string) => void) {
+        if (!block) return;
+
+        const lines = block.split(/\r?\n/);
+        let eventType = "";
+        let dataContent = "";
+
+        for (const line of lines) {
+            if (line.startsWith("event:")) {
+                eventType = line.substring(6).trim();
+            } else if (line.startsWith("data:")) {
+                dataContent = line.substring(5).trim();
+            }
+        }
+
+        if (eventType === "endpoint" && dataContent) {
+            resolveEndpoint(dataContent);
+        } else if (eventType === "message" && dataContent) {
+            try {
+                const messageJson = JSON.parse(dataContent);
+                this.handleIncomingMessage(messageJson);
+            } catch (err) {
+                console.error("[MCP Client] Erro ao parsear mensagem JSON do SSE:", err);
+            }
+        }
+    }
+
+    /**
+     * Manipula mensagens JSON-RPC recebidas via stream SSE.
+     */
+    private handleIncomingMessage(message: any) {
+        if (message.id !== undefined && message.id !== null) {
+            const id = Number(message.id);
+            const pending = this.pendingRequests.get(id);
+            if (pending) {
+                if (message.error) {
+                    pending.reject(
+                        new Error(`[MCP Client] Erro JSON-RPC (code: ${message.error.code}): ${message.error.message}`)
+                    );
+                } else {
+                    pending.resolve(message.result);
+                }
+                this.pendingRequests.delete(id);
+            }
+        }
+    }
+
+    /**
+     * Envia um request JSON-RPC via POST HTTP e aguarda a resposta assíncrona no stream SSE.
      */
     private async sendJsonRpc(payload: any): Promise<any> {
+        if (!this.postUrl) {
+            throw new Error("[MCP Client] Post URL não configurado. Handshake SSE efetuado?");
+        }
+
+        const requestId = payload.id;
+        
+        const responsePromise = new Promise<any>((resolve, reject) => {
+            this.pendingRequests.set(requestId, { resolve, reject });
+        });
+
         try {
-            const response = await fetch(this.messageUrl, {
+            const response = await fetch(this.postUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -214,31 +387,28 @@ export class MCPHttpAdapter implements IMCPClient {
                     429: "Rate limit excedido — tente novamente em instantes"
                 };
                 const detail = statusMessages[response.status] ?? `Status ${response.status}`;
-                throw new Error(`[MCP Client] Erro HTTP: ${detail}`);
+                throw new Error(`[MCP Client] Erro HTTP no POST: ${detail}`);
             }
 
-            const data = await response.json();
-
-            if (data.error) {
-                throw new Error(
-                    `[MCP Client] Erro JSON-RPC (code: ${data.error.code}): ${data.error.message}`
-                );
-            }
-
-            return data.result;
+            // A resposta real JSON-RPC com o resultado virá assincronamente pelo stream SSE.
+            // Retorna a promise que resolverá quando o evento de resposta correspondente chegar.
+            return await responsePromise;
         } catch (error) {
-            console.error("[MCP Client] Falha na comunicação:", error);
-            throw error;           
+            this.pendingRequests.delete(requestId);
+            throw error;
         }
     }
 
     /**
-     * Envia uma notification JSON-RPC (sem `id`, sem resposta esperada).
-     * Notifications são fire-and-forget conforme a spec JSON-RPC 2.0.
+     * Envia uma notification JSON-RPC (sem id) via POST HTTP.
      */
     private async sendNotification(payload: any): Promise<void> {
+        if (!this.postUrl) {
+            throw new Error("[MCP Client] Post URL não configurado. Handshake SSE efetuado?");
+        }
+
         try {
-            const response = await fetch(this.messageUrl, {
+            const response = await fetch(this.postUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -246,7 +416,6 @@ export class MCPHttpAdapter implements IMCPClient {
                 body: JSON.stringify(payload)
             });
 
-            // Notifications podem retornar 200 ou 204 — ambos são válidos
             if (!response.ok && response.status !== 204) {
                 console.warn(
                     `[MCP Client] Notification retornou status inesperado: ${response.status}`
