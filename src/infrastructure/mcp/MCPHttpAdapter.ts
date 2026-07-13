@@ -381,7 +381,7 @@ export class MCPHttpAdapter implements IMCPClient {
         let timeoutId: NodeJS.Timeout | undefined;
         const timeoutPromise = new Promise<any>((_, reject) => {
             timeoutId = setTimeout(() => {
-                reject(new Error(`[MCP Client] Timeout de ${this.requestTimeoutMs / 1000}s aguardando resposta da ferramenta`));
+                reject(new Error(`[MCP Client] Timeout de ${this.requestTimeoutMs / 1000}s aguardando resposta do servidor (método: ${payload.method})`));
             }, this.requestTimeoutMs);
         });
 
