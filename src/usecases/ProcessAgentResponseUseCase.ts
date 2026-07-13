@@ -10,6 +10,8 @@ import { ISpaceMappingRepository } from "../domain/ports/ISpaceMappingRepository
 
 
 export class ProcessAgentResponseUse {
+    private readonly mcpClients = new Map<string, MCPHttpAdapter>();
+
     constructor(
         private readonly spaceMappingRepository: ISpaceMappingRepository,
         private readonly tenantRepository: ITenantRepository,
@@ -45,7 +47,14 @@ export class ProcessAgentResponseUse {
 
             // 3. Instancia provedores e ferramentas dinamicamente para este tenant
             const llmProvider = LLMFactory.create(tenant.llmConfig);
-            mcpClient = new MCPHttpAdapter(tenant.mcpConfig.url, tenant.mcpConfig.apiKey);
+            
+            const mcpConfigKey = JSON.stringify(tenant.mcpConfig);
+            let cachedClient = this.mcpClients.get(mcpConfigKey);
+            if (!cachedClient) {
+                cachedClient = new MCPHttpAdapter(tenant.mcpConfig.url, tenant.mcpConfig.apiKey);
+                this.mcpClients.set(mcpConfigKey, cachedClient);
+            }
+            mcpClient = cachedClient;
 
             if (!mcpClient.isConnected()) {
                 await mcpClient.connect();
@@ -97,14 +106,6 @@ export class ProcessAgentResponseUse {
         } catch (error) {
             console.error("Erro no processamento: ", error);
             await chatProvider.sendMessage(threadId, "Ocorreu um erro ao processar sua solicitação.");
-        } finally {
-            if (mcpClient) {
-                try {
-                    await mcpClient.close();
-                } catch (closeError) {
-                    console.error("Erro ao fechar o cliente MCP: ", closeError);
-                }
-            }
         }
     }
 }

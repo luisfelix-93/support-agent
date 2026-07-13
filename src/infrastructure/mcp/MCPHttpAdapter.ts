@@ -311,6 +311,10 @@ export class MCPHttpAdapter implements IMCPClient {
                     this.pendingRequests.delete(id);
                 }
             }
+        } finally {
+            this.initialized = false;
+            this.sseReader = null;
+            this.postUrl = null;
         }
     }
 
