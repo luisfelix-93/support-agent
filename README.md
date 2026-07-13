@@ -486,12 +486,16 @@ Para evitar que o agente fique travado ("mudo") durante execuções de longa dur
 
 1. **Timeout do Cliente MCP (`Promise.race`)**:
    - Um timeout (padrão de `25s`, configurável via construtor) foi implementado para todas as requisições JSON-RPC via POST. Caso o servidor não responda a tempo, a promessa é rejeitada e uma exceção de tempo limite é lançada.
-2. **Rejeição Automática ao Fechar Stream**:
-   - O `MCPHttpAdapter` monitora ativamente o encerramento do stream SSE. Caso a conexão SSE seja encerrada pelo servidor (por inatividade ou reinicialização do proxy), todas as promessas pendentes no mapa `pendingRequests` são imediatamente rejeitadas, impedindo vazamentos de memória e travamento indefinido do fluxo de execução.
-3. **Tratamento de Exceções no Use Case**:
+2. **Reutilização de Conexões (Cache de Adaptadores)**:
+   - Para evitar reconexões e handshakes frequentes a cada mensagem do webhook, o `ProcessAgentResponseUseCase` mantém um cache de instâncias de `MCPHttpAdapter` com base na configuração do Tenant. A conexão SSE permanece aberta em segundo plano para reutilização.
+3. **Auto-reconexão robusta**:
+   - O `MCPHttpAdapter` monitora ativamente o encerramento do stream SSE. Caso a conexão SSE seja encerrada pelo servidor (por inatividade ou reinicialização do proxy), a leitura do stream é finalizada, e o estado interno do adapter é redefinido para não-inicializado (`initialized = false`). No próximo request, o handshake é efetuado novamente de forma automática e transparente.
+4. **Rejeição Automática ao Fechar Stream**:
+   - Ao detectar o encerramento prematuro da conexão SSE, todas as promessas pendentes no mapa `pendingRequests` são imediatamente rejeitadas, impedindo vazamentos de memória e travamento indefinido do fluxo de execução.
+5. **Tratamento de Exceções no Use Case**:
    - A chamada `mcpClient.executeTool` dentro do `ProcessAgentResponseUseCase` é envolvida por um bloco `try-catch`.
-   - Se a execução falhar ou estourar o timeout de 25s, o erro é capturado e enviado de volta no histórico da conversa como uma mensagem de sistema (`system`). O LLM é acionado de novo com esse contexto de erro, podendo justificar a falha para o usuário ou tentar caminhos alternativos de resposta, mantendo o agente sempre ativo.
-4. **Timeout Estendido de Fila (QStash)**:
+   - Se a execução falhar ou estourar o timeout de 25s, o erro é capturado e enviado de volta no histórico da conversa como uma mensagem de sistema (`system`). O LLM é acionado de novo com esse contexto de erro, podendo explicar a falha para o usuário ou tentar caminhos alternativos de resposta, mantendo o agente sempre ativo.
+6. **Timeout Estendido de Fila (QStash)**:
    - Adicionamos o cabeçalho `'Upstash-Timeout': '90s'` no envio de mensagens de fila para o QStash. Isso garante que o Upstash não encerre prematuramente a conexão HTTP com o worker local antes de a chamada da ferramenta (25s) e a re-análise do LLM terem finalizado.
 
 ---

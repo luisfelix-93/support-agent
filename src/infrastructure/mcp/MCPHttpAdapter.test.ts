@@ -237,19 +237,20 @@ describe('MCPHttpAdapter', () => {
         });
 
         it('deve lançar erro de timeout se o servidor não responder a tempo', async () => {
+            const localMockSse = new SSEMockStream();
             const shortTimeoutAdapter = new MCPHttpAdapter('https://mcp.example.com', 'my-api-key', 20);
             
             fetchMock.mockImplementationOnce(async () => {
                 setTimeout(() => {
-                    mockSse.sendEvent('endpoint', '/message?sessionId=123');
+                    localMockSse.sendEvent('endpoint', '/message?sessionId=123');
                 }, 5);
-                return new Response(mockSse.stream, { status: 200 });
+                return new Response(localMockSse.stream, { status: 200 });
             });
 
             fetchMock.mockImplementationOnce(async (url, init) => {
                 const body = JSON.parse(init?.body as string);
                 setTimeout(() => {
-                    mockSse.sendEvent('message', {
+                    localMockSse.sendEvent('message', {
                         jsonrpc: '2.0',
                         id: body.id,
                         result: INIT_RESULT
@@ -266,9 +267,10 @@ describe('MCPHttpAdapter', () => {
             });
 
             await expect(shortTimeoutAdapter.executeTool({ name: 'slow_tool', parameters: {} }))
-                .rejects.toThrow('Timeout de 0.02s aguardando resposta da ferramenta');
+                .rejects.toThrow('Timeout de 0.02s aguardando resposta do servidor');
             
             await shortTimeoutAdapter.close();
+            localMockSse.close();
         });
 
         it('deve rejeitar requisições pendentes se a conexão SSE for encerrada prematuramente', async () => {
