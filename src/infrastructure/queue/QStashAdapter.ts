@@ -6,7 +6,7 @@ export class QStashAdapter implements IQueueService {
         private readonly workerUrl: string
     ){}
 
-    async dispatchMessageProcessing(workspaceId: string, threadId: string, content: string): Promise<void> {
+    async dispatchMessageProcessing(workspaceId: string, threadId: string, content: string, source: 'google' | 'slack'): Promise<void> {
         const destination = this.workerUrl.trim();
         const qstashUrl = `https://qstash.upstash.io/v2/publish/${destination}`;
         try {
@@ -20,7 +20,8 @@ export class QStashAdapter implements IQueueService {
                 body: JSON.stringify({
                     workspaceId,
                     threadId,
-                    text: content
+                    text: content,
+                    source
                 })
             });
 

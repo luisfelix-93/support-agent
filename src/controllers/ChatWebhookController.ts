@@ -26,7 +26,7 @@ export class ChatWebhookController {
                 const userText = payload.message.text;
 
                 // Despacha para o processamento assíncrono (QStash)
-                await this.queueService.dispatchMessageProcessing(spaceId, threadId, userText);
+                await this.queueService.dispatchMessageProcessing(spaceId, threadId, userText, 'google');
 
                 //Retorna imediatamente para o Google Chat
                 return res.status(200).send();

@@ -160,7 +160,8 @@ describe('SlackWebhookController', () => {
             expect(queueService.dispatchMessageProcessing).toHaveBeenCalledWith(
                 channel,           // spaceId
                 `${channel}:${ts}`, // threadId = "channel:ts"
-                text
+                text,
+                'slack'
             );
             expect(res.status).toHaveBeenCalledWith(200);
         });
@@ -187,7 +188,8 @@ describe('SlackWebhookController', () => {
             expect(queueService.dispatchMessageProcessing).toHaveBeenCalledWith(
                 channel,
                 `${channel}:${thread_ts}`, // usa thread_ts, não ts
-                text
+                text,
+                'slack'
             );
         });
     });

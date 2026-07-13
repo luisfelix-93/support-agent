@@ -14,17 +14,16 @@ export class ProcessAgentResponseUse {
         private readonly spaceMappingRepository: ISpaceMappingRepository,
         private readonly tenantRepository: ITenantRepository,
         private readonly chatRepository: IChatRepository,
-        private readonly chatProvider: IChatProvider
     ){}
 
-    async execute(spaceId: string, threadId: string, userText: string): Promise<void> {
+    async execute(spaceId: string, threadId: string, userText: string, chatProvider: IChatProvider): Promise<void> {
         try {
 
             // 0. Descobre a qual Tenant esse espaço de chat pertence
             const mapping = await this.spaceMappingRepository.findBySpaceId(spaceId);
 
             if (!mapping) {
-                await this.chatProvider.sendMessage(threadId, "Este espaço não está configurado.");
+                await chatProvider.sendMessage(threadId, "Este espaço não está configurado.");
                 return;
             }
 
@@ -33,7 +32,7 @@ export class ProcessAgentResponseUse {
             // 1. Busca os dados via repositórios (isolando a persistencia do Controller e UseCase)
             const tenant = await this.tenantRepository.findByWorkspaceId(workspaceId);
             if (!tenant || !tenant.isActive) {
-                await this.chatProvider.sendMessage(threadId, "Desculpe, não consigo te atender neste momento.");
+                await chatProvider.sendMessage(threadId, "Desculpe, não consigo te atender neste momento.");
                 return;
             }
 
@@ -75,11 +74,11 @@ export class ProcessAgentResponseUse {
                 await this.chatRepository.save(context);
 
                 // 7. Envia a resposta ao usuário
-                await this.chatProvider.sendMessage(threadId, responseText);
+                await chatProvider.sendMessage(threadId, responseText);
             }
         } catch (error) {
             console.error("Erro no processamento: ", error);
-            await this.chatProvider.sendMessage(threadId, "Ocorreu um erro ao processar sua solicitação.");
+            await chatProvider.sendMessage(threadId, "Ocorreu um erro ao processar sua solicitação.");
         }
     }
 }

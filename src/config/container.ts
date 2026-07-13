@@ -47,7 +47,6 @@ const processAgentUseCase = new ProcessAgentResponseUse(
     spaceMappingRepository,
     tenantRepository,
     chatRepository,
-    chatAdapter
 );
 
 const registerUserUseCase = new RegisterUserUseCase(userRepository);
@@ -58,7 +57,10 @@ const associateTenantUseCase = new AssociateTenantToUserUseCase(userRepository, 
 
 // ─── Controllers ────────────────────────────────────
 export const webhookController = new ChatWebhookController(queueAdapter);
-export const workerController = new WorkerController(processAgentUseCase);
+export const workerController = new WorkerController(processAgentUseCase, {
+    google: chatAdapter,
+    slack: slackChatAdapter,
+});
 export const authController = new AuthController(loginUserUseCase);
 export const onboardingController = new OnboardingController(
     registerUserUseCase,
