@@ -7,5 +7,5 @@ export type LLMResponse =
 
 export interface ILLMProvider {
     // Recebe o contexto e decide: ou gera texto ou pede para rodar uma ferramenta (MCP)
-    generateResponse(context: ChatContext): Promise<LLMResponse>;
+    generateResponse(context: ChatContext, tools?: any[]): Promise<LLMResponse>;
 }

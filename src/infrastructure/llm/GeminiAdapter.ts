@@ -10,7 +10,7 @@ export class GeminiAdapter implements ILLMProvider {
         this.client = new GoogleGenAI({ apiKey: this.apiKey });
     }
 
-    async generateResponse(context: ChatContext): Promise<LLMResponse> {
+    async generateResponse(context: ChatContext, tools?: any[]): Promise<LLMResponse> {
         // 1. Separar system instruction das demais mensagens
         const systemParts = context.messages
             .filter(m => m.role === "system")
@@ -25,23 +25,16 @@ export class GeminiAdapter implements ILLMProvider {
                 parts: [{ text: msg.content }],
             }));
 
-        // 3. Definir ferramentas disponíveis (equivalente ao check_logs dos outros adapters)
-        const tools: Tool[] = [
+        // 3. Definir ferramentas disponíveis dinamicamente
+        const geminiTools: Tool[] = tools && tools.length > 0 ? [
             {
-                functionDeclarations: [
-                    {
-                        name: "check_logs",
-                        description: "Busca logs de erro no sistema",
-                        parameters: {
-                            type: "object" as any,
-                            properties: {
-                                service: { type: "string" as any, description: "Nome do serviço" },
-                            },
-                        },
-                    },
-                ],
-            },
-        ];
+                functionDeclarations: tools.map((t: any) => ({
+                    name: t.name,
+                    description: t.description || "",
+                    parameters: t.inputSchema || { type: "object" }
+                }))
+            }
+        ] : [];
 
         // 4. Chamar a API do Gemini
         const response = await this.client.models.generateContent({
@@ -49,7 +42,7 @@ export class GeminiAdapter implements ILLMProvider {
             contents,
             config: {
                 systemInstruction: systemParts || undefined,
-                tools,
+                tools: geminiTools.length > 0 ? geminiTools : undefined,
             },
         });
 

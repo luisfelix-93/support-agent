@@ -472,6 +472,14 @@ Após o handshake, as operações regulares podem ser executadas:
 
 O adapter trata respostas de erro HTTP (401, 403, 429) e erros no nível JSON-RPC (`data.error`). Caso `listTools()` ou `executeTool()` sejam chamados sem `connect()` prévio, o adapter executa o handshake automaticamente.
 
+### Descoberta Dinâmica de Ferramentas para LLMs
+
+No fluxo de processamento de mensagens (`ProcessAgentResponseUseCase`), a busca por ferramentas disponíveis no servidor MCP é feita de forma inteiramente dinâmica:
+1. O `ProcessAgentResponseUseCase` faz uma chamada ao `mcpClient.listTools()` para recuperar a lista de ferramentas declaradas pelo servidor MCP.
+2. Essa lista de ferramentas (incluindo parâmetros em formato JSON Schema / `inputSchema`) é repassada para o método `generateResponse(context, tools)` do provedor de LLM correspondente (`OpenAIAdapter`, `GeminiAdapter` ou `AnthropicAdapter`).
+3. Cada adaptador de LLM faz o mapeamento dinâmico das ferramentas para o formato proprietário do provedor correspondente (ex: `tools` no OpenAI, `functionDeclarations` no Gemini, e `tools` com `input_schema` no Anthropic).
+4. Se nenhuma ferramenta for retornada pelo servidor MCP, os adaptadores omitem o campo de ferramentas na chamada da API da LLM, evitando erros comuns causados por arrays vazios de ferramentas.
+
 ---
 
 ## Integração Slack
@@ -642,10 +650,10 @@ O projeto utiliza **Vitest** como framework de testes. Os testes estão organiza
 | Camada | Arquivos testados | Testes |
 |---|---|---|
 | Domínio | `Password` | 11 |
-| Infraestrutura | `GoogleChatAdapter`, `MCPHttpAdapter`, `SlackChatAdapter` | 26 |
+| Infraestrutura | `GoogleChatAdapter`, `MCPHttpAdapter`, `SlackChatAdapter`, `GeminiAdapter` | 35 |
 | Controllers | `SlackWebhookController` | 9 |
 | Use Cases | Todos os 6 use cases | 29 |
-| **Total** | **12 arquivos** | **75** |
+| **Total** | **12 arquivos** | **84** |
 
 ### Estrutura
 
@@ -657,6 +665,8 @@ src/
 │   ├── chat/
 │   │   ├── GoogleChatAdapter.test.ts
 │   │   └── SlackChatAdapter.test.ts
+│   ├── llm/
+│   │   └── GeminiAdapter.test.ts
 │   └── mcp/
 │       └── MCPHttpAdapter.test.ts
 ├── controllers/
@@ -747,7 +757,7 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 | OpenAI Adapter | ✅ Implementado |
 | Anthropic Adapter | ✅ Implementado |
 | DeepSeek (via OpenAI) | ✅ Implementado |
-| Google LLM Adapter | ⬜ Pendente |
+| Google LLM Adapter | ✅ Implementado |
 | MCP HTTP Adapter | ✅ Implementado |
 | ChatProvider Adapter (Google Chat) | ✅ Implementado |
 | ChatProvider Adapter (Slack) | ✅ Implementado |

@@ -17,27 +17,27 @@ export class OpenAIAdapter implements ILLMProvider{
         })
     }
 
-    async generateResponse(context: ChatContext): Promise<LLMResponse> {
+    async generateResponse(context: ChatContext, tools?: any[]): Promise<LLMResponse> {
         // 1. Traduzir o ChatContext do domínio para o formato da OpenAI
         const messages = context.messages.map(msg => ({
             role: msg.role === 'system' && this.model.includes('deepseek') ? 'user' : msg.role,
             content: msg.content
         }));
 
-        // Ferramentas disponíveis no MCP (isso viria dinamicamente do servidor MCP num cenário real)
-        const tools = [{
+        // Ferramentas disponíveis no MCP mapeadas dinamicamente
+        const openAITools = tools && tools.length > 0 ? tools.map(t => ({
             type: "function",
             function: {
-                name: "check-logs",
-                description: "Busca de logs no sistema",
-                parameters: { type: "object", properties: { service: { type: "string" } } }
+                name: t.name,
+                description: t.description || "",
+                parameters: t.inputSchema || { type: "object", properties: {} }
             }
-        }];
+        })) : undefined;
 
         const response = await this.client.chat.completions.create({
             model: this.model,
             messages: messages as any,
-            tools: tools as any
+            tools: openAITools as any
         });
 
         const choice = response.choices[0];
