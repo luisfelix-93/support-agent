@@ -20,7 +20,7 @@ export class TenantRepository implements ITenantRepository {
                 model: document.llmConfig.model
             },
             {
-                url: document.mcpConfig.url,
+                url: document.mcpConfig.serverUrl ?? document.mcpConfig.url,
                 apiKey: document.mcpConfig.apiKey
             },
             document.isActive
