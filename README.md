@@ -485,7 +485,7 @@ No fluxo de processamento de mensagens (`ProcessAgentResponseUseCase`), a busca 
 Para evitar que o agente fique travado ("mudo") durante execuções de longa duração ou diante de quedas bruscas de conexão do servidor MCP, o sistema adota as seguintes estratégias:
 
 1. **Timeout do Cliente MCP (`Promise.race`)**:
-   - Um timeout (padrão de `25s`, configurável via construtor/ambiente) foi implementado para todas as requisições JSON-RPC via POST. Caso o servidor não responda a tempo, a promessa é rejeitada e uma exceção de tempo limite é lançada.
+   - Um timeout (padrão de `25s`, configurável via construtor) foi implementado para todas as requisições JSON-RPC via POST. Caso o servidor não responda a tempo, a promessa é rejeitada e uma exceção de tempo limite é lançada.
 2. **Rejeição Automática ao Fechar Stream**:
    - O `MCPHttpAdapter` monitora ativamente o encerramento do stream SSE. Caso a conexão SSE seja encerrada pelo servidor (por inatividade ou reinicialização do proxy), todas as promessas pendentes no mapa `pendingRequests` são imediatamente rejeitadas, impedindo vazamentos de memória e travamento indefinido do fluxo de execução.
 3. **Tratamento de Exceções no Use Case**:
