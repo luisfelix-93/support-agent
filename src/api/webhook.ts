@@ -1,8 +1,14 @@
 import type { Request, Response } from 'express';
 import { ChatWebhookController } from "../controllers/ChatWebhookController.js";
-import { QStashAdapter } from "../infrastructure/queue/QStashAdapter.js";
+import { BullMQAdapter } from "../infrastructure/queue/BullMQAdapter.js";
 
-const queueAdapter = new QStashAdapter(process.env.QSTASH_TOKEN!, process.env.WORKER_URL!);
+const redisConnection = process.env.REDIS_URL || {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: Number(process.env.REDIS_PORT) || 6379,
+    password: process.env.REDIS_PASSWORD || undefined,
+};
+
+const queueAdapter = new BullMQAdapter(redisConnection);
 const controller = new ChatWebhookController(queueAdapter);
 
 export default async function handler (req: Request, res: Response) {

@@ -2,7 +2,6 @@ import express, { type Request } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import webhookRouter from './api/webhookRouter.js';
-import workerRouter from './api/workerRouter.js';
 import authRouter from './api/authRouter.js';
 import onboardingRouter from './api/onboardingRouter.js';
 import slackRouter from './api/slackRouter.js';
@@ -33,7 +32,6 @@ app.get('/api/health', (_req, res) => {
 
 // ─── Rotas da API ────────────────────────────────────
 app.use('/api', webhookRouter);
-app.use('/api', workerRouter);
 app.use('/api', authRouter);
 app.use('/api', onboardingRouter);
 app.use('/api', slackRouter);
