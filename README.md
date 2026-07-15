@@ -60,10 +60,10 @@ O projeto adota uma arquitetura hexagonal (Ports & Adapters), onde o núcleo de 
 │         │                │                │                   │            │
 └─────────┼────────────────┼────────────────┼───────────────────┼────────────┘
           │                │                │                   │
-    ┌─────▼───────┐  ┌─────▼──────┐  ┌─────▼─────────┐   ┌─────▼─────────┐
-    │   OpenAI    │  │    MCP     │  │    Google     │   │    QStash     │
-    │   Adapter   │  │   HTTP     │  │  ChatAdapter  │   │   Adapter     │
-    ├─────────────┤  │  Adapter   │  ├───────────────┤   └───────────────┘
+    ┌─────▼───────┐  ┌─────▼──────┐  ┌─────▼─────────┐   ┌─────▼──────────┐
+    │   OpenAI    │  │    MCP     │  │    Google     │   │    BullMQ      │
+    │   Adapter   │  │   HTTP     │  │  ChatAdapter  │   │   Adapter      │
+    ├─────────────┤  │  Adapter   │  ├───────────────┤   └────────────────┘
     │  Anthropic  │  └────────────┘  │    Slack      │
     │   Adapter   │                  │  ChatAdapter  │
     ├─────────────┤                  └───────────────┘
@@ -78,6 +78,7 @@ O projeto adota uma arquitetura hexagonal (Ports & Adapters), onde o núcleo de 
 
 ```
 support-agent/
+├── Dockerfile                           # Build multi-stage para produção
 ├── src/
 │   ├── domain/                          # Núcleo de domínio (entidades + regras de negócio)
 │   │   ├── ChatContext.ts               # Contexto de conversação (thread + mensagens)
@@ -112,7 +113,11 @@ support-agent/
 │   │   ├── mcp/
 │   │   │   └── MCPHttpAdapter.ts
 │   │   └── queue/
-│   │       └── QStashAdapter.ts
+│   │       ├── BullMQAdapter.ts            # Producer — enfileira mensagens via BullMQ
+│   │       ├── BullMQWorker.ts             # Consumer — processa jobs da fila BullMQ
+│   │       ├── QStashAdapter.ts            # Adapter legado para QStash (Upstash)
+│   │       ├── BullMQAdapter.test.ts
+│   │       └── BullMQWorker.test.ts
 │   │
 │   ├── repositories/                    # Implementações concretas dos repositórios
 │   │   ├── ChatRepository.ts
@@ -223,7 +228,9 @@ Implementações concretas dos ports:
 
 #### Queue Adapter
 
-- **`QStashAdapter`** — Despacha mensagens para processamento assíncrono via QStash (Upstash). Publica no endpoint `https://qstash.upstash.io/v1/publish/{workerUrl}` com header `Upstash-Retries: 3` para retentativas automáticas.
+- **`BullMQAdapter`** — Producer baseado em [BullMQ](https://bullmq.io/) que enfileira mensagens para processamento assíncrono. Conecta-se ao Redis e adiciona jobs na fila `message-processing` com até 3 tentativas e backoff exponencial de 5s. Remove jobs da fila ao completar com sucesso, mas mantém os que falham para depuração.
+- **`BullMQWorker`** — Consumer que escuta a fila `message-processing` e processa cada job chamando o `ProcessAgentResponseUseCase` com o `ChatProvider` correspondente (Google ou Slack). Suporta concorrência configurável via `QUEUE_CONCURRENCY` (padrão: 5). Inclui graceful shutdown nos sinais `SIGTERM`/`SIGINT`.
+- **`QStashAdapter`** — Adapter legado que despacha mensagens via QStash (Upstash). Publica no endpoint `https://qstash.upstash.io/v1/publish/{workerUrl}` com header `Upstash-Retries: 3` para retentativas automáticas.
 
 #### Database
 
@@ -525,7 +532,7 @@ POST /api/slack/events
 | Tipo de evento | Comportamento |
 |---|---|
 | `url_verification` | Responde com `{ challenge }` imediatamente (instalação do app) |
-| `event_callback` com `message` | Valida assinatura → filtra bots → enfileira no QStash |
+| `event_callback` com `message` | Valida assinatura → filtra bots → enfileira no BullMQ |
 | Mensagem com `bot_id` ou `subtype: bot_message` | Ignorada (evita loops) |
 
 ### Convenção de `threadId`
@@ -642,6 +649,8 @@ sequenceDiagram
 | **dotenv** | ^17.4.2 | Variáveis de ambiente em dev |
 | **MongoDB Driver** | ^7.4.0 | Driver nativo MongoDB |
 | **jose** | ^6.x | JWT ESM-native (assinar e verificar tokens HS256) |
+| **BullMQ** | ^5.80.2 | Gerenciamento de filas baseado em Redis |
+| **Redis** | — | Backend de filas do BullMQ (ioredis) |
 | **tsx** | ^4.23.0 | Execução direta de TypeScript em dev |
 | **Vitest** | ^4.1.10 | Runner de testes unitários |
 | **@vitest/coverage-v8** | ^4.1.10 | Relatório de cobertura de código |
@@ -666,12 +675,12 @@ O projeto utiliza **Vitest** como framework de testes. Os testes estão organiza
 ### Cobertura
 
 | Camada | Arquivos testados | Testes |
-|---|---|---|
+|---|---|---|---|
 | Domínio | `Password` | 11 |
-| Infraestrutura | `GoogleChatAdapter`, `MCPHttpAdapter`, `SlackChatAdapter`, `GeminiAdapter` | 35 |
+| Infraestrutura | `GoogleChatAdapter`, `MCPHttpAdapter`, `SlackChatAdapter`, `GeminiAdapter`, `BullMQAdapter`, `BullMQWorker` | 39 |
 | Controllers | `SlackWebhookController` | 9 |
 | Use Cases | Todos os 6 use cases | 29 |
-| **Total** | **12 arquivos** | **84** |
+| **Total** | **14 arquivos** | **88** |
 
 ### Estrutura
 
@@ -685,8 +694,11 @@ src/
 │   │   └── SlackChatAdapter.test.ts
 │   ├── llm/
 │   │   └── GeminiAdapter.test.ts
-│   └── mcp/
-│       └── MCPHttpAdapter.test.ts
+│   ├── mcp/
+│   │   └── MCPHttpAdapter.test.ts
+│   └── queue/
+│       ├── BullMQAdapter.test.ts
+│       └── BullMQWorker.test.ts
 ├── controllers/
 │   └── SlackWebhookController.test.ts
 └── usecases/
@@ -707,7 +719,10 @@ src/
 
 ### CI/CD
 
-O pipeline do **GitHub Actions** (`.github/workflows/ci-cd.yml`) executa `npm test` em todo PR para a branch `main`. Após o merge, faz deploy automático na Vercel.
+O pipeline do **GitHub Actions** (`.github/workflows/ci-cd.yml`) executa duas etapas:
+
+1. **Testes unitários** — `npm test` em todo PR para a branch `dev`
+2. **Build & Push Docker** — Constrói a imagem Docker multi-stage e publica no Docker Hub com as tags `latest` e o SHA do commit (apenas em push para `dev`, após testes passarem)
 
 ---
 
@@ -716,10 +731,11 @@ O pipeline do **GitHub Actions** (`.github/workflows/ci-cd.yml`) executa `npm te
 - **Node.js** ≥ 20.x
 - **npm** ≥ 10.x
 - **MongoDB** ≥ 6.x (local ou Atlas) — para persistência de conversas e tenants
+- **Redis** ≥ 7.x — backend de filas do BullMQ
 - Chaves de API para pelo menos um provedor LLM (OpenAI, Anthropic ou DeepSeek)
 - URL de um servidor MCP ativo (para integração com ferramentas)
 - Google Cloud service account com escopo `chat.messages.create` (para Google Chat)
-- Token de API do **QStash (Upstash)** e URL pública de um worker (para fila assíncrona)
+- Token de API do **QStash (Upstash)** e URL pública de um worker (opcional, para fila legada)
 
 ---
 
@@ -741,6 +757,18 @@ cp .env.example .env
 npm run dev
 ```
 
+### Execução com Docker
+
+```bash
+# Construir a imagem
+docker build -t support-agent .
+
+# Executar o container
+docker run -p 3000:3000 --env-file .env support-agent
+```
+
+O Dockerfile usa **build multi-stage** para reduzir o tamanho da imagem final (~130 MB), com três estágios: `builder` (compilação TypeScript), `runner-deps` (dependências de produção) e `runner` (imagem final Alpine).
+
 ---
 
 ## Configuração e Injeção de Dependências
@@ -752,7 +780,10 @@ As configurações são carregadas via `dotenv` no ambiente local, e injetadas p
 Variáveis essenciais (`.env`):
 - `PORT`: Porta do servidor local (ex: 3000)
 - `MONGODB_URI` e `MONGODB_DB_NAME`: Conexão com MongoDB
-- `QSTASH_TOKEN` e `WORKER_URL`: Integração com Upstash (filas assíncronas)
+- `REDIS_URL`: String de conexão com Redis (ex: `redis://localhost:6379`) — usado pelo BullMQ
+- `START_WORKER`: Habilita o worker BullMQ na inicialização (`true`/`false`, padrão: `true`)
+- `QUEUE_CONCURRENCY`: Número de jobs processados em paralelo pelo worker (padrão: `5`)
+- `QSTASH_TOKEN` e `WORKER_URL`: Integração legada com Upstash (filas assíncronas)
 - `MCP_SERVER_URL` e `MCP_API_KEY`: Comunicação com o servidor MCP
 - `LLM_PROVIDER`, `LLM_API_KEY` e `LLM_MODEL`: Configurações de LLM
 - `JWT_SECRET`: Chave secreta para assinar tokens JWT (mínimo 32 caracteres recomendado)
@@ -796,8 +827,13 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 | Entry point dev (`index.ts`) | ✅ Implementado |
 | Entry point Vercel (`api/index.ts`) | ✅ Implementado |
 | Deploy Serverless (Vercel) | ✅ Implementado |
+| Deploy Docker (multi-stage) | ✅ Implementado |
+| BullMQ Queue Adapter | ✅ Implementado |
+| BullMQ Worker (consumer) | ✅ Implementado |
+| Graceful shutdown (SIGTERM/SIGINT) | ✅ Implementado |
 | Testes unitários | ✅ Implementado |
 | Pipeline CI/CD (GitHub Actions) | ✅ Implementado |
+| Docker Image Push (Docker Hub) | ✅ Implementado |
 
 ---
 
