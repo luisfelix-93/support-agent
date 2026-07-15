@@ -1,8 +1,3 @@
-import { Router } from 'express';
-import { workerController } from '../config/container.js';
-
-const router = Router();
-
-router.post('/worker', (req, res) => workerController.handler(req, res));
-
-export default router;
+// Deprecated: Removed in favor of BullMQ worker background consumer.
+// This file is no longer in use and can be safely deleted.
+export {};

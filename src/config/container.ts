@@ -1,10 +1,10 @@
-import { QStashAdapter } from '../infrastructure/queue/QStashAdapter.js';
+import { BullMQAdapter } from '../infrastructure/queue/BullMQAdapter.js';
+import { BullMQWorker } from '../infrastructure/queue/BullMQWorker.js';
 import { GoogleChatAdapter } from '../infrastructure/chat/GoogleChatAdapter.js';
 import { SlackChatAdapter } from '../infrastructure/chat/SlackChatAdapter.js';
 import { ProcessAgentResponseUse } from '../usecases/ProcessAgentResponseUseCase.js';
 import { ChatWebhookController } from '../controllers/ChatWebhookController.js';
 import { SlackWebhookController } from '../controllers/SlackWebhookController.js';
-import { WorkerController } from '../controllers/WorkerController.js';
 import { MongoConnection } from '../infrastructure/database/MongoConnection.js';
 import { TenantRepository } from '../repositories/TenantRepository.js';
 import { ChatRepository } from '../repositories/ChatRepository.js';
@@ -25,10 +25,13 @@ await MongoConnection.connect(
 );
 
 // ─── Infrastructure Adapters ─────────────────────
-const queueAdapter = new QStashAdapter(
-    process.env.QSTASH_TOKEN!,
-    process.env.WORKER_URL!
-);
+const redisConnection = process.env.REDIS_URL || {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: Number(process.env.REDIS_PORT) || 6379,
+    password: process.env.REDIS_PASSWORD || undefined,
+};
+
+const queueAdapter = new BullMQAdapter(redisConnection);
 
 const chatAdapter = new GoogleChatAdapter();
 
@@ -57,10 +60,18 @@ const associateTenantUseCase = new AssociateTenantToUserUseCase(userRepository, 
 
 // ─── Controllers ────────────────────────────────────
 export const webhookController = new ChatWebhookController(queueAdapter);
-export const workerController = new WorkerController(processAgentUseCase, {
-    google: chatAdapter,
-    slack: slackChatAdapter,
-});
+export const queueWorker = new BullMQWorker(
+    redisConnection,
+    processAgentUseCase,
+    {
+        google: chatAdapter,
+        slack: slackChatAdapter,
+    }
+);
+
+if (process.env.START_WORKER !== 'false') {
+    queueWorker.start();
+}
 export const authController = new AuthController(loginUserUseCase);
 export const onboardingController = new OnboardingController(
     registerUserUseCase,
