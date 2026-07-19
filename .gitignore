@@ -54,7 +54,7 @@ tmp/
 temp/
 *.tmp
 *.bak
-
+.agents
 # Debug
 node_inspect_*.json
 

@@ -69,29 +69,40 @@ export class ProcessAgentResponseUse {
                 console.error("Erro ao obter ferramentas do MCP: ", toolsError);
             }
 
-            // 4. Monta o fluxo de LLM e MCP
-            const llmDecision = await llmProvider.generateResponse(context, mcpTools);
+            // 4. Loop de execução LLM ↔ MCP (máximo 5 iterações consecutivas)
+            const MAX_TOOL_ITERATIONS = 5;
             let responseText = '';
+            let currentDecision = await llmProvider.generateResponse(context, mcpTools);
+            let iteration = 0;
 
-            if (llmDecision.type === 'tool_call') {
+            while (currentDecision.type === 'tool_call' && iteration < MAX_TOOL_ITERATIONS) {
+                iteration++;
+                console.log(`[ProcessAgentResponseUseCase] Iteração ${iteration}/${MAX_TOOL_ITERATIONS} — LLM solicitou ferramenta: ${currentDecision.tool.name}`);
+
                 let mcpResult: any;
                 try {
-                    mcpResult = await mcpClient.executeTool(llmDecision.tool);
+                    mcpResult = await mcpClient.executeTool(currentDecision.tool);
                 } catch (toolError: any) {
-                    console.error(`[ProcessAgentResponseUseCase] Erro ao executar ferramenta ${llmDecision.tool.name}:`, toolError);
+                    console.error(`[ProcessAgentResponseUseCase] Erro ao executar ferramenta ${currentDecision.tool.name}:`, toolError);
                     mcpResult = {
                         error: `Falha na execução da ferramenta: ${toolError?.message ?? (typeof toolError === 'string' ? toolError : JSON.stringify(toolError))}`
                     };
                 }
-                
+
                 context.addMessage(new Message(crypto.randomUUID(), 'system', JSON.stringify(mcpResult)));
 
-                const finalResponse = await llmProvider.generateResponse(context, mcpTools);
-                if (finalResponse.type === 'text') {
-                    responseText = finalResponse.content;
-                }
-            } else {
-                responseText = llmDecision.content;
+                currentDecision = await llmProvider.generateResponse(context, mcpTools);
+            }
+
+            if (currentDecision.type === 'text') {
+                responseText = currentDecision.content;
+            } else if (iteration >= MAX_TOOL_ITERATIONS) {
+                console.warn(`[ProcessAgentResponseUseCase] Limite de ${MAX_TOOL_ITERATIONS} iterações atingido. Forçando resposta final.`);
+                context.addMessage(new Message(crypto.randomUUID(), 'system', 'Limite de chamadas de ferramentas atingido. Resuma as informações coletadas e responda ao usuário.'));
+                const fallback = await llmProvider.generateResponse(context, []);
+                responseText = fallback.type === 'text'
+                    ? fallback.content
+                    : 'Desculpe, não consegui completar a análise no momento.';
             }
             // 5. Adiciona a resposta do assistente ao contexto
             if (responseText) {
