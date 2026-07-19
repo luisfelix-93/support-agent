@@ -5,8 +5,13 @@ import webhookRouter from './api/webhookRouter.js';
 import authRouter from './api/authRouter.js';
 import onboardingRouter from './api/onboardingRouter.js';
 import slackRouter from './api/slackRouter.js';
+import { apiRateLimiter, authRateLimiter } from './api/middlewares/rateLimiter.js';
 
 const app = express();
+
+// Configura o Express para confiar em exatamente 1 proxy (Traefik/Ingress) na cadeia.
+// Usar `true` é rejeitado pelo express-rate-limit v7+ (ERR_ERL_PERMISSIVE_TRUST_PROXY).
+app.set('trust proxy', 1);
 
 // ─── Middlewares Globais ─────────────────────────────
 app.use(helmet());
@@ -29,6 +34,14 @@ app.get('/api/health', (_req, res) => {
         timestamp: new Date().toISOString()
     });
 });
+
+// ─── Rate Limiting ───────────────────────────────────
+// Limite estrito para autenticação e onboarding
+app.use('/api/auth', authRateLimiter);
+app.use('/api/onboarding', authRateLimiter);
+
+// Limite geral para todas as outras rotas da API
+app.use('/api', apiRateLimiter);
 
 // ─── Rotas da API ────────────────────────────────────
 app.use('/api', webhookRouter);

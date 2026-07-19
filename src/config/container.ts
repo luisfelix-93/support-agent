@@ -17,6 +17,7 @@ import { RegisterSpaceUseCase } from '../usecases/RegisterSpaceUseCase.js';
 import { AssociateTenantToUserUseCase } from '../usecases/AssociateTenantToUserUseCase.js';
 import { OnboardingController } from '../controllers/OnboardingController.js';
 import { AuthController } from '../controllers/AuthController.js';
+import { Redis } from 'ioredis';
 
 // ─── Database Connection ─────────────────────────────
 await MongoConnection.connect(
@@ -24,13 +25,17 @@ await MongoConnection.connect(
     process.env.MONGODB_DB_NAME!
 );
 
-// ─── Infrastructure Adapters ─────────────────────
-const redisConnection = process.env.REDIS_URL || {
-    host: process.env.REDIS_HOST || 'localhost',
-    port: Number(process.env.REDIS_PORT) || 6379,
-    password: process.env.REDIS_PASSWORD || undefined,
-};
+// ─── Redis Connection (ioredis) ──────────────────────
+const redisConnection = process.env.REDIS_URL
+    ? new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null })
+    : new Redis({
+        host: process.env.REDIS_HOST || 'localhost',
+        port: Number(process.env.REDIS_PORT) || 6379,
+        password: process.env.REDIS_PASSWORD || undefined,
+        maxRetriesPerRequest: null,
+    });
 
+// ─── Infrastructure Adapters ─────────────────────
 const queueAdapter = new BullMQAdapter(redisConnection);
 
 const chatAdapter = new GoogleChatAdapter();

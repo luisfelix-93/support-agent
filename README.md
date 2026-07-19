@@ -251,7 +251,7 @@ Implementações concretas dos ports de repositório utilizando MongoDB:
 
 | Use Case | Descrição |
 |---|---|
-| `ProcessAgentResponseUseCase` | Fluxo principal do agente: resolve tenant via `spaceId`, executa ciclo LLM→MCP→LLM e persiste o contexto. |
+| `ProcessAgentResponseUseCase` | Fluxo principal do agente: resolve tenant via `spaceId`, executa ciclo iterativo LLM↔MCP (até 5 chamadas consecutivas de ferramentas) e persiste o contexto. |
 | `RegisterUserUseCase` | Cria um novo usuário. Valida unicidade do email e aplica `Password.create()` antes de persistir. |
 | `LoginUserUseCase` | Valida credenciais e emite um JWT assinado com `jose` (HS256). Expõe `verify()` estático para o middleware. |
 | `RegisterTenantUseCase` | Registra um novo tenant (workspace). Valida duplicidade de `workspaceId`. |
@@ -502,7 +502,10 @@ Para evitar que o agente fique travado ("mudo") durante execuções de longa dur
 5. **Tratamento de Exceções no Use Case**:
    - A chamada `mcpClient.executeTool` dentro do `ProcessAgentResponseUseCase` é envolvida por um bloco `try-catch`.
    - Se a execução falhar ou estourar o timeout de 25s, o erro é capturado e enviado de volta no histórico da conversa como uma mensagem de sistema (`system`). O LLM é acionado de novo com esse contexto de erro, podendo explicar a falha para o usuário ou tentar caminhos alternativos de resposta, mantendo o agente sempre ativo.
-6. **Timeout Estendido de Fila (QStash)**:
+6. **Loop Iterativo de Ferramentas (máximo 5 iterações)**:
+   - O `ProcessAgentResponseUseCase` agora suporta até 5 chamadas consecutivas de ferramentas em um único fluxo de processamento. A cada iteração, o resultado da ferramenta é adicionado ao contexto e o LLM é consultado novamente. Se o limite for atingido, uma mensagem de sistema instrui o LLM a resumir os dados coletados e fornecer uma resposta ao usuário.
+   - Isso resolve o cenário onde o LLM precisava de múltiplas consultas (ex: buscar logs no Loki, depois buscar métricas) mas a resposta era silenciosamente descartada na segunda iteração.
+7. **Timeout Estendido de Fila (QStash)**:
    - Adicionamos o cabeçalho `'Upstash-Timeout': '90s'` no envio de mensagens de fila para o QStash. Isso garante que o Upstash não encerre prematuramente a conexão HTTP com o worker local antes de a chamada da ferramenta (25s) e a re-análise do LLM terem finalizado.
 
 ---
@@ -614,18 +617,17 @@ sequenceDiagram
     
     UC->>MCP: listTools()
     MCP-->>UC: tools disponíveis
-    UC->>LLM: generateResponse(context)
+    UC->>LLM: generateResponse(context, tools)
     
-    alt LLM retorna tool_call
+    loop Até 5 iterações (enquanto LLM retornar tool_call)
         LLM-->>UC: { type: 'tool_call', tool }
         UC->>MCP: executeTool(tool)
         MCP-->>UC: resultado da ferramenta
         UC->>UC: Adiciona resultado ao contexto (role: system)
-        UC->>LLM: generateResponse(context atualizado)
-        LLM-->>UC: { type: 'text', content }
-    else LLM retorna texto
-        LLM-->>UC: { type: 'text', content }
+        UC->>LLM: generateResponse(context atualizado, tools)
     end
+    
+    LLM-->>UC: { type: 'text', content }
     
     UC->>Repo: save(context)
     UC->>Chat: sendMessage(threadId, content)
@@ -834,6 +836,8 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 | Testes unitários | ✅ Implementado |
 | Pipeline CI/CD (GitHub Actions) | ✅ Implementado |
 | Docker Image Push (Docker Hub) | ✅ Implementado |
+| Loop iterativo de ferramentas (LLM↔MCP, max 5) | ✅ Implementado |
+| Safe Send no SSE Handler (Go MCP Server) | ✅ Implementado |
 
 ---
 
