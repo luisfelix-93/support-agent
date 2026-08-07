@@ -6,6 +6,7 @@ import authRouter from './api/authRouter.js';
 import onboardingRouter from './api/onboardingRouter.js';
 import slackRouter from './api/slackRouter.js';
 import { apiRateLimiter, authRateLimiter } from './api/middlewares/rateLimiter.js';
+import { metricsHandler, metricsMiddleware } from './config/metrics.js';
 
 const app = express();
 
@@ -16,6 +17,10 @@ app.set('trust proxy', 1);
 // ─── Middlewares Globais ─────────────────────────────
 app.use(helmet());
 app.use(cors());
+
+// Coleta métricas HTTP (duração e volume) de todas as requisições.
+// Registrado antes do rate limiter para medir também requests bloqueados.
+app.use(metricsMiddleware);
 
 // Captura o raw body para a verificação de assinatura do Slack (HMAC-SHA256).
 // O campo `rawBody` fica disponível em req como propriedade adicional.
@@ -34,6 +39,11 @@ app.get('/api/health', (_req, res) => {
         timestamp: new Date().toISOString()
     });
 });
+
+// ─── Métricas Prometheus ─────────────────────────────
+// Fora do prefixo /api: não passa pelo rate limiter.
+// Se METRICS_TOKEN estiver definido, exige Authorization: Bearer <token>.
+app.get('/metrics', metricsHandler);
 
 // ─── Rate Limiting ───────────────────────────────────
 // Limite estrito para autenticação e onboarding

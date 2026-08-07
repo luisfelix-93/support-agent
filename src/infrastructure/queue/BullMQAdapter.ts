@@ -1,5 +1,8 @@
 import { Queue } from 'bullmq';
 import type { IQueueService } from "../../domain/ports/IQueueService.js";
+import { logger } from "../../config/logger.js";
+
+const log = logger.child({ module: 'BullMQAdapter' });
 
 export class BullMQAdapter implements IQueueService {
     private readonly queue: Queue;
@@ -28,7 +31,7 @@ export class BullMQAdapter implements IQueueService {
         content: string,
         source: 'google' | 'slack'
     ): Promise<void> {
-        console.log(`[BullMQAdapter] Enfileirando mensagem para workspace: ${workspaceId}, thread: ${threadId}, source: ${source}`);
+        log.info({ workspaceId, threadId, source }, 'Enfileirando mensagem para processamento.');
         try {
             await this.queue.add('process-message', {
                 workspaceId,
@@ -37,7 +40,7 @@ export class BullMQAdapter implements IQueueService {
                 source,
             });
         } catch (error) {
-            console.error('[BullMQAdapter] Erro ao enfileirar mensagem:', error);
+            log.error({ err: error, workspaceId, threadId, source }, 'Erro ao enfileirar mensagem.');
             throw error;
         }
     }

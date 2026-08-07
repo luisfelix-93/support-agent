@@ -1,5 +1,8 @@
 import { GoogleAuth } from "google-auth-library";
 import type { IChatProvider } from "../../domain/ports/IChatProvider.js";
+import { logger } from "../../config/logger.js";
+
+const log = logger.child({ module: 'GoogleChatAdapter' });
 
 export class GoogleChatAdapter implements IChatProvider {
     private auth: GoogleAuth;
@@ -37,9 +40,9 @@ export class GoogleChatAdapter implements IChatProvider {
                 const errorText = await response.text();
                 throw new Error(`Erro na API do Google Chat: ${response.status} - ${errorText}`);
             }
-            console.log('[Google Chat] Resposta enviada com sucesso para a thread: ', threadId);
+            log.info({ threadId }, 'Resposta enviada com sucesso para a thread do Google Chat.');
          } catch (error) {
-            console.error('[Google Chat] Falha ao enviar mensagem ativa:', error);
+            log.error({ err: error, threadId }, 'Falha ao enviar mensagem ativa no Google Chat.');
             throw error;
          }
     }

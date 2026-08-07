@@ -1,6 +1,9 @@
 import { rateLimit } from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
 import { Redis } from 'ioredis';
+import { logger } from '../../config/logger.js';
+
+const log = logger.child({ module: 'rateLimiter' });
 
 const isTest = process.env.NODE_ENV === 'test';
 
@@ -17,16 +20,16 @@ if (!isTest && (process.env.REDIS_URL || process.env.REDIS_HOST)) {
             });
 
         redisClient.on('error', (err) => {
-            console.error('[RateLimit Redis] Erro de conexão:', err);
+            log.error({ err }, 'Erro de conexão com o Redis do rate limiter');
         });
 
-        console.log('[RateLimit] RedisStore inicializado com sucesso.');
+        log.info('RedisStore do rate limiter inicializado com sucesso.');
     } catch (error) {
-        console.error('[RateLimit] Erro ao criar RedisStore. Usando fallback em memória:', error);
+        log.error({ err: error }, 'Erro ao criar RedisStore. Usando fallback em memória.');
         redisClient = null;
     }
 } else {
-    console.log('[RateLimit] Armazenamento em memória ativado (Redis não configurado ou ambiente de testes).');
+    log.info('Armazenamento em memória ativado (Redis não configurado ou ambiente de testes).');
 }
 
 function createRedisStore(prefix: string): RedisStore | undefined {
