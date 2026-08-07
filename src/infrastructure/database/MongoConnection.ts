@@ -1,4 +1,7 @@
 import { Db, MongoClient } from "mongodb";
+import { logger } from "../../config/logger.js";
+
+const log = logger.child({ module: 'MongoConnection' });
 
 export class MongoConnection {
     private static client: MongoClient;
@@ -9,7 +12,7 @@ export class MongoConnection {
             this.client = new MongoClient(uri);
             await this.client.connect();
             this.db = this.client.db(dbName);
-            console.log(`[MongoDB] Conectado ao banco de dados: ${dbName}`);
+            log.info({ dbName }, 'Conectado ao banco de dados MongoDB.');
         }
         return this.db;
     }

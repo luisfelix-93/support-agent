@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 import type { Request, Response } from 'express';
 import type { IQueueService } from '../domain/ports/IQueueService.js';
+import { logger } from '../config/logger.js';
+
+const log = logger.child({ module: 'SlackWebhookController' });
 
 /**
  * Controla o webhook de eventos do Slack.
@@ -37,7 +40,7 @@ export class SlackWebhookController {
             // O rawBody deve ter sido capturado pelo middleware antes do express.json().
             const isValid = this.verifySignature(req, rawBody ?? '');
             if (!isValid) {
-                console.warn('[SlackWebhookController] Assinatura inválida recebida.');
+                log.warn('Assinatura inválida recebida.');
                 return res.status(401).json({ error: 'Invalid signature' });
             }
 
@@ -66,7 +69,7 @@ export class SlackWebhookController {
             // Responde imediatamente (o Slack exige resposta em < 3 segundos)
             return res.status(200).send();
         } catch (error) {
-            console.error('[SlackWebhookController] Erro ao processar evento:', error);
+            log.error({ err: error }, 'Erro ao processar evento do Slack');
             return res.status(500).json({ error: 'Internal server error' });
         }
     }
@@ -86,7 +89,7 @@ export class SlackWebhookController {
         // Protege contra ataques de replay (rejeita requests com mais de 5 minutos)
         const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 5 * 60;
         if (parseInt(slackTimestamp, 10) < fiveMinutesAgo) {
-            console.warn('[SlackWebhookController] Request expirado (possível replay attack).');
+            log.warn('Request expirado (possível replay attack).');
             return false;
         }
 
@@ -97,11 +100,6 @@ export class SlackWebhookController {
                 .createHmac('sha256', this.signingSecret)
                 .update(sigBaseString)
                 .digest('hex');
-        
-        console.log('[DEBUG] Slack Signature:', slackSignature);
-        console.log('[DEBUG] Computed Signature:', computedSig);
-        console.log('[DEBUG] RawBody Length:', rawBody.length);
-        console.log('[DEBUG] Secret Injetado Válido?', !!this.signingSecret);
 
         // Comparação segura para evitar timing attacks
         try {

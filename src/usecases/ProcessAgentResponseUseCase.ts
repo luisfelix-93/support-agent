@@ -7,7 +7,9 @@ import { LLMFactory } from "../infrastructure/llm/LLMFactory.js";
 import { IChatProvider } from "../domain/ports/IChatProvider.js";
 import { MCPHttpAdapter } from "../infrastructure/mcp/MCPHttpAdapter.js";
 import { ISpaceMappingRepository } from "../domain/ports/ISpaceMappingRepository.js";
+import { logger } from "../config/logger.js";
 
+const log = logger.child({ module: 'ProcessAgentResponseUseCase' });
 
 export class ProcessAgentResponseUse {
     private readonly mcpClients = new Map<string, MCPHttpAdapter>();
@@ -66,7 +68,7 @@ export class ProcessAgentResponseUse {
                 const toolsResponse = await mcpClient.listTools();
                 mcpTools = toolsResponse.tools || [];
             } catch (toolsError) {
-                console.error("Erro ao obter ferramentas do MCP: ", toolsError);
+                log.error({ err: toolsError }, 'Erro ao obter ferramentas do MCP.');
             }
 
             // 4. Loop de execução LLM ↔ MCP (máximo 5 iterações consecutivas)
@@ -77,13 +79,13 @@ export class ProcessAgentResponseUse {
 
             while (currentDecision.type === 'tool_call' && iteration < MAX_TOOL_ITERATIONS) {
                 iteration++;
-                console.log(`[ProcessAgentResponseUseCase] Iteração ${iteration}/${MAX_TOOL_ITERATIONS} — LLM solicitou ferramenta: ${currentDecision.tool.name}`);
+                log.info({ iteration, maxIterations: MAX_TOOL_ITERATIONS, tool: currentDecision.tool.name }, 'LLM solicitou ferramenta.');
 
                 let mcpResult: any;
                 try {
                     mcpResult = await mcpClient.executeTool(currentDecision.tool);
                 } catch (toolError: any) {
-                    console.error(`[ProcessAgentResponseUseCase] Erro ao executar ferramenta ${currentDecision.tool.name}:`, toolError);
+                    log.error({ err: toolError, tool: currentDecision.tool.name }, 'Erro ao executar ferramenta.');
                     mcpResult = {
                         error: `Falha na execução da ferramenta: ${toolError?.message ?? (typeof toolError === 'string' ? toolError : JSON.stringify(toolError))}`
                     };
@@ -97,7 +99,7 @@ export class ProcessAgentResponseUse {
             if (currentDecision.type === 'text') {
                 responseText = currentDecision.content;
             } else if (iteration >= MAX_TOOL_ITERATIONS) {
-                console.warn(`[ProcessAgentResponseUseCase] Limite de ${MAX_TOOL_ITERATIONS} iterações atingido. Forçando resposta final.`);
+                log.warn({ maxIterations: MAX_TOOL_ITERATIONS }, 'Limite de iterações atingido. Forçando resposta final.');
                 context.addMessage(new Message(crypto.randomUUID(), 'system', 'Limite de chamadas de ferramentas atingido. Resuma as informações coletadas e responda ao usuário.'));
                 const fallback = await llmProvider.generateResponse(context, []);
                 responseText = fallback.type === 'text'
@@ -115,7 +117,7 @@ export class ProcessAgentResponseUse {
                 await chatProvider.sendMessage(threadId, responseText);
             }
         } catch (error) {
-            console.error("Erro no processamento: ", error);
+            log.error({ err: error, spaceId, threadId }, 'Erro no processamento da mensagem.');
             await chatProvider.sendMessage(threadId, "Ocorreu um erro ao processar sua solicitação.");
         }
     }

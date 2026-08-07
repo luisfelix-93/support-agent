@@ -1,24 +1,27 @@
 import 'dotenv/config';
 import app from './app.js';
 import { queueWorker } from './config/container.js';
+import { logger } from './config/logger.js';
+
+const log = logger.child({ module: 'bootstrap' });
 
 const PORT = Number(process.env.PORT) || 3000;
 
 const server = app.listen(PORT, () => {
-    console.log(`[Support Agent] 🚀 Servidor rodando em http://localhost:${PORT}`);
-    console.log(`[Support Agent] Health check: http://localhost:${PORT}/api/health`);
+    log.info({ port: PORT }, '🚀 Servidor rodando');
+    log.info(`Health check: http://localhost:${PORT}/api/health`);
 });
 
 const shutdown = async (signal: string) => {
-    console.log(`[Support Agent] Recebido sinal ${signal}. Iniciando graceful shutdown...`);
+    log.info({ signal }, 'Recebido sinal. Iniciando graceful shutdown...');
     server.close(async () => {
-        console.log('[Support Agent] Servidor Express parado.');
+        log.info('Servidor Express parado.');
         try {
             await queueWorker.stop();
-            console.log('[Support Agent] BullMQ Worker finalizado. Saindo de forma limpa...');
+            log.info('BullMQ Worker finalizado. Saindo de forma limpa...');
             process.exit(0);
         } catch (error) {
-            console.error('[Support Agent] Erro ao encerrar recursos:', error);
+            log.error({ err: error }, 'Erro ao encerrar recursos');
             process.exit(1);
         }
     });

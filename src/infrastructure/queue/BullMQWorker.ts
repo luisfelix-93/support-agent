@@ -1,6 +1,9 @@
 import { Worker, type Job } from 'bullmq';
 import type { ProcessAgentResponseUse } from '../../usecases/ProcessAgentResponseUseCase.js';
 import type { IChatProvider } from '../../domain/ports/IChatProvider.js';
+import { logger } from '../../config/logger.js';
+
+const log = logger.child({ module: 'BullMQWorker' });
 
 export class BullMQWorker {
     private worker: Worker | null = null;
@@ -14,17 +17,17 @@ export class BullMQWorker {
 
     start(): void {
         if (this.worker) {
-            console.warn('[BullMQWorker] Worker já está rodando.');
+            log.warn('Worker já está rodando.');
             return;
         }
 
-        console.log(`[BullMQWorker] Iniciando escuta na fila: ${this.queueName}`);
+        log.info({ queueName: this.queueName }, 'Iniciando escuta na fila.');
 
         this.worker = new Worker(
             this.queueName,
             async (job: Job) => {
                 const { workspaceId, threadId, content, source } = job.data;
-                console.log(`[BullMQWorker] Processando job ${job.id} para thread ${threadId} (origem: ${source})`);
+                log.info({ jobId: job.id, threadId, source }, 'Processando job.');
 
                 const chatProvider = this.chatProviders[source];
                 if (!chatProvider) {
@@ -41,24 +44,24 @@ export class BullMQWorker {
         );
 
         this.worker.on('completed', (job) => {
-            console.log(`[BullMQWorker] Job ${job.id} processado com sucesso.`);
+            log.info({ jobId: job.id }, 'Job processado com sucesso.');
         });
 
         this.worker.on('failed', (job, err) => {
-            console.error(`[BullMQWorker] Job ${job?.id} falhou:`, err);
+            log.error({ err, jobId: job?.id }, 'Job falhou.');
         });
 
         this.worker.on('error', (err) => {
-            console.error('[BullMQWorker] Erro crítico no worker:', err);
+            log.error({ err }, 'Erro crítico no worker.');
         });
     }
 
     async stop(): Promise<void> {
         if (this.worker) {
-            console.log('[BullMQWorker] Parando escuta da fila...');
+            log.info('Parando escuta da fila...');
             await this.worker.close();
             this.worker = null;
-            console.log('[BullMQWorker] Worker parado com sucesso.');
+            log.info('Worker parado com sucesso.');
         }
     }
 }

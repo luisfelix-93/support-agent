@@ -1,4 +1,7 @@
 import type { IChatProvider } from "../../domain/ports/IChatProvider.js";
+import { logger } from "../../config/logger.js";
+
+const log = logger.child({ module: 'SlackChatAdapter' });
 
 /**
  * Envia mensagens via Slack Web API (chat.postMessage).
@@ -48,9 +51,9 @@ export class SlackChatAdapter implements IChatProvider {
                 throw new Error(`[SlackChatAdapter] Slack API retornou erro: ${result.error}`);
             }
 
-            console.log(`[SlackChatAdapter] Mensagem enviada com sucesso para channel=${channel}, thread=${thread_ts}`);
+            log.info({ channel, thread_ts }, 'Mensagem enviada com sucesso para o Slack.');
         } catch (error) {
-            console.error('[SlackChatAdapter] Falha ao enviar mensagem:', error);
+            log.error({ err: error, channel, thread_ts }, 'Falha ao enviar mensagem no Slack.');
             throw error;
         }
     }

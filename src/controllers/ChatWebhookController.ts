@@ -1,7 +1,8 @@
 import type { Request, Response } from "express";
 import type { IQueueService } from "../domain/ports/IQueueService.js";
+import { logger } from "../config/logger.js";
 
-
+const log = logger.child({ module: 'ChatWebhookController' });
 
 export class ChatWebhookController {
     constructor(private readonly queueService: IQueueService) {}
@@ -33,7 +34,7 @@ export class ChatWebhookController {
             }
             return res.status(200).send();
         } catch (error) {
-            console.error('[ChatWebhookController] Erro ao processar webhook:', error);     
+            log.error({ err: error }, 'Erro ao processar webhook do Google Chat');     
             return res.status(500).json({ error: error })    
         }
     }
