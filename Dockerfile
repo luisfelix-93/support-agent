@@ -24,6 +24,6 @@ COPY --from=builder /app/dist ./dist
 # Copiar package.json
 COPY --from=builder /app/package.json ./package.json
 
-EXPOSE 3000
+EXPOSE 3000 9090
 
 CMD ["npm", "start"]

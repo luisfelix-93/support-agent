@@ -39,7 +39,7 @@
     "ioredis": "^5.11.1",
     "jose": "^6.2.3",
     "mongodb": "^7.4.0",
-    "openai": "^6.45.0",
+    "openai": "^6.49.0",
     "pino": "^10.3.1",
     "pino-loki": "^3.0.0",
     "prom-client": "^15.1.3",
