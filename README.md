@@ -16,6 +16,7 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
   - [Repositories](#repositories)
   - [Use Cases](#use-cases)
 - [API Layer](#api-layer)
+- [Observabilidade](#observabilidade)
 - [Autenticação e Autorização (JWT)](#autenticação-e-autorização-jwt)
 - [Onboarding](#onboarding)
 - [Multi-Tenant](#multi-tenant)
@@ -257,6 +258,56 @@ Implementações concretas dos ports de repositório utilizando MongoDB:
 | `RegisterTenantUseCase` | Registra um novo tenant (workspace). Valida duplicidade de `workspaceId`. |
 | `RegisterSpaceUseCase` | Registra um espaço do Google Chat e associa ao tenant via `workspaceId`. Exige que o tenant exista. |
 | `AssociateTenantToUserUseCase` | Vincula um `workspaceId` de tenant a um usuário existente via `addWorkspaceId()`. |
+
+---
+
+## Observabilidade
+
+### Coleta de Logs
+
+A aplicação usa Pino como logger central. Em produção, os logs são emitidos em JSON no `stdout`, para coleta pelo runtime do container ou por um agente do cluster. Em desenvolvimento, a saída é formatada para leitura local.
+
+Quando `LOKI_HOST` está configurada, os mesmos logs também são enviados ao Grafana Loki em lotes de 5 segundos, com os labels `app="support-agent"` e `environment="<NODE_ENV>"`. Falhas nesse envio não interrompem a aplicação nem removem os logs do `stdout`.
+
+| Variável | Descrição | Padrão |
+|---|---|---|
+| `LOG_LEVEL` | Nível mínimo de log do Pino | `info` em produção; `debug` nos demais ambientes |
+| `LOKI_HOST` | URL do endpoint Loki; habilita o envio remoto | Não definido |
+| `LOKI_USER` | Usuário para autenticação básica no Loki | Não definido |
+| `LOKI_PASSWORD` | Senha para autenticação básica no Loki | Não definido |
+
+### Métricas Prometheus
+
+O endpoint `GET /metrics` expõe métricas no formato Prometheus. Em processos Node executados com `src/index.ts`, ele está disponível no listener dedicado `http://<host>:9090/metrics`; a porta pode ser alterada com `METRICS_PORT`. A mesma rota também permanece disponível no servidor principal, em `http://<host>:<PORT>/metrics`.
+
+| Métrica | Tipo | Labels | Descrição |
+|---|---|---|---|
+| Métricas padrão do Node.js | Vários | `app`, `environment` | CPU, memória, event loop e garbage collection |
+| `http_request_duration_seconds` | Histogram | `method`, `route`, `status_code` | Duração das requisições HTTP |
+| `http_requests_total` | Counter | `method`, `route`, `status_code` | Volume de requisições HTTP |
+
+As rotas `/metrics`, `/api/health` e `/favicon.ico` não são contabilizadas nas métricas HTTP. As demais rotas usam o padrão do Express como label, evitando cardinalidade por URL dinâmica.
+
+Defina `METRICS_TOKEN` para exigir o header `Authorization: Bearer <token>` durante o scrape:
+
+```bash
+curl http://localhost:9090/metrics
+curl -H "Authorization: Bearer $METRICS_TOKEN" http://localhost:9090/metrics
+```
+
+Exemplo de configuração de scrape sem autenticação:
+
+```yaml
+scrape_configs:
+  - job_name: support-agent
+    static_configs:
+      - targets: ["support-agent:9090"]
+```
+
+| Variável | Descrição | Padrão |
+|---|---|---|
+| `METRICS_PORT` | Porta do listener dedicado de métricas | `9090` |
+| `METRICS_TOKEN` | Token Bearer opcional para proteger `GET /metrics` | Não definido |
 
 ---
 
@@ -766,7 +817,7 @@ npm run dev
 docker build -t support-agent .
 
 # Executar o container
-docker run -p 3000:3000 --env-file .env support-agent
+docker run -p 3000:3000 -p 9090:9090 --env-file .env support-agent
 ```
 
 O Dockerfile usa **build multi-stage** para reduzir o tamanho da imagem final (~130 MB), com três estágios: `builder` (compilação TypeScript), `runner-deps` (dependências de produção) e `runner` (imagem final Alpine).
@@ -781,6 +832,10 @@ As configurações são carregadas via `dotenv` no ambiente local, e injetadas p
 
 Variáveis essenciais (`.env`):
 - `PORT`: Porta do servidor local (ex: 3000)
+- `METRICS_PORT`: Porta do listener dedicado de métricas (padrão: `9090`)
+- `METRICS_TOKEN`: Token Bearer opcional exigido em `GET /metrics`
+- `LOG_LEVEL`: Nível mínimo de logs (`info` em produção e `debug` nos demais ambientes)
+- `LOKI_HOST`, `LOKI_USER` e `LOKI_PASSWORD`: Endpoint e credenciais opcionais para envio de logs ao Grafana Loki
 - `MONGODB_URI` e `MONGODB_DB_NAME`: Conexão com MongoDB
 - `REDIS_URL`: String de conexão com Redis (ex: `redis://localhost:6379`) — usado pelo BullMQ
 - `START_WORKER`: Habilita o worker BullMQ na inicialização (`true`/`false`, padrão: `true`)
