@@ -82,6 +82,7 @@ support-agent/
 ├── Dockerfile                           # Build multi-stage para produção
 ├── src/
 │   ├── domain/                          # Núcleo de domínio (entidades + regras de negócio)
+│   │   ├── ChatConfig.ts               # Entidade de configuração de bot (workspaceId, teamId, tokens sensíveis)
 │   │   ├── ChatContext.ts               # Contexto de conversação (thread + mensagens)
 │   │   ├── LLMConfig.ts                # Tipagem de configuração do provedor LLM
 │   │   ├── MCPServerCapabilities.ts     # Tipos do handshake MCP
@@ -92,8 +93,10 @@ support-agent/
 │   │   ├── ToolCall.ts                 # Entidade de chamada de ferramenta
 │   │   ├── User.ts                     # Entidade de usuário (id, name, email, password, role)
 │   │   └── ports/                      # Interfaces (contratos de fronteira)
+│   │       ├── IChatConfigRepository.ts # Interface do repositório de ChatConfig
 │   │       ├── IChatProvider.ts
 │   │       ├── IChatRepository.ts
+│   │       ├── IEncryptionService.ts   # Interface do serviço de criptografia
 │   │       ├── ILLMProvider.ts
 │   │       ├── IMCPClient.ts
 │   │       ├── IQueueService.ts
@@ -103,6 +106,7 @@ support-agent/
 │   │
 │   ├── infrastructure/                  # Implementações concretas dos ports
 │   │   ├── chat/
+│   │   │   ├── ChatProviderFactory.ts  # Fábrica dinâmica de ChatProviders por workspaceId
 │   │   │   ├── GoogleChatAdapter.ts
 │   │   │   └── SlackChatAdapter.ts
 │   │   ├── database/
@@ -113,14 +117,18 @@ support-agent/
 │   │   │   └── LLMFactory.ts
 │   │   ├── mcp/
 │   │   │   └── MCPHttpAdapter.ts
-│   │   └── queue/
-│   │       ├── BullMQAdapter.ts            # Producer — enfileira mensagens via BullMQ
-│   │       ├── BullMQWorker.ts             # Consumer — processa jobs da fila BullMQ
-│   │       ├── QStashAdapter.ts            # Adapter legado para QStash (Upstash)
-│   │       ├── BullMQAdapter.test.ts
-│   │       └── BullMQWorker.test.ts
+│   │   ├── queue/
+│   │   │   ├── BullMQAdapter.ts            # Producer — enfileira mensagens via BullMQ
+│   │   │   ├── BullMQWorker.ts             # Consumer — processa jobs da fila BullMQ
+│   │   │   ├── QStashAdapter.ts            # Adapter legado para QStash (Upstash)
+│   │   │   ├── BullMQAdapter.test.ts
+│   │   │   └── BullMQWorker.test.ts
+│   │   └── security/
+│   │       ├── AESEncryptionService.ts     # Implementação AES-256-GCM para criptografia em repouso
+│   │       └── AESEncryptionService.test.ts
 │   │
 │   ├── repositories/                    # Implementações concretas dos repositórios
+│   │   ├── ChatConfigRepository.ts     # Coleção chat_configs (criptografia transparente de tokens)
 │   │   ├── ChatRepository.ts
 │   │   ├── SpaceMappingRepository.ts    # Coleção space_mappings
 │   │   ├── TenantRepository.ts
@@ -128,8 +136,10 @@ support-agent/
 │   │
 │   ├── usecases/                        # Orquestração de lógica de aplicação
 │   │   ├── AssociateTenantToUserUseCase.ts
+│   │   ├── GetChatConfigUseCase.ts
 │   │   ├── LoginUserUseCase.ts
 │   │   ├── ProcessAgentResponseUseCase.ts
+│   │   ├── RegisterChatConfigUseCase.ts
 │   │   ├── RegisterSpaceUseCase.ts
 │   │   ├── RegisterTenantUseCase.ts
 │   │   └── RegisterUserUseCase.ts
@@ -140,6 +150,7 @@ support-agent/
 │   │   ├── types/
 │   │   │   └── express.d.ts            # Module augmentation — tipagem de req.user
 │   │   ├── authRouter.ts               # POST /api/auth/login
+│   │   ├── chatConfigRouter.ts         # POST /api/chat-configs, GET /api/chat-configs/:workspaceId
 │   │   ├── onboardingRouter.ts         # POST /api/onboarding/*
 │   │   ├── slackRouter.ts              # POST /api/slack/events
 │   │   ├── webhookRouter.ts
@@ -150,9 +161,10 @@ support-agent/
 │   │
 │   ├── controllers/
 │   │   ├── AuthController.ts
+│   │   ├── ChatConfigController.ts     # Endpoints de cadastro e consulta de ChatConfig
 │   │   ├── ChatWebhookController.ts
 │   │   ├── OnboardingController.ts
-│   │   ├── SlackWebhookController.ts
+│   │   ├── SlackWebhookController.ts   # Valida assinatura Slack buscando signingSecret por team_id
 │   │   └── WorkerController.ts
 │   │
 │   ├── app.ts
@@ -182,6 +194,7 @@ Contém as entidades centrais e as regras de negócio do sistema. Não possui de
 | `User` | Usuário do sistema com `id`, `name`, `email`, `password` (value object) e `workspaceId: string[]`. |
 | `Password` | Value object que encapsula senha hasheada (SHA-256). Criado via `Password.create(plain)` no entry point; comparado via `password.compare(plain)` no login. |
 | `SpaceMapping` | Mapeia um `spaceId` do Google Chat ao `workspaceId` do tenant correspondente. |
+| `ChatConfig` | Entidade que armazena credenciais do Slack (`botToken`, `appToken`, `signingSecret`) por tenant (`workspaceId` e `teamId`). |
 | `ToolCall` | Requisição de execução de ferramenta com `name` e `parameters`. |
 | `LLMConfig` | Interface com `provider`, `apiKey` e `model` opcional. Suporta: `openai`, `anthropic`, `google`, `deepseek`. |
 
@@ -199,6 +212,8 @@ Contratos que definem as fronteiras do domínio — implementados pela camada de
 | `ITenantRepository` | Persiste e recupera `Tenant` por `workspaceId`. |
 | `ISpaceMappingRepository` | Persiste e recupera mapeamentos `spaceId → workspaceId`. |
 | `IUserRepository` | Persiste e recupera `User` por `id` ou `email`; adiciona `workspaceId` ao array. |
+| `IChatConfigRepository` | Persiste e recupera `ChatConfig` por `workspaceId` ou `teamId`. |
+| `IEncryptionService` | Criptografa e descriptografa dados sensíveis em repouso. |
 
 ### Infrastructure
 
@@ -222,15 +237,20 @@ Implementações concretas dos ports:
   - `tools/call` — Executa uma ferramenta específica passando nome e argumentos
   - `ensureInitialized()` — Conecta automaticamente se o handshake ainda não foi realizado
 
-#### Chat Adapters
+#### Chat Adapters & Factory
 
 - **`GoogleChatAdapter`** — Envia mensagens para uma thread do Google Chat Spaces via API REST v1. Utiliza `google-auth-library` para autenticação OAuth2 via Application Default Credentials (ADC). O `threadId` é usado no formato `spaces/AAAAxxxx/threads/YYYYyyyy`.
-- **`SlackChatAdapter`** — Envia mensagens para um canal/thread do Slack via `chat.postMessage`. Autentica com Bearer token (`SLACK_BOT_TOKEN`). Usa a convenção `"CHANNEL_ID:thread_ts"` para o `threadId`, permitindo respostas dentro da thread correta sem quebrar a interface `IChatProvider`.
+- **`SlackChatAdapter`** — Envia mensagens para um canal/thread do Slack via `chat.postMessage`. Autentica com Bearer token dinâmico por workspace. Usa a convenção `"CHANNEL_ID:thread_ts"` para o `threadId`.
+- **`ChatProviderFactory`** — Instancia dinamicamente o `SlackChatAdapter` buscando o `botToken` de cada tenant no banco de dados via `ChatConfigRepository`.
+
+#### Security
+
+- **`AESEncryptionService`** — Implementa `IEncryptionService` usando **AES-256-GCM** com IV aleatório de 12 bytes e Auth Tag de 16 bytes. Garante a proteção dos segredos do Slack (`botToken`, `appToken`, `signingSecret`) no banco de dados.
 
 #### Queue Adapter
 
 - **`BullMQAdapter`** — Producer baseado em [BullMQ](https://bullmq.io/) que enfileira mensagens para processamento assíncrono. Conecta-se ao Redis e adiciona jobs na fila `message-processing` com até 3 tentativas e backoff exponencial de 5s. Remove jobs da fila ao completar com sucesso, mas mantém os que falham para depuração.
-- **`BullMQWorker`** — Consumer que escuta a fila `message-processing` e processa cada job chamando o `ProcessAgentResponseUseCase` com o `ChatProvider` correspondente (Google ou Slack). Suporta concorrência configurável via `QUEUE_CONCURRENCY` (padrão: 5). Inclui graceful shutdown nos sinais `SIGTERM`/`SIGINT`.
+- **`BullMQWorker`** — Consumer que escuta a fila `message-processing` e processa cada job chamando o `ProcessAgentResponseUseCase` com o `ChatProvider` correspondente resolvido via `ChatProviderFactory`. Suporta concorrência configurável via `QUEUE_CONCURRENCY` (padrão: 5). Inclui graceful shutdown nos sinais `SIGTERM`/`SIGINT`.
 - **`QStashAdapter`** — Adapter legado que despacha mensagens via QStash (Upstash). Publica no endpoint `https://qstash.upstash.io/v1/publish/{workerUrl}` com header `Upstash-Retries: 3` para retentativas automáticas.
 
 #### Database
@@ -247,6 +267,7 @@ Implementações concretas dos ports de repositório utilizando MongoDB:
 | `TenantRepository` | `tenants` | `findByWorkspaceId`, `save` |
 | `UserRepository` | `users` | `findById`, `findByEmail`, `save`, `addWorkspaceId` |
 | `SpaceMappingRepository` | `space_mappings` | `findBySpaceId`, `save` |
+| `ChatConfigRepository` | `chat_configs` | `findByWorkspaceId`, `findByTeamId`, `save` (Criptografia/Descriptografia transparente via `AESEncryptionService`) |
 
 ### Use Cases
 
@@ -256,6 +277,8 @@ Implementações concretas dos ports de repositório utilizando MongoDB:
 | `RegisterUserUseCase` | Cria um novo usuário. Valida unicidade do email e aplica `Password.create()` antes de persistir. |
 | `LoginUserUseCase` | Valida credenciais e emite um JWT assinado com `jose` (HS256). Expõe `verify()` estático para o middleware. |
 | `RegisterTenantUseCase` | Registra um novo tenant (workspace). Valida duplicidade de `workspaceId`. |
+| `RegisterChatConfigUseCase` | Registra/atualiza as credenciais de um bot de chat (Slack) associadas a um tenant. |
+| `GetChatConfigUseCase` | Recupera as configurações de bot de um tenant (sem expor segredos sensíveis na resposta da API). |
 | `RegisterSpaceUseCase` | Registra um espaço do Google Chat e associa ao tenant via `workspaceId`. Exige que o tenant exista. |
 | `AssociateTenantToUserUseCase` | Vincula um `workspaceId` de tenant a um usuário existente via `addWorkspaceId()`. |
 
@@ -442,6 +465,70 @@ Authorization: Bearer <jwt>
 | `404` | Tenant ou usuário não encontrado |
 | `409` | Email ou `workspaceId` já cadastrado |
 | `500` | Erro interno |
+
+---
+
+## Gestão de Configurações de Chat (Multi-Tenant Slack)
+
+O sistema permite cadastrar e consultar as credenciais de bots do Slack dinamicamente por tenant (`workspaceId`), garantindo isolamento completo de dados e criptografia em repouso.
+
+### Endpoints
+
+| Método | Rota | Auth | Descrição |
+|---|---|---|---|
+| `POST` | `/api/chat-configs` | Público | Cadastra ou atualiza as credenciais de bot de chat (Slack) |
+| `GET` | `/api/chat-configs/:workspaceId` | Público | Consulta os metadados de configuração por `workspaceId` (sem expor segredos) |
+
+### Cadastrar/Atualizar Configuração do Slack
+
+```json
+POST /api/chat-configs
+{
+  "workspaceId": "tenant-123",
+  "provider": "slack",
+  "teamId": "T01234567",
+  "botToken": "xoxb-123456789-987654321-example",
+  "appToken": "xapp-123456789-example",
+  "signingSecret": "5ac624f5376600d692e2b161e1ea6275"
+}
+```
+
+**Resposta de Sucesso (201):**
+```json
+{
+  "message": "Configuração do Slack cadastrada com sucesso.",
+  "config": {
+    "workspaceId": "tenant-123",
+    "provider": "slack",
+    "teamId": "T01234567",
+    "isActive": true,
+    "botTokenConfigured": true,
+    "appTokenConfigured": true,
+    "signingSecretConfigured": true,
+    "updatedAt": "2026-08-14T11:00:00.000Z"
+  }
+}
+```
+
+### Consultar Configuração por WorkspaceId
+
+```http
+GET /api/chat-configs/tenant-123?provider=slack
+```
+
+**Resposta de Sucesso (200):**
+```json
+{
+  "workspaceId": "tenant-123",
+  "provider": "slack",
+  "teamId": "T01234567",
+  "isActive": true,
+  "botTokenConfigured": true,
+  "appTokenConfigured": true,
+  "signingSecretConfigured": true,
+  "updatedAt": "2026-08-14T11:00:00.000Z"
+}
+```
 
 ---
 
@@ -845,8 +932,9 @@ Variáveis essenciais (`.env`):
 - `LLM_PROVIDER`, `LLM_API_KEY` e `LLM_MODEL`: Configurações de LLM
 - `JWT_SECRET`: Chave secreta para assinar tokens JWT (mínimo 32 caracteres recomendado)
 - `JWT_EXPIRES_IN`: Tempo de expiração do token (ex: `8h`, `1d`, `7d`)
-- `SLACK_BOT_TOKEN`: Bot token do app Slack (começa com `xoxb-`)
-- `SLACK_SIGNING_SECRET`: Signing secret para validação de assinatura HMAC-SHA256
+- `ENCRYPTION_KEY`: Chave secreta de 32 bytes (64 caracteres hex ou 32 ASCII) para criptografia AES-256-GCM dos tokens de chat em repouso
+- `SLACK_BOT_TOKEN`: Bot token global/fallback do app Slack (começa com `xoxb-`)
+- `SLACK_SIGNING_SECRET`: Signing secret global/fallback para validação de assinatura HMAC-SHA256
 
 A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless Functions**. O request cycle é tratado no Express (`src/app.ts`), que é servido localmente via `src/index.ts` e exportado para a Vercel através de `api/index.ts`.
 
@@ -867,6 +955,9 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 | MCP HTTP Adapter | ✅ Implementado |
 | ChatProvider Adapter (Google Chat) | ✅ Implementado |
 | ChatProvider Adapter (Slack) | ✅ Implementado |
+| ChatProviderFactory (Slack multi-tenant dinâmico) | ✅ Implementado |
+| AESEncryptionService (AES-256-GCM em repouso) | ✅ Implementado |
+| ChatConfigRepository (`chat_configs`) | ✅ Implementado |
 | QueueService Adapter (QStash) | ✅ Implementado |
 | MongoDB Connection | ✅ Implementado |
 | ChatRepository | ✅ Implementado |
@@ -880,13 +971,14 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 | Slack Webhook Controller + Router | ✅ Implementado |
 | Onboarding Controllers + Routers | ✅ Implementado |
 | Auth Controller + Router (Login) | ✅ Implementado |
+| ChatConfig Controller + Router | ✅ Implementado |
 | JWT Middleware (`authMiddleware`) | ✅ Implementado |
 | Entry point dev (`index.ts`) | ✅ Implementado |
 | Entry point Vercel (`api/index.ts`) | ✅ Implementado |
 | Deploy Serverless (Vercel) | ✅ Implementado |
 | Deploy Docker (multi-stage) | ✅ Implementado |
 | BullMQ Queue Adapter | ✅ Implementado |
-| BullMQ Worker (consumer) | ✅ Implementado |
+| BullMQWorker (consumer com resolução dinâmica de ChatProvider) | ✅ Implementado |
 | Graceful shutdown (SIGTERM/SIGINT) | ✅ Implementado |
 | Testes unitários | ✅ Implementado |
 | Pipeline CI/CD (GitHub Actions) | ✅ Implementado |

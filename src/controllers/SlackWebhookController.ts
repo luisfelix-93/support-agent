@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import type { Request, Response } from 'express';
 import type { IQueueService } from '../domain/ports/IQueueService.js';
+import type { IChatConfigRepository } from '../domain/ports/IChatConfigRepository.js';
 import { logger } from '../config/logger.js';
 
 const log = logger.child({ module: 'SlackWebhookController' });
@@ -10,8 +11,8 @@ const log = logger.child({ module: 'SlackWebhookController' });
  *
  * Responsabilidades:
  *  1. Responder ao desafio de verificação de URL (url_verification).
- *  2. Validar a assinatura HMAC-SHA256 enviada pelo Slack em cada request.
- *  3. Despachar mensagens de usuário reais para a fila (QStash).
+ *  2. Validar a assinatura HMAC-SHA256 enviada pelo Slack em cada request (buscando signingSecret do banco se disponível).
+ *  3. Despachar mensagens de usuário reais para a fila.
  *  4. Ignorar mensagens de bots para evitar loops.
  *
  * Referência: https://api.slack.com/authentication/verifying-requests-from-slack
@@ -19,26 +20,31 @@ const log = logger.child({ module: 'SlackWebhookController' });
 export class SlackWebhookController {
     constructor(
         private readonly queueService: IQueueService,
-        private readonly signingSecret: string
+        private readonly defaultSigningSecret?: string,
+        private readonly chatConfigRepository?: IChatConfigRepository
     ) {}
 
     async handle(req: Request, res: Response): Promise<Response> {
         const rawBody: string | undefined = (req as Request & { rawBody?: string }).rawBody;
 
-
-        
         try {
             const payload = req.body;
 
             // ── 1. URL Verification Challenge ─────────────────────────────────
-            // O Slack envia este evento quando o app é cadastrado pela primeira vez.
             if (payload.type === 'url_verification') {
                 return res.status(200).json({ challenge: payload.challenge });
             }
 
             // ── 2. Verificação de assinatura ──────────────────────────────────
-            // O rawBody deve ter sido capturado pelo middleware antes do express.json().
-            const isValid = this.verifySignature(req, rawBody ?? '');
+            const teamId = payload.team_id ?? payload.event?.team;
+            const signingSecret = await this.resolveSigningSecret(teamId);
+
+            if (!signingSecret) {
+                log.warn({ teamId }, 'Nenhum signingSecret encontrado para validar o webhook do Slack.');
+                return res.status(401).json({ error: 'Signing secret not configured' });
+            }
+
+            const isValid = this.verifySignature(req, rawBody ?? '', signingSecret);
             if (!isValid) {
                 log.warn('Assinatura inválida recebida.');
                 return res.status(401).json({ error: 'Invalid signature' });
@@ -57,7 +63,6 @@ export class SlackWebhookController {
                 if (event.type === 'message' && event.text) {
                     const channel: string = event.channel;
                     const thread_ts: string = event.thread_ts ?? event.ts;
-                    // O spaceId para o Slack é o channel; o threadId é "channel:thread_ts"
                     const spaceId = channel;
                     const threadId = `${channel}:${thread_ts}`;
                     const userText: string = event.text;
@@ -66,7 +71,6 @@ export class SlackWebhookController {
                 }
             }
 
-            // Responde imediatamente (o Slack exige resposta em < 3 segundos)
             return res.status(200).send();
         } catch (error) {
             log.error({ err: error }, 'Erro ao processar evento do Slack');
@@ -74,11 +78,20 @@ export class SlackWebhookController {
         }
     }
 
+    private async resolveSigningSecret(teamId?: string): Promise<string | undefined> {
+        if (teamId && this.chatConfigRepository) {
+            const config = await this.chatConfigRepository.findByTeamId(teamId);
+            if (config?.signingSecret) {
+                return config.signingSecret;
+            }
+        }
+        return this.defaultSigningSecret;
+    }
+
     /**
      * Valida a assinatura do Slack usando HMAC-SHA256.
-     * Docs: https://api.slack.com/authentication/verifying-requests-from-slack
      */
-    private verifySignature(req: Request, rawBody: string): boolean {
+    private verifySignature(req: Request, rawBody: string, signingSecret: string): boolean {
         const slackSignature = req.headers['x-slack-signature'] as string | undefined;
         const slackTimestamp = req.headers['x-slack-request-timestamp'] as string | undefined;
 
@@ -86,7 +99,6 @@ export class SlackWebhookController {
             return false;
         }
 
-        // Protege contra ataques de replay (rejeita requests com mais de 5 minutos)
         const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 5 * 60;
         if (parseInt(slackTimestamp, 10) < fiveMinutesAgo) {
             log.warn('Request expirado (possível replay attack).');
@@ -97,11 +109,10 @@ export class SlackWebhookController {
         const computedSig =
             'v0=' +
             crypto
-                .createHmac('sha256', this.signingSecret)
+                .createHmac('sha256', signingSecret)
                 .update(sigBaseString)
                 .digest('hex');
 
-        // Comparação segura para evitar timing attacks
         try {
             return crypto.timingSafeEqual(
                 Buffer.from(computedSig, 'utf-8'),
@@ -112,3 +123,4 @@ export class SlackWebhookController {
         }
     }
 }
+

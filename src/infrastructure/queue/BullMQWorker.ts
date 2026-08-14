@@ -3,6 +3,8 @@ import type { ProcessAgentResponseUse } from '../../usecases/ProcessAgentRespons
 import type { IChatProvider } from '../../domain/ports/IChatProvider.js';
 import { logger } from '../../config/logger.js';
 
+import type { ChatProviderFactory } from '../chat/ChatProviderFactory.js';
+
 const log = logger.child({ module: 'BullMQWorker' });
 
 export class BullMQWorker {
@@ -12,7 +14,8 @@ export class BullMQWorker {
         private readonly redisConnection: any,
         private readonly processUseCase: ProcessAgentResponseUse,
         private readonly chatProviders: Record<string, IChatProvider>,
-        private readonly queueName: string = 'message-processing'
+        private readonly queueName: string = 'message-processing',
+        private readonly chatProviderFactory?: ChatProviderFactory
     ) {}
 
     start(): void {
@@ -29,7 +32,10 @@ export class BullMQWorker {
                 const { workspaceId, threadId, content, source } = job.data;
                 log.info({ jobId: job.id, threadId, source }, 'Processando job.');
 
-                const chatProvider = this.chatProviders[source];
+                const chatProvider = this.chatProviderFactory
+                    ? await this.chatProviderFactory.getProvider(workspaceId, source)
+                    : this.chatProviders[source];
+
                 if (!chatProvider) {
                     throw new Error(`Chat provider desconhecido: ${source}`);
                 }
