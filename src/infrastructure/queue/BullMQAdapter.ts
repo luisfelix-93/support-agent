@@ -1,6 +1,6 @@
 import { Queue } from 'bullmq';
-import type { IQueueService } from "../../domain/ports/IQueueService.js";
-import { logger } from "../../config/logger.js";
+import type { IQueueService } from '../../domain/ports/IQueueService.js';
+import { logger } from '../../config/logger.js';
 
 const log = logger.child({ module: 'BullMQAdapter' });
 
