@@ -23,6 +23,10 @@ import { GetChatConfigUseCase } from '../usecases/GetChatConfigUseCase.js';
 import { OnboardingController } from '../controllers/OnboardingController.js';
 import { AuthController } from '../controllers/AuthController.js';
 import { Redis } from 'ioredis';
+import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
+import { RedisShortTermMemory } from '../infrastructure/memory/RedisShortTermMemory.js';
+import { ContextAssembler } from '../harness/ContextAssembler.js';
+import { AgentHarness } from '../harness/AgentHarness.js';
 
 // ─── Database Connection ─────────────────────────────
 await MongoConnection.connect(
@@ -59,11 +63,18 @@ export const chatProviderFactory = new ChatProviderFactory(
     process.env.SLACK_BOT_TOKEN
 );
 
+// ─── Agent Harness & Short-Term Memory ─────────────────
+const tokenCounter = new TiktokenAdapter();
+const contextAssembler = new ContextAssembler(tokenCounter);
+const shortTermMemory = new RedisShortTermMemory(redisConnection);
+const agentHarness = new AgentHarness(contextAssembler, shortTermMemory);
+
 // ─── Use Cases ───────────────────────────────────────
 const processAgentUseCase = new ProcessAgentResponseUse(
     spaceMappingRepository,
     tenantRepository,
     chatRepository,
+    agentHarness
 );
 
 const registerUserUseCase = new RegisterUserUseCase(userRepository);

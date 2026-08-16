@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProcessAgentResponseUse } from './ProcessAgentResponseUseCase.js';
 import type { ISpaceMappingRepository } from '../domain/ports/ISpaceMappingRepository.js';
 import type { ITenantRepository } from '../domain/ports/ITenantRepository.js';
@@ -7,6 +7,9 @@ import type { IChatProvider } from '../domain/ports/IChatProvider.js';
 import { SpaceMapping } from '../domain/SpaceMapping.js';
 import { Tenant } from '../domain/Tenant.js';
 import { ChatContext } from '../domain/ChatContext.js';
+import { AgentHarness } from '../harness/AgentHarness.js';
+import { ContextAssembler } from '../harness/ContextAssembler.js';
+import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
 
 // Mock do LLMFactory para não instanciar adaptadores reais
 vi.mock('../infrastructure/llm/LLMFactory.js', () => ({
@@ -23,8 +26,6 @@ const mockMCPHttpAdapterInstance = {
     close: vi.fn().mockResolvedValue(undefined),
 };
 
-// Mock do MCPHttpAdapter para não fazer chamadas HTTP reais
-// IMPORTANTE: usar `function` (não arrow function) para que possa ser chamada com `new`
 vi.mock('../infrastructure/mcp/MCPHttpAdapter.js', () => ({
     MCPHttpAdapter: vi.fn().mockImplementation(function () {
         return mockMCPHttpAdapterInstance;
@@ -77,6 +78,7 @@ describe('ProcessAgentResponseUseCase', () => {
     let tenantRepo: ITenantRepository;
     let chatRepo: IChatRepository;
     let chatProvider: IChatProvider;
+    let harness: AgentHarness;
     let useCase: ProcessAgentResponseUse;
 
     beforeEach(() => {
@@ -87,7 +89,12 @@ describe('ProcessAgentResponseUseCase', () => {
         tenantRepo = makeTenantRepo({ findByWorkspaceId: vi.fn().mockResolvedValue(fakeTenant) });
         chatRepo = makeChatRepo();
         chatProvider = makeChatProvider();
-        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo);
+        
+        const tokenCounter = new TiktokenAdapter();
+        const contextAssembler = new ContextAssembler(tokenCounter);
+        harness = new AgentHarness(contextAssembler);
+
+        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo, harness);
     });
 
     it('deve processar fluxo de texto (sem tool call) e enviar resposta', async () => {
@@ -128,13 +135,9 @@ describe('ProcessAgentResponseUseCase', () => {
 
         await useCase.execute('spaces/AAAA1111', 'thread-1', 'Quais são os logs de erro?', chatProvider);
 
-        // Verifica que o executeTool foi chamado e falhou
         expect(mockMCPHttpAdapterInstance.executeTool).toHaveBeenCalled();
-        
-        // O LLM deve ser chamado 2 vezes (primeira para decidir chamar a ferramenta, segunda com o erro no contexto)
         expect(mockLlmProvider.generateResponse).toHaveBeenCalledTimes(2);
         
-        // Verifica que o contexto de chat recebeu a mensagem de erro do sistema
         const lastCallArgs = mockLlmProvider.generateResponse.mock.calls[1];
         const contextArg = lastCallArgs[0];
         const systemMessage = contextArg.messages.find((m: any) => m.role === 'system');
@@ -146,7 +149,7 @@ describe('ProcessAgentResponseUseCase', () => {
 
     it('deve enviar mensagem de espaço não configurado se o space mapping não existir', async () => {
         spaceMappingRepo = makeSpaceMappingRepo({ findBySpaceId: vi.fn().mockResolvedValue(null) });
-        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo);
+        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo, harness);
 
         await useCase.execute('spaces/DESCONHECIDO', 'thread-1', 'Olá!', chatProvider);
 
@@ -159,10 +162,10 @@ describe('ProcessAgentResponseUseCase', () => {
             'workspace-abc',
             { provider: 'openai', apiKey: 'sk-test' },
             { url: 'https://mcp.example.com', apiKey: 'mcp-key' },
-            false // isActive = false
+            false
         );
         tenantRepo = makeTenantRepo({ findByWorkspaceId: vi.fn().mockResolvedValue(inactiveTenant) });
-        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo);
+        useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo, harness);
 
         await useCase.execute('spaces/AAAA1111', 'thread-1', 'Olá!', chatProvider);
 
