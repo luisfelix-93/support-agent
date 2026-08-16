@@ -8,9 +8,11 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
 
 - [Visão Geral](#visão-geral)
 - [Arquitetura](#arquitetura)
+- [Camada Agent Harness (Runtime)](#camada-agent-harness-runtime)
 - [Estrutura de Diretórios](#estrutura-de-diretórios)
 - [Camadas](#camadas)
   - [Domain](#domain)
+  - [Harness Layer](#harness-layer)
   - [Ports (Interfaces)](#ports-interfaces)
   - [Infrastructure](#infrastructure)
   - [Repositories](#repositories)
@@ -39,53 +41,131 @@ O **Support Agent** é um bot de atendimento que atua como intermediário entre 
 **Principais capacidades:**
 
 - 🤖 Processamento de linguagem natural via múltiplos provedores de LLM
+- ⚡ **Agent Harness Layer**: Runtime desacoplado (`IAgentHarness`) que gerencia o loop iterativo LLM ↔ MCP, tratamento de resiliência e medições de execução com `runId` único
+- 🧠 **Short-Term Memory**: Cache de contexto de sessão em Redis (`memory:short:{workspaceId}:{threadId}`) com TTL configurável
+- 📊 **Token Budgeting & Assembly**: Montagem explícita de contexto com contagem precisa de tokens (`ITokenCounter`) e truncagem inteligente
 - 🔧 Descoberta e execução dinâmica de ferramentas via MCP (JSON-RPC 2.0)
-- 🔄 Ciclo de decisão agentic: a LLM decide autonomamente se responde diretamente ou se precisa de dados adicionais
-- 🏗️ Arquitetura extensível — novos provedores e ferramentas podem ser adicionados sem alterar a lógica central
+- 📊 Observabilidade nativa via Prometheus e Grafana Loki
 - 💬 Suporte multi-plataforma de chat: **Google Chat** e **Slack** prontos para uso
 
 ---
 
 ## Arquitetura
 
-O projeto adota uma arquitetura hexagonal (Ports & Adapters), onde o núcleo de domínio define contratos (interfaces/ports) e a infraestrutura fornece implementações concretas (adapters):
+O projeto adota uma arquitetura hexagonal (Ports & Adapters), com uma **Camada Harness desacoplada** para o runtime de execução agentic:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                             Use Cases                                      │
 │                     ProcessAgentResponseUseCase                             │
-│                                                                            │
-│  ┌──────────────┐  ┌────────────┐  ┌──────────────┐  ┌────────────────┐   │
-│  │ ILLMProvider  │  │ IMCPClient │  │ IChatProvider │  │ IQueueService  │   │
-│  └──────┬───────┘  └─────┬──────┘  └──────┬───────┘  └───────┬────────┘   │
-│         │                │                │                   │            │
-└─────────┼────────────────┼────────────────┼───────────────────┼────────────┘
-          │                │                │                   │
-    ┌─────▼───────┐  ┌─────▼──────┐  ┌─────▼─────────┐   ┌─────▼──────────┐
-    │   OpenAI    │  │    MCP     │  │    Google     │   │    BullMQ      │
-    │   Adapter   │  │   HTTP     │  │  ChatAdapter  │   │   Adapter      │
-    ├─────────────┤  │  Adapter   │  ├───────────────┤   └────────────────┘
-    │  Anthropic  │  └────────────┘  │    Slack      │
-    │   Adapter   │                  │  ChatAdapter  │
-    ├─────────────┤                  └───────────────┘
-    │   DeepSeek  │
-    │(via OpenAI) │
-    └─────────────┘
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │ (Delega execução ao Runtime Harness)
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           Agent Harness Layer                               │
+│           AgentHarness  ──► ContextAssembler ──► ExecutionPolicy            │
+│                                  │                                          │
+│                                  ▼                                          │
+│                         TiktokenAdapter (BPE)                               │
+└───────────┬──────────────────────┬───────────────────────┬──────────────────┘
+            │                      │                       │
+      ┌─────▼───────┐        ┌─────▼──────┐          ┌─────▼─────────┐
+      │ ILLMProvider│        │ IMCPClient │          │IShortTermMem. │
+      └─────┬───────┘        └─────┬──────┘          └─────┬─────────┘
+            │                      │                       │
+      ┌─────▼───────┐        ┌─────▼──────┐          ┌─────▼─────────┐
+      │   OpenAI    │        │    MCP     │          │  Redis STM    │
+      │   Adapter   │        │   HTTP     │          │  (ioredis)    │
+      ├─────────────┤        │  Adapter   │          └───────────────┘
+      │  Anthropic  │        └────────────┘
+      │   Adapter   │
+      ├─────────────┤
+      │   DeepSeek  │
+      └─────────────┘
 ```
 
 ---
 
-## Estrutura de Diretórios
+## Camada Agent Harness (Runtime)
+
+A **Camada Agent Harness** é o motor de execução do agente. Ela abstrai e orquestra o ciclo iterativo entre o provedor de LLM (`ILLMProvider`) e o servidor MCP (`IMCPClient`), retirando essa responsabilidade do UseCase e promovendo alta testabilidade, observabilidade e gerenciamento de estado de curto prazo.
+
+### Por que um Harness?
+
+Antes da introdução da camada de Harness, a lógica do ciclo `while(tool_call)` ficava acoplada diretamente no `ProcessAgentResponseUseCase`. A arquitetura com Harness traz:
+
+1. **Desacoplamento do UseCase**: O `ProcessAgentResponseUseCase` lida apenas com a resolução de infraestrutura (busca tenant, recupera histórico do banco e envia mensagem ao chat), enquanto a execução agentic fica sob responsabilidade do `IAgentHarness`.
+2. **Short-Term Memory (Redis)**: As iterações intermediárias da conversa (chamadas e respostas de ferramentas) são mantidas em um cache de memória de curto prazo com TTL configurável em Redis (`memory:short:{workspaceId}:{threadId}`), otimizando o acesso durante a sessão sem sobrecarregar o MongoDB.
+3. **Token Budgeting (Orçamento de Tokens)**: Garantia estrita de que o contexto enviado para o LLM nunca ultrapassa a janela de contexto permitida (`maxTokens`), utilizando contagem de tokens baseada em BPE/ChatML (`TiktokenAdapter`).
+4. **Resiliência e Recuperação de Erros**: Se uma ferramenta MCP falhar ou estourar tempo limite, o erro é injetado como mensagem de contexto para o LLM. Se o número limite de iterações for atingido, o Harness intercepta e exige uma resposta final de síntese.
+5. **Observabilidade Granular**: Cada execução gera um `runId` único (UUID v4) que é injetado nos logs estruturados do Pino/Loki, além de incrementar contadores e histogramas no Prometheus.
+
+### Componentes Principais
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                             AgentHarness                                 │
+│  - Controla o loop iterativo LLM ↔ MCP                                   │
+│  - Atribui runId e mede duração da execução                              │
+│  - Captura erros de ferramentas como contexto                            │
+│  - Armazena histórico recente na Short-Term Memory                        │
+└──────────────┬─────────────────────────────┬─────────────────────────────┘
+               │                             │
+               ▼                             ▼
+┌──────────────────────────────┐ ┌─────────────────────────────────────────┐
+│       ContextAssembler       │ │             ExecutionPolicy             │
+│ - Aplica systemInstructions  │ │ - Regras de limite (máx 5 iterações)    │
+│ - Calcula orçamentos de tokens│ │ - Timeouts globais e de iteração        │
+│ - Executa truncagem inteligente│ │ - Thresholds de alerta                  │
+└──────────────┬───────────────┘ └─────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────┐
+│       TiktokenAdapter        │
+│ - Contagem precisa de tokens │
+│ - Algoritmo BPE / ChatML     │
+└──────────────────────────────┘
+```
+
+| Componente | Localização | Função |
+|---|---|---|
+| **`IAgentHarness`** | `src/domain/ports/IAgentHarness.ts` | Interface principal do runtime agentic (`run(input): Promise<AgentRunResult>`). |
+| **`AgentHarness`** | `src/harness/AgentHarness.ts` | Implementação do loop agentic, orquestração de chamadas de ferramentas, resiliência e registro de métricas. |
+| **`IContextAssembler`** | `src/domain/ports/IContextAssembler.ts` | Contrato para montagem e orçamentação de contexto. |
+| **`ContextAssembler`** | `src/harness/ContextAssembler.ts` | Implementação da montagem de contexto com suporte a instruções de sistema e truncamento histórico. |
+| **`ITokenCounter`** | `src/domain/ports/ITokenCounter.ts` | Interface para cálculo de tokens. |
+| **`TiktokenAdapter`** | `src/infrastructure/tokenizer/TiktokenAdapter.ts` | Adaptador baseado no `tiktoken` (cl100k_base / ChatML) para contagem exata de tokens. |
+| **`IShortTermMemory`** | `src/domain/ports/IShortTermMemory.ts` | Interface de armazenamento temporário de sessão. |
+| **`RedisShortTermMemory`** | `src/infrastructure/memory/RedisShortTermMemory.ts` | Implementação de Short-Term Memory com Redis (chave: `memory:short:{workspaceId}:{threadId}`). |
+| **`ExecutionPolicy`** | `src/harness/ExecutionPolicy.ts` | Guardrails de execução: máximo de 5 iterações de ferramentas, timeout por iteração e limite de tokens. |
+| **`AgentMetrics`** | `src/infrastructure/metrics/AgentMetrics.ts` | Coletores de métricas Prometheus para a execução do agente. |
+
+### Fluxo de Execução no Harness
+
+1. **Inicialização (`runId`)**: O Harness recebe as dependências e gera um `runId` único para a execução.
+2. **Consulta a Short-Term Memory**: O Harness verifica se existem mensagens de iterações recentes no Redis.
+3. **Assembly de Contexto**: O `ContextAssembler` junta o contexto atual + Short-Term Memory + `systemInstructions` e aplica truncagem se o limite de tokens for excedido.
+4. **Chamada do LLM**: O `ILLMProvider` é acionado enviando o contexto formatado e a lista de ferramentas MCP (`mcpTools`).
+5. **Avaliação da Resposta**:
+   - **Caso `type === 'text'`**: O ciclo finaliza com sucesso (`status: 'completed'`), a resposta é salva na Short-Term Memory e retornada.
+   - **Caso `type === 'tool_call'`**: O Harness incrementa a iteração, executa a ferramenta via `IMCPClient.executeTool()` medindo a duração e registra a chamada em `toolCalls`.
+6. **Recuperação de Falhas de Ferramentas**: Se a chamada da ferramenta falhar, o erro é convertido em uma mensagem `system` JSON de erro e o loop continua, permitindo que o LLM reaja e decida como prosseguir.
+7. **Guardrail de Máximo de Iterações**: Ao atingir o número máximo de iterações (`MAX_TOOL_ITERATIONS = 5`), o Harness adiciona uma instrução de sistema forçando o LLM a resumir os dados e responder ao usuário.
+8. **Finalização & Métricas**: As métricas do Prometheus (`agent_runs_total`, `agent_run_duration_seconds`, `agent_tool_calls_total`) são atualizadas.
+
+---
 
 ```
 support-agent/
 ├── Dockerfile                           # Build multi-stage para produção
 ├── src/
 │   ├── domain/                          # Núcleo de domínio (entidades + regras de negócio)
+│   │   ├── AgentRun.ts                 # Entidade de rastreamento de execução agentic (runId, duration, status)
 │   │   ├── ChatConfig.ts               # Entidade de configuração de bot (workspaceId, teamId, tokens sensíveis)
 │   │   ├── ChatContext.ts               # Contexto de conversação (thread + mensagens)
 │   │   ├── LLMConfig.ts                # Tipagem de configuração do provedor LLM
 │   │   ├── MCPServerCapabilities.ts     # Tipos do handshake MCP
+│   │   ├── Memory.ts                   # Modelo de memória (Short-Term & RAG)
 │   │   ├── Message.ts                  # Entidade de mensagem
 │   │   ├── Password.ts                 # Value object — hash SHA-256 na criação, compare em login
 │   │   ├── SpaceMapping.ts             # Mapeamento spaceId → workspaceId
@@ -93,16 +173,27 @@ support-agent/
 │   │   ├── ToolCall.ts                 # Entidade de chamada de ferramenta
 │   │   ├── User.ts                     # Entidade de usuário (id, name, email, password, role)
 │   │   └── ports/                      # Interfaces (contratos de fronteira)
+│   │       ├── IAgentHarness.ts        # Contrato principal da camada Harness
 │   │       ├── IChatConfigRepository.ts # Interface do repositório de ChatConfig
 │   │       ├── IChatProvider.ts
 │   │       ├── IChatRepository.ts
+│   │       ├── IContextAssembler.ts    # Contrato para montagem de contexto e token budget
 │   │       ├── IEncryptionService.ts   # Interface do serviço de criptografia
 │   │       ├── ILLMProvider.ts
 │   │       ├── IMCPClient.ts
 │   │       ├── IQueueService.ts
+│   │       ├── IShortTermMemory.ts     # Contrato para cache de sessão temporária
 │   │       ├── ISpaceMappingRepository.ts
 │   │       ├── ITenantRepository.ts
+│   │       ├── ITokenCounter.ts        # Contrato para contagem de tokens (BPE)
 │   │       └── IUserRepository.ts
+│   │
+│   ├── harness/                         # Motor de execução e orquestração agentic
+│   │   ├── AgentHarness.ts             # Loop iterativo LLM ↔ MCP, resiliência e métricas
+│   │   ├── AgentHarness.test.ts
+│   │   ├── ContextAssembler.ts         # Assembly de contexto com truncamento inteligente
+│   │   ├── ContextAssembler.test.ts
+│   │   └── ExecutionPolicy.ts          # Guardrails de execução (máx iterações, timeouts)
 │   │
 │   ├── infrastructure/                  # Implementações concretas dos ports
 │   │   ├── chat/
@@ -117,15 +208,19 @@ support-agent/
 │   │   │   └── LLMFactory.ts
 │   │   ├── mcp/
 │   │   │   └── MCPHttpAdapter.ts
+│   │   ├── memory/                     # Memória de curto prazo
+│   │   │   ├── RedisShortTermMemory.ts
+│   │   │   └── RedisShortTermMemory.test.ts
+│   │   ├── metrics/                    # Métricas Prometheus
+│   │   │   └── AgentMetrics.ts
 │   │   ├── queue/
 │   │   │   ├── BullMQAdapter.ts            # Producer — enfileira mensagens via BullMQ
 │   │   │   ├── BullMQWorker.ts             # Consumer — processa jobs da fila BullMQ
-│   │   │   ├── QStashAdapter.ts            # Adapter legado para QStash (Upstash)
-│   │   │   ├── BullMQAdapter.test.ts
-│   │   │   └── BullMQWorker.test.ts
-│   │   └── security/
-│   │       ├── AESEncryptionService.ts     # Implementação AES-256-GCM para criptografia em repouso
-│   │       └── AESEncryptionService.test.ts
+│   │   │   └── QStashAdapter.ts            # Adapter legado para QStash (Upstash)
+│   │   ├── security/
+│   │   │   └── AESEncryptionService.ts     # Implementação AES-256-GCM para criptografia em repouso
+│   │   └── tokenizer/                  # Adaptador de contagem de tokens
+│   │       └── TiktokenAdapter.ts
 │   │
 │   ├── repositories/                    # Implementações concretas dos repositórios
 │   │   ├── ChatConfigRepository.ts     # Coleção chat_configs (criptografia transparente de tokens)
@@ -191,6 +286,8 @@ Contém as entidades centrais e as regras de negócio do sistema. Não possui de
 | `Message` | Representa uma mensagem individual com `id`, `role` (user/assistant/system), `content` e `timestamp`. |
 | `ChatContext` | Agrupa um `threadID`, `workspaceId` e o histórico de `Message[]`. |
 | `Tenant` | Workspace configurado com `workspaceId`, `llmConfig`, `mcpConfig` e `isActive`. |
+| `AgentRun` | Modelo de domínio de rastreamento da execução agentic (`runId`, `tenantId`, `workspaceId`, `threadId`, `status`, `durationMs`, `toolCalls`). |
+| `Memory` | Modelo de domínio de memória estruturada (`id`, `tenantId`, `workspaceId`, `type`, `content`, `importance`). |
 | `User` | Usuário do sistema com `id`, `name`, `email`, `password` (value object) e `workspaceId: string[]`. |
 | `Password` | Value object que encapsula senha hasheada (SHA-256). Criado via `Password.create(plain)` no entry point; comparado via `password.compare(plain)` no login. |
 | `SpaceMapping` | Mapeia um `spaceId` do Google Chat ao `workspaceId` do tenant correspondente. |
@@ -198,12 +295,24 @@ Contém as entidades centrais e as regras de negócio do sistema. Não possui de
 | `ToolCall` | Requisição de execução de ferramenta com `name` e `parameters`. |
 | `LLMConfig` | Interface com `provider`, `apiKey` e `model` opcional. Suporta: `openai`, `anthropic`, `google`, `deepseek`. |
 
+### Harness Layer
+
+Motor desacoplado responsável pela orquestração iterativa do agente:
+
+- **`AgentHarness`**: Runtime que gerencia o loop iterativo LLM ↔ MCP, captura exceções em ferramentas, gera o `runId` e atualiza métricas Prometheus.
+- **`ContextAssembler`**: Monta o contexto para o LLM adicionando instruções de sistema e truncando histórico de forma inteligente com base no limite de tokens.
+- **`ExecutionPolicy`**: Define regras de parada (limite de 5 iterações, timeouts e orçamentos de token).
+
 ### Ports (Interfaces)
 
 Contratos que definem as fronteiras do domínio — implementados pela camada de infraestrutura.
 
 | Port | Responsabilidade |
 |---|---|
+| `IAgentHarness` | Interface do runtime desacoplado do agente (`run(input): Promise<AgentRunResult>`). |
+| `IContextAssembler` | Interface para montagem de contexto com orçamento de tokens. |
+| `ITokenCounter` | Interface para contagem precisa de tokens (BPE/ChatML). |
+| `IShortTermMemory` | Interface para gerenciamento de memória temporária de sessão com TTL. |
 | `ILLMProvider` | Gera respostas a partir do `ChatContext`. Retorna `{ type: 'text' }` ou `{ type: 'tool_call' }`. |
 | `IMCPClient` | Handshake MCP, listagem e execução de ferramentas. |
 | `IChatProvider` | Envia mensagens ao canal de chat do usuário final. |
@@ -308,6 +417,10 @@ O endpoint `GET /metrics` expõe métricas no formato Prometheus. Em processos N
 | Métricas padrão do Node.js | Vários | `app`, `environment` | CPU, memória, event loop e garbage collection |
 | `http_request_duration_seconds` | Histogram | `method`, `route`, `status_code` | Duração das requisições HTTP |
 | `http_requests_total` | Counter | `method`, `route`, `status_code` | Volume de requisições HTTP |
+| `agent_runs_total` | Counter | `tenantId`, `status` | Total de execuções do Agent Harness |
+| `agent_runs_failed_total` | Counter | `tenantId`, `reason` | Total de falhas na execução do Harness |
+| `agent_run_duration_seconds` | Histogram | `tenantId`, `status` | Duração das execuções do Agent Harness |
+| `agent_tool_calls_total` | Counter | `tenantId`, `tool` | Total de ferramentas executadas pelo Agent Harness |
 
 As rotas `/metrics`, `/api/health` e `/favicon.ico` não são contabilizadas nas métricas HTTP. As demais rotas usam o padrão do Express como label, evitando cardinalidade por URL dinâmica.
 
