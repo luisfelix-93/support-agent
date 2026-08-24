@@ -45,7 +45,7 @@ O **Support Agent** é um bot de atendimento que atua como intermediário entre 
 - 🧠 **Short-Term Memory**: Cache de contexto de sessão em Redis (`memory:short:{workspaceId}:{threadId}`) com TTL configurável
 - 📊 **Token Budgeting & Assembly**: Montagem explícita de contexto com contagem precisa de tokens (`ITokenCounter`) e truncagem inteligente
 - 🔧 Descoberta e execução dinâmica de ferramentas via MCP (JSON-RPC 2.0)
-- 📊 Observabilidade nativa via Prometheus e Grafana Loki
+- 📊 Observabilidade nativa via Prometheus, Grafana Loki e Tracing Distribuído com Grafana Tempo (OpenTelemetry)
 - 💬 Suporte multi-plataforma de chat: **Google Chat** e **Slack** prontos para uso
 
 ---
@@ -219,8 +219,13 @@ support-agent/
 │   │   │   └── QStashAdapter.ts            # Adapter legado para QStash (Upstash)
 │   │   ├── security/
 │   │   │   └── AESEncryptionService.ts     # Implementação AES-256-GCM para criptografia em repouso
-│   │   └── tokenizer/                  # Adaptador de contagem de tokens
-│   │       └── TiktokenAdapter.ts
+│   │   ├── tokenizer/                  # Adaptador de contagem de tokens
+│   │   │   └── TiktokenAdapter.ts
+│   │   └── tracing/                    # Tracing distribuído e propagação de contexto
+│   │       ├── TraceContext.ts         # Injeção e extração de contexto W3C (traceparent)
+│   │       ├── TracerProvider.ts       # Helpers tipados de tracing (withSpan, withContext)
+│   │       ├── TraceContext.test.ts
+│   │       └── TracerProvider.test.ts
 │   │
 │   ├── repositories/                    # Implementações concretas dos repositórios
 │   │   ├── ChatConfigRepository.ts     # Coleção chat_configs (criptografia transparente de tokens)
@@ -252,7 +257,10 @@ support-agent/
 │   │   └── workerRouter.ts
 │   │
 │   ├── config/
-│   │   └── container.ts               # Composition Root
+│   │   ├── container.ts               # Composition Root
+│   │   ├── logger.ts                  # Logger Pino com mixin OpenTelemetry (trace_id / span_id)
+│   │   ├── metrics.ts                 # Registry e métricas Prometheus
+│   │   └── tracing.ts                 # Inicialização do OpenTelemetry SDK e OTLP Exporter
 │   │
 │   ├── controllers/
 │   │   ├── AuthController.ts
@@ -444,6 +452,34 @@ scrape_configs:
 |---|---|---|
 | `METRICS_PORT` | Porta do listener dedicado de métricas | `9090` |
 | `METRICS_TOKEN` | Token Bearer opcional para proteger `GET /metrics` | Não definido |
+
+### Tracing Distribuído (OpenTelemetry & Grafana Tempo)
+
+A aplicação utiliza o **OpenTelemetry Node SDK** para rastreamento distribuído de ponta a ponta, exportando spans via **OTLP/HTTP** (protocolo protobuf) diretamente para o **Grafana Tempo** ou para um OpenTelemetry Collector intermediário.
+
+#### Escopo do Rastreamento:
+1. **Auto-Instrumentação de Infraestrutura:**
+   - **Express / HTTP:** Rastreia latência de todas as rotas e requisições HTTP de entrada e saída.
+   - **MongoDB & Redis (ioredis):** Spans automáticos para operações de banco e cache de memória de curto prazo.
+2. **Spans Semânticos no Agent Harness:**
+   - `agent.execute` — Span raiz do ciclo de vida da execução com atributos `app.tenant_id`, `app.workspace_id`, `app.thread_id`, `agent.run_id`, `agent.status` e `agent.iterations`.
+   - `agent.context_assembly` — Latência de montagem e aplicação de token budgeting no contexto da conversa.
+   - `agent.llm_call` — Duração de cada chamada de inferência ao LLM e contagem de iterações.
+   - `agent.tool_execution:<tool_name>` — Tempo de execução e metadados de chamadas a ferramentas MCP.
+   - `agent.short_term_memory.save` — Tempo de gravação do estado no Redis.
+3. **Propagação de Contexto em Filas (BullMQ):**
+   - Injeção e extração transparente do cabeçalho padrão W3C (`traceparent`) no payload dos jobs.
+   - O worker executa o processamento do job dentro do span `bullmq.process_job`, mantendo o mesmo `trace_id` da requisição HTTP de origem.
+4. **Correlação Bidirecional (Trace ⇄ Log):**
+   - O mixin do Pino injeta automaticamente `trace_id`, `span_id` e `trace_flags` em cada entrada de log. No Grafana, isso habilita a navegação com um clique entre o Grafana Tempo e o Grafana Loki.
+
+| Variável | Descrição | Padrão |
+|---|---|---|
+| `OTEL_SERVICE_NAME` | Nome identificador do serviço nos traces | `support-agent` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Endpoint HTTP OTLP do Grafana Tempo ou OTEL Collector | `http://localhost:4318/v1/traces` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Headers OTLP adicionais (ex.: autenticação no Grafana Cloud) | Não definido |
+| `OTEL_LOG_LEVEL` | Nível de log de diagnóstico do OpenTelemetry SDK (`debug`, `info`) | `info` |
+| `OTEL_ENABLED` | Força a ativação do tracing mesmo sem endpoint explícito | `false` |
 
 ---
 
@@ -904,6 +940,9 @@ sequenceDiagram
 | **jose** | ^6.x | JWT ESM-native (assinar e verificar tokens HS256) |
 | **BullMQ** | ^5.80.2 | Gerenciamento de filas baseado em Redis |
 | **Redis** | — | Backend de filas do BullMQ (ioredis) |
+| **@opentelemetry/sdk-node** | ^0.221.0 | OpenTelemetry Node.js SDK central |
+| **@opentelemetry/auto-instrumentations-node** | ^0.79.0 | Auto-instrumentações de HTTP, DB e Redis |
+| **@opentelemetry/exporter-trace-otlp-http** | ^0.221.0 | Exportador OTLP via HTTP para Grafana Tempo |
 | **tsx** | ^4.23.0 | Execução direta de TypeScript em dev |
 | **Vitest** | ^4.1.10 | Runner de testes unitários |
 | **@vitest/coverage-v8** | ^4.1.10 | Relatório de cobertura de código |

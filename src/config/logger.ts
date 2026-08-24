@@ -1,3 +1,4 @@
+import { context, trace } from '@opentelemetry/api';
 import pino from 'pino';
 
 /**
@@ -11,6 +12,11 @@ import pino from 'pino';
  *    garantindo que a aplicação continue funcionando normalmente mesmo se o
  *    servidor Loki estiver inacessível. Nesse cenário os logs permanecem
  *    disponíveis no stdout (ex.: `kubectl logs`).
+ *
+ * Correlação com Tracing (Grafana Tempo / OpenTelemetry):
+ *  - O mixin busca o span ativo no OpenTelemetry Context e anexa `trace_id` e
+ *    `span_id` a cada log gerado. No Grafana, isso permite navegação bidirecional
+ *    (Trace to Logs / Logs to Trace).
  *
  * Configuração via variáveis de ambiente:
  *  - LOG_LEVEL      (padrão: 'info' em produção, 'debug' em dev)
@@ -64,5 +70,17 @@ if (process.env.LOKI_HOST) {
 
 export const logger = pino({
     level,
+    mixin() {
+        const span = trace.getSpan(context.active());
+        if (!span) return {};
+        const spanContext = span.spanContext();
+        if (!trace.isSpanContextValid(spanContext)) return {};
+        return {
+            trace_id: spanContext.traceId,
+            span_id: spanContext.spanId,
+            trace_flags: spanContext.traceFlags.toString(16).padStart(2, '0'),
+        };
+    },
     transport: { targets },
 });
+

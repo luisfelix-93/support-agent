@@ -24,11 +24,15 @@ describe('BullMQAdapter', () => {
         expect(Queue).toHaveBeenCalledOnce();
         
         const queueInstance = vi.mocked(Queue).mock.results[0].value;
-        expect(queueInstance.add).toHaveBeenCalledWith('process-message', {
-            workspaceId: 'workspace-123',
-            threadId: 'thread-456',
-            content: 'conteúdo de teste',
-            source: 'slack',
-        });
+        expect(queueInstance.add).toHaveBeenCalledWith(
+            'process-message',
+            expect.objectContaining({
+                workspaceId: 'workspace-123',
+                threadId: 'thread-456',
+                content: 'conteúdo de teste',
+                source: 'slack',
+            })
+        );
     });
 });
+
