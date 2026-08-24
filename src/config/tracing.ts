@@ -4,6 +4,14 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 
 /**
+ * Desabilita exportação de métricas e logs via OTLP do NodeSDK.
+ * A aplicação já expõe métricas via Prometheus pull-based (/metrics na porta 9090)
+ * e logs estruturados via Pino-Loki.
+ */
+process.env.OTEL_METRICS_EXPORTER = process.env.OTEL_METRICS_EXPORTER || 'none';
+process.env.OTEL_LOGS_EXPORTER = process.env.OTEL_LOGS_EXPORTER || 'none';
+
+/**
  * Parsing de headers OTLP no formato "key=val,key2=val2" ou JSON
  */
 function parseOtlpHeaders(headerStr?: string): Record<string, string> | undefined {
@@ -26,8 +34,12 @@ function parseOtlpHeaders(headerStr?: string): Record<string, string> | undefine
 }
 
 const serviceName = process.env.OTEL_SERVICE_NAME || 'support-agent';
-const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-const otlpHeaders = parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS);
+const otlpEndpoint =
+    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ||
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+const otlpHeaders =
+    parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS) ||
+    parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS);
 
 if (process.env.OTEL_LOG_LEVEL === 'debug') {
     diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.DEBUG);
