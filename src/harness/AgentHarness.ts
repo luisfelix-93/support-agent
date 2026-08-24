@@ -12,6 +12,7 @@ import {
     agentRunDurationSeconds,
     agentToolCallsTotal
 } from "../infrastructure/metrics/AgentMetrics.js";
+import { withSpan } from "../infrastructure/tracing/TracerProvider.js";
 
 const baseLog = logger.child({ module: 'AgentHarness' });
 
@@ -23,145 +24,206 @@ export class AgentHarness implements IAgentHarness {
     ) {}
 
     async run(input: AgentRunInput): Promise<AgentRunResult> {
-        const runId = crypto.randomUUID();
-        const startTime = Date.now();
-        const log = baseLog.child({ runId, tenantId: input.tenantId, threadId: input.threadId });
+        return withSpan(
+            'agent.execute',
+            {
+                attributes: {
+                    'app.tenant_id': input.tenantId,
+                    'app.workspace_id': input.workspaceId,
+                    'app.thread_id': input.threadId,
+                },
+            },
+            async (rootSpan) => {
+                const runId = crypto.randomUUID();
+                rootSpan.setAttribute('agent.run_id', runId);
+                const startTime = Date.now();
+                const log = baseLog.child({ runId, tenantId: input.tenantId, threadId: input.threadId });
 
-        log.info('Iniciando execução do Agent Harness.');
+                log.info('Iniciando execução do Agent Harness.');
 
-        const run = new AgentRun(
-            runId,
-            input.tenantId,
-            input.workspaceId,
-            input.threadId
-        );
+                const run = new AgentRun(
+                    runId,
+                    input.tenantId,
+                    input.workspaceId,
+                    input.threadId
+                );
 
-        let finalResponseText = '';
-        let status: 'completed' | 'failed' | 'max_iterations' = 'completed';
-
-        try {
-            // 1. Context Assembly com Token Budgeting
-            const assembledContext = await this.contextAssembler.assemble(input.context, {
-                maxTokens: this.executionPolicy.maxContextTokens
-            });
-
-            // 2. Loop iterativo LLM ↔ MCP
-            let currentDecision = await input.llmProvider.generateResponse(assembledContext, input.tools);
-            let iteration = 0;
-
-            while (
-                currentDecision.type === 'tool_call' &&
-                this.executionPolicy.shouldContinue(iteration)
-            ) {
-                iteration++;
-                run.iterations = iteration;
-
-                const toolCall = currentDecision.tool;
-                log.info({ iteration, tool: toolCall.name }, 'LLM solicitou chamada de ferramenta.');
-                agentToolCallsTotal.inc({ tenantId: input.tenantId, tool: toolCall.name });
-
-                const toolStartTime = Date.now();
-                let toolResult: any;
-                let toolError: string | undefined;
+                let finalResponseText = '';
+                let status: 'completed' | 'failed' | 'max_iterations' = 'completed';
 
                 try {
-                    toolResult = await input.mcpClient.executeTool(toolCall);
-                } catch (err: any) {
-                    toolError = err?.message ?? (typeof err === 'string' ? err : JSON.stringify(err));
-                    log.error({ err, tool: toolCall.name }, 'Erro ao executar ferramenta via MCP.');
-                    toolResult = { error: `Falha na execução da ferramenta: ${toolError}` };
+                    // 1. Context Assembly com Token Budgeting
+                    const assembledContext = await withSpan(
+                        'agent.context_assembly',
+                        {
+                            attributes: {
+                                'agent.max_context_tokens': this.executionPolicy.maxContextTokens,
+                            },
+                        },
+                        async () => {
+                            return this.contextAssembler.assemble(input.context, {
+                                maxTokens: this.executionPolicy.maxContextTokens
+                            });
+                        }
+                    );
+
+                    // 2. Loop iterativo LLM ↔ MCP
+                    let currentDecision = await withSpan(
+                        'agent.llm_call',
+                        {
+                            attributes: {
+                                'agent.iteration': 0,
+                            },
+                        },
+                        async () => input.llmProvider.generateResponse(assembledContext, input.tools)
+                    );
+                    let iteration = 0;
+
+                    while (
+                        currentDecision.type === 'tool_call' &&
+                        this.executionPolicy.shouldContinue(iteration)
+                    ) {
+                        iteration++;
+                        run.iterations = iteration;
+
+                        const toolCall = currentDecision.tool;
+                        log.info({ iteration, tool: toolCall.name }, 'LLM solicitou chamada de ferramenta.');
+                        agentToolCallsTotal.inc({ tenantId: input.tenantId, tool: toolCall.name });
+
+                        const toolStartTime = Date.now();
+                        let toolResult: any;
+                        let toolError: string | undefined;
+
+                        try {
+                            toolResult = await withSpan(
+                                `agent.tool_execution:${toolCall.name}`,
+                                {
+                                    attributes: {
+                                        'agent.tool_name': toolCall.name,
+                                        'agent.iteration': iteration,
+                                    },
+                                },
+                                async () => input.mcpClient.executeTool(toolCall)
+                            );
+                        } catch (err: any) {
+                            toolError = err?.message ?? (typeof err === 'string' ? err : JSON.stringify(err));
+                            log.error({ err, tool: toolCall.name }, 'Erro ao executar ferramenta via MCP.');
+                            toolResult = { error: `Falha na execução da ferramenta: ${toolError}` };
+                        }
+
+                        const toolDurationMs = Date.now() - toolStartTime;
+                        const record: ToolCallRecord = {
+                            toolName: toolCall.name,
+                            args: toolCall.parameters as Record<string, unknown>,
+                            result: toolResult,
+                            error: toolError,
+                            durationMs: toolDurationMs
+                        };
+                        run.recordToolCall(record);
+
+                        // Adiciona o resultado da ferramenta ao contexto para a próxima iteração
+                        assembledContext.addMessage(
+                            new Message(crypto.randomUUID(), 'system', JSON.stringify(toolResult))
+                        );
+
+                        currentDecision = await withSpan(
+                            'agent.llm_call',
+                            {
+                                attributes: {
+                                    'agent.iteration': iteration,
+                                },
+                            },
+                            async () => input.llmProvider.generateResponse(assembledContext, input.tools)
+                        );
+                    }
+
+                    // 3. Resolução da resposta final ou fallback de iterações
+                    if (currentDecision.type === 'text') {
+                        finalResponseText = currentDecision.content;
+                        status = 'completed';
+                    } else if (iteration >= this.executionPolicy.maxIterations) {
+                        log.warn({ maxIterations: this.executionPolicy.maxIterations }, 'Limite de iterações atingido no Harness.');
+                        status = 'max_iterations';
+                        
+                        assembledContext.addMessage(
+                            new Message(
+                                crypto.randomUUID(),
+                                'system',
+                                'Limite de chamadas de ferramentas atingido. Resuma as informações coletadas e responda ao usuário.'
+                            )
+                        );
+
+                        const fallback = await withSpan(
+                            'agent.llm_call:fallback',
+                            async () => input.llmProvider.generateResponse(assembledContext, [])
+                        );
+                        finalResponseText = fallback.type === 'text'
+                            ? fallback.content
+                            : 'Desculpe, não consegui completar a análise no momento.';
+                    }
+
+                    run.finish(status);
+                    rootSpan.setAttribute('agent.status', status);
+                    rootSpan.setAttribute('agent.iterations', run.iterations);
+
+                    // 4. Salva o contexto atualizado na Short-Term Memory (Redis)
+                    if (this.shortTermMemory && finalResponseText) {
+                        assembledContext.addMessage(
+                            new Message(crypto.randomUUID(), 'assistant', finalResponseText)
+                        );
+                        await withSpan(
+                            'agent.short_term_memory.save',
+                            async () => {
+                                await this.shortTermMemory!.set(
+                                    input.workspaceId,
+                                    input.threadId,
+                                    assembledContext.messages
+                                );
+                            }
+                        );
+                    }
+
+                    // 5. Métricas do Prometheus
+                    const durationMs = Date.now() - startTime;
+                    const durationSeconds = durationMs / 1000;
+                    agentRunsTotal.inc({ tenantId: input.tenantId, status });
+                    agentRunDurationSeconds.observe({ tenantId: input.tenantId, status }, durationSeconds);
+
+                    log.info({ durationMs, iterations: run.iterations, status }, 'Execução do Agent Harness concluída.');
+
+                    return {
+                        runId,
+                        response: finalResponseText,
+                        iterations: run.iterations,
+                        toolCalls: run.toolCalls,
+                        status,
+                        durationMs
+                    };
+                } catch (error: any) {
+                    const durationMs = Date.now() - startTime;
+                    const errorMessage = error?.message ?? String(error);
+                    run.finish('failed', errorMessage);
+                    rootSpan.setAttribute('agent.status', 'failed');
+                    rootSpan.setAttribute('agent.error', errorMessage);
+
+                    log.error({ err: error, durationMs }, 'Erro durante a execução do Agent Harness.');
+
+                    agentRunsTotal.inc({ tenantId: input.tenantId, status: 'failed' });
+                    agentRunsFailedTotal.inc({ tenantId: input.tenantId, reason: errorMessage });
+                    agentRunDurationSeconds.observe({ tenantId: input.tenantId, status: 'failed' }, durationMs / 1000);
+
+                    return {
+                        runId,
+                        response: 'Ocorreu um erro ao processar sua solicitação.',
+                        iterations: run.iterations,
+                        toolCalls: run.toolCalls,
+                        status: 'failed',
+                        durationMs,
+                        error: errorMessage
+                    };
                 }
-
-                const toolDurationMs = Date.now() - toolStartTime;
-                const record: ToolCallRecord = {
-                    toolName: toolCall.name,
-                    args: toolCall.parameters as Record<string, unknown>,
-                    result: toolResult,
-                    error: toolError,
-                    durationMs: toolDurationMs
-                };
-                run.recordToolCall(record);
-
-                // Adiciona o resultado da ferramenta ao contexto para a próxima iteração
-                assembledContext.addMessage(
-                    new Message(crypto.randomUUID(), 'system', JSON.stringify(toolResult))
-                );
-
-                currentDecision = await input.llmProvider.generateResponse(assembledContext, input.tools);
             }
-
-            // 3. Resolução da resposta final ou fallback de iterações
-            if (currentDecision.type === 'text') {
-                finalResponseText = currentDecision.content;
-                status = 'completed';
-            } else if (iteration >= this.executionPolicy.maxIterations) {
-                log.warn({ maxIterations: this.executionPolicy.maxIterations }, 'Limite de iterações atingido no Harness.');
-                status = 'max_iterations';
-                
-                assembledContext.addMessage(
-                    new Message(
-                        crypto.randomUUID(),
-                        'system',
-                        'Limite de chamadas de ferramentas atingido. Resuma as informações coletadas e responda ao usuário.'
-                    )
-                );
-
-                const fallback = await input.llmProvider.generateResponse(assembledContext, []);
-                finalResponseText = fallback.type === 'text'
-                    ? fallback.content
-                    : 'Desculpe, não consegui completar a análise no momento.';
-            }
-
-            run.finish(status);
-
-            // 4. Salva o contexto atualizado na Short-Term Memory (Redis)
-            if (this.shortTermMemory && finalResponseText) {
-                assembledContext.addMessage(
-                    new Message(crypto.randomUUID(), 'assistant', finalResponseText)
-                );
-                await this.shortTermMemory.set(
-                    input.workspaceId,
-                    input.threadId,
-                    assembledContext.messages
-                );
-            }
-
-            // 5. Métricas do Prometheus
-            const durationMs = Date.now() - startTime;
-            const durationSeconds = durationMs / 1000;
-            agentRunsTotal.inc({ tenantId: input.tenantId, status });
-            agentRunDurationSeconds.observe({ tenantId: input.tenantId, status }, durationSeconds);
-
-            log.info({ durationMs, iterations: run.iterations, status }, 'Execução do Agent Harness concluída.');
-
-            return {
-                runId,
-                response: finalResponseText,
-                iterations: run.iterations,
-                toolCalls: run.toolCalls,
-                status,
-                durationMs
-            };
-        } catch (error: any) {
-            const durationMs = Date.now() - startTime;
-            const errorMessage = error?.message ?? String(error);
-            run.finish('failed', errorMessage);
-
-            log.error({ err: error, durationMs }, 'Erro durante a execução do Agent Harness.');
-
-            agentRunsTotal.inc({ tenantId: input.tenantId, status: 'failed' });
-            agentRunsFailedTotal.inc({ tenantId: input.tenantId, reason: errorMessage });
-            agentRunDurationSeconds.observe({ tenantId: input.tenantId, status: 'failed' }, durationMs / 1000);
-
-            return {
-                runId,
-                response: 'Ocorreu um erro ao processar sua solicitação.',
-                iterations: run.iterations,
-                toolCalls: run.toolCalls,
-                status: 'failed',
-                durationMs,
-                error: errorMessage
-            };
-        }
+        );
     }
 }
+

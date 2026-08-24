@@ -1,10 +1,12 @@
 import 'dotenv/config';
+import './config/tracing.js';
 import type { Server } from 'node:http';
 import express from 'express';
 import app from './app.js';
 import { queueWorker } from './config/container.js';
 import { logger } from './config/logger.js';
 import { metricsHandler } from './config/metrics.js';
+import { shutdownTracing } from './config/tracing.js';
 
 const log = logger.child({ module: 'bootstrap' });
 
@@ -42,7 +44,8 @@ const shutdown = async (signal: string) => {
     try {
         await Promise.all([closeServer(server), closeServer(metricsServer)]);
         await queueWorker.stop();
-        log.info('Servidores HTTP e BullMQ Worker finalizados. Saindo de forma limpa...');
+        await shutdownTracing();
+        log.info('Servidores HTTP, BullMQ Worker e OpenTelemetry finalizados. Saindo de forma limpa...');
         process.exit(0);
     } catch (error) {
         log.error({ err: error }, 'Erro ao encerrar recursos');
