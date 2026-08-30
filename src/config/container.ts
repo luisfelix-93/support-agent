@@ -1,5 +1,6 @@
 import { BullMQAdapter } from '../infrastructure/queue/BullMQAdapter.js';
 import { BullMQWorker } from '../infrastructure/queue/BullMQWorker.js';
+import { MemoryPromotionWorker } from '../infrastructure/queue/MemoryPromotionWorker.js';
 import { GoogleChatAdapter } from '../infrastructure/chat/GoogleChatAdapter.js';
 import { SlackChatAdapter } from '../infrastructure/chat/SlackChatAdapter.js';
 import { ChatProviderFactory } from '../infrastructure/chat/ChatProviderFactory.js';
@@ -13,6 +14,7 @@ import { ChatRepository } from '../repositories/ChatRepository.js';
 import { UserRepository } from '../repositories/UserRepository.js';
 import { SpaceMappingRepository } from '../repositories/SpaceMappingRepository.js';
 import { ChatConfigRepository } from '../repositories/ChatConfigRepository.js';
+import { MongoMemoryRepository } from '../repositories/MongoMemoryRepository.js';
 import { RegisterUserUseCase } from '../usecases/RegisterUserUseCase.js';
 import { LoginUserUseCase } from '../usecases/LoginUserUseCase.js';
 import { RegisterTenantUseCase } from '../usecases/RegisterTenantUseCase.js';
@@ -25,6 +27,8 @@ import { AuthController } from '../controllers/AuthController.js';
 import { Redis } from 'ioredis';
 import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
 import { RedisShortTermMemory } from '../infrastructure/memory/RedisShortTermMemory.js';
+import { LLMMemoryExtractor } from '../infrastructure/memory/LLMMemoryExtractor.js';
+import { OpenAIEmbeddingProvider } from '../infrastructure/llm/OpenAIEmbeddingProvider.js';
 import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
 
@@ -50,6 +54,7 @@ const chatRepository = new ChatRepository();
 const userRepository = new UserRepository();
 const spaceMappingRepository = new SpaceMappingRepository();
 export const chatConfigRepository = new ChatConfigRepository();
+export const memoryRepository = new MongoMemoryRepository();
 
 // ─── Infrastructure Adapters & Factories ─────────────
 const queueAdapter = new BullMQAdapter(redisConnection);
@@ -63,11 +68,30 @@ export const chatProviderFactory = new ChatProviderFactory(
     process.env.SLACK_BOT_TOKEN
 );
 
-// ─── Agent Harness & Short-Term Memory ─────────────────
+// ─── Embeddings & Vector Search ──────────────────────
+const embeddingApiKey = process.env.OPENAI_EMBEDDING_API_KEY || (process.env.LLM_PROVIDER === 'openai' ? process.env.LLM_API_KEY : undefined);
+const isVectorMemoryEnabled = process.env.VECTOR_MEMORY_ENABLED !== 'false';
+export const embeddingProvider = embeddingApiKey && isVectorMemoryEnabled
+    ? new OpenAIEmbeddingProvider(embeddingApiKey, process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small')
+    : undefined;
+
+// ─── Agent Harness, Short-Term & Long-Term Memory ─────
 const tokenCounter = new TiktokenAdapter();
 const contextAssembler = new ContextAssembler(tokenCounter);
 const shortTermMemory = new RedisShortTermMemory(redisConnection);
-const agentHarness = new AgentHarness(contextAssembler, shortTermMemory);
+const memoryExtractor = new LLMMemoryExtractor();
+
+const isLongTermMemoryEnabled = process.env.LONG_TERM_MEMORY_ENABLED !== 'false';
+const activeMemoryRepository = isLongTermMemoryEnabled ? memoryRepository : undefined;
+
+const agentHarness = new AgentHarness(
+    contextAssembler,
+    shortTermMemory,
+    undefined,
+    activeMemoryRepository,
+    queueAdapter,
+    embeddingProvider
+);
 
 // ─── Use Cases ───────────────────────────────────────
 const processAgentUseCase = new ProcessAgentResponseUse(
@@ -104,9 +128,20 @@ export const queueWorker = new BullMQWorker(
     chatProviderFactory
 );
 
+export const memoryPromotionWorker = new MemoryPromotionWorker(
+    redisConnection,
+    tenantRepository,
+    memoryExtractor,
+    memoryRepository,
+    embeddingProvider,
+    'memory-promotion'
+);
+
 if (process.env.START_WORKER !== 'false') {
     queueWorker.start();
+    memoryPromotionWorker.start();
 }
+
 export const authController = new AuthController(loginUserUseCase);
 export const onboardingController = new OnboardingController(
     registerUserUseCase,
