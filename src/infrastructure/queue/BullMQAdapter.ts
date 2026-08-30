@@ -1,24 +1,40 @@
 import { Queue } from 'bullmq';
 import type { IQueueService } from '../../domain/ports/IQueueService.js';
+import type { MessageRole } from '../../domain/Message.js';
 import { logger } from '../../config/logger.js';
 import { injectTraceContext } from '../tracing/TraceContext.js';
 
 const log = logger.child({ module: 'BullMQAdapter' });
 
 export class BullMQAdapter implements IQueueService {
-    private readonly queue: Queue;
+    private readonly messageQueue: Queue;
+    private readonly memoryQueue: Queue;
 
     constructor(
         redisConnection: any,
-        queueName: string = 'message-processing'
+        messageQueueName: string = 'message-processing',
+        memoryQueueName: string = 'memory-promotion'
     ) {
-        this.queue = new Queue(queueName, {
+        this.messageQueue = new Queue(messageQueueName, {
             connection: redisConnection,
             defaultJobOptions: {
                 attempts: 3,
                 backoff: {
                     type: 'exponential',
                     delay: 5000,
+                },
+                removeOnComplete: true,
+                removeOnFail: false,
+            },
+        });
+
+        this.memoryQueue = new Queue(memoryQueueName, {
+            connection: redisConnection,
+            defaultJobOptions: {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 3000,
                 },
                 removeOnComplete: true,
                 removeOnFail: false,
@@ -35,7 +51,7 @@ export class BullMQAdapter implements IQueueService {
         log.info({ workspaceId, threadId, source }, 'Enfileirando mensagem para processamento.');
         try {
             const traceContext = injectTraceContext();
-            await this.queue.add('process-message', {
+            await this.messageQueue.add('process-message', {
                 workspaceId,
                 threadId,
                 content,
@@ -47,5 +63,26 @@ export class BullMQAdapter implements IQueueService {
             throw error;
         }
     }
-}
 
+    async dispatchMemoryPromotion(
+        tenantId: string,
+        workspaceId: string,
+        threadId: string,
+        messages: Array<{ role: MessageRole; content: string }>
+    ): Promise<void> {
+        log.info({ tenantId, workspaceId, threadId }, 'Enfileirando job de promoção de memória.');
+        try {
+            const traceContext = injectTraceContext();
+            await this.memoryQueue.add('promote-memory', {
+                tenantId,
+                workspaceId,
+                threadId,
+                messages,
+                traceContext,
+            });
+        } catch (error) {
+            log.error({ err: error, tenantId, workspaceId, threadId }, 'Erro ao enfileirar promoção de memória.');
+            throw error;
+        }
+    }
+}

@@ -3,7 +3,7 @@ import './config/tracing.js';
 import type { Server } from 'node:http';
 import express from 'express';
 import app from './app.js';
-import { queueWorker } from './config/container.js';
+import { queueWorker, memoryPromotionWorker } from './config/container.js';
 import { logger } from './config/logger.js';
 import { metricsHandler } from './config/metrics.js';
 import { shutdownTracing } from './config/tracing.js';
@@ -43,9 +43,9 @@ const shutdown = async (signal: string) => {
 
     try {
         await Promise.all([closeServer(server), closeServer(metricsServer)]);
-        await queueWorker.stop();
+        await Promise.all([queueWorker.stop(), memoryPromotionWorker.stop()]);
         await shutdownTracing();
-        log.info('Servidores HTTP, BullMQ Worker e OpenTelemetry finalizados. Saindo de forma limpa...');
+        log.info('Servidores HTTP, BullMQ Workers e OpenTelemetry finalizados. Saindo de forma limpa...');
         process.exit(0);
     } catch (error) {
         log.error({ err: error }, 'Erro ao encerrar recursos');

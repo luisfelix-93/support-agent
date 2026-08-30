@@ -1,5 +1,6 @@
 import { BullMQAdapter } from '../infrastructure/queue/BullMQAdapter.js';
 import { BullMQWorker } from '../infrastructure/queue/BullMQWorker.js';
+import { MemoryPromotionWorker } from '../infrastructure/queue/MemoryPromotionWorker.js';
 import { GoogleChatAdapter } from '../infrastructure/chat/GoogleChatAdapter.js';
 import { SlackChatAdapter } from '../infrastructure/chat/SlackChatAdapter.js';
 import { ChatProviderFactory } from '../infrastructure/chat/ChatProviderFactory.js';
@@ -13,6 +14,7 @@ import { ChatRepository } from '../repositories/ChatRepository.js';
 import { UserRepository } from '../repositories/UserRepository.js';
 import { SpaceMappingRepository } from '../repositories/SpaceMappingRepository.js';
 import { ChatConfigRepository } from '../repositories/ChatConfigRepository.js';
+import { MongoMemoryRepository } from '../repositories/MongoMemoryRepository.js';
 import { RegisterUserUseCase } from '../usecases/RegisterUserUseCase.js';
 import { LoginUserUseCase } from '../usecases/LoginUserUseCase.js';
 import { RegisterTenantUseCase } from '../usecases/RegisterTenantUseCase.js';
@@ -25,6 +27,7 @@ import { AuthController } from '../controllers/AuthController.js';
 import { Redis } from 'ioredis';
 import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
 import { RedisShortTermMemory } from '../infrastructure/memory/RedisShortTermMemory.js';
+import { LLMMemoryExtractor } from '../infrastructure/memory/LLMMemoryExtractor.js';
 import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
 
@@ -50,6 +53,7 @@ const chatRepository = new ChatRepository();
 const userRepository = new UserRepository();
 const spaceMappingRepository = new SpaceMappingRepository();
 export const chatConfigRepository = new ChatConfigRepository();
+export const memoryRepository = new MongoMemoryRepository();
 
 // ─── Infrastructure Adapters & Factories ─────────────
 const queueAdapter = new BullMQAdapter(redisConnection);
@@ -63,11 +67,19 @@ export const chatProviderFactory = new ChatProviderFactory(
     process.env.SLACK_BOT_TOKEN
 );
 
-// ─── Agent Harness & Short-Term Memory ─────────────────
+// ─── Agent Harness, Short-Term & Long-Term Memory ─────
 const tokenCounter = new TiktokenAdapter();
 const contextAssembler = new ContextAssembler(tokenCounter);
 const shortTermMemory = new RedisShortTermMemory(redisConnection);
-const agentHarness = new AgentHarness(contextAssembler, shortTermMemory);
+const memoryExtractor = new LLMMemoryExtractor();
+
+const agentHarness = new AgentHarness(
+    contextAssembler,
+    shortTermMemory,
+    undefined,
+    memoryRepository,
+    queueAdapter
+);
 
 // ─── Use Cases ───────────────────────────────────────
 const processAgentUseCase = new ProcessAgentResponseUse(
@@ -104,9 +116,19 @@ export const queueWorker = new BullMQWorker(
     chatProviderFactory
 );
 
+export const memoryPromotionWorker = new MemoryPromotionWorker(
+    redisConnection,
+    tenantRepository,
+    memoryExtractor,
+    memoryRepository,
+    'memory-promotion'
+);
+
 if (process.env.START_WORKER !== 'false') {
     queueWorker.start();
+    memoryPromotionWorker.start();
 }
+
 export const authController = new AuthController(loginUserUseCase);
 export const onboardingController = new OnboardingController(
     registerUserUseCase,

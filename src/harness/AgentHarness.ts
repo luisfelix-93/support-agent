@@ -2,6 +2,9 @@ import crypto from "crypto";
 import type { IAgentHarness, AgentRunInput, AgentRunResult } from "../domain/ports/IAgentHarness.js";
 import type { IShortTermMemory } from "../domain/ports/IShortTermMemory.js";
 import type { IContextAssembler } from "../domain/ports/IContextAssembler.js";
+import type { IMemoryRepository } from "../domain/ports/IMemoryRepository.js";
+import type { IQueueService } from "../domain/ports/IQueueService.js";
+import type { Memory } from "../domain/Memory.js";
 import { AgentRun, type ToolCallRecord } from "../domain/AgentRun.js";
 import { Message } from "../domain/Message.js";
 import { ExecutionPolicy } from "./ExecutionPolicy.js";
@@ -20,7 +23,9 @@ export class AgentHarness implements IAgentHarness {
     constructor(
         private readonly contextAssembler: IContextAssembler,
         private readonly shortTermMemory?: IShortTermMemory,
-        private readonly executionPolicy: ExecutionPolicy = new ExecutionPolicy()
+        private readonly executionPolicy: ExecutionPolicy = new ExecutionPolicy(),
+        private readonly memoryRepository?: IMemoryRepository,
+        private readonly queueService?: IQueueService
     ) {}
 
     async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -52,22 +57,48 @@ export class AgentHarness implements IAgentHarness {
                 let status: 'completed' | 'failed' | 'max_iterations' = 'completed';
 
                 try {
-                    // 1. Context Assembly com Token Budgeting
+                    // 1. Recuperação de Memórias de Longo Prazo (Fase 4 & 6)
+                    let relevantMemories: Memory[] = [];
+                    if (this.memoryRepository && input.userMessage) {
+                        try {
+                            relevantMemories = await withSpan(
+                                'agent.long_term_memory.search',
+                                {
+                                    attributes: {
+                                        'app.tenant_id': input.tenantId,
+                                        'app.workspace_id': input.workspaceId,
+                                    },
+                                },
+                                async () => this.memoryRepository!.searchRelevant({
+                                    tenantId: input.tenantId,
+                                    workspaceId: input.workspaceId,
+                                    query: input.userMessage,
+                                    limit: 5,
+                                })
+                            );
+                        } catch (memError) {
+                            log.warn({ err: memError }, 'Falha ao buscar memórias de longo prazo. Continuando sem memórias.');
+                        }
+                    }
+
+                    // 2. Context Assembly com Token Budgeting e Memórias Injetadas
                     const assembledContext = await withSpan(
                         'agent.context_assembly',
                         {
                             attributes: {
                                 'agent.max_context_tokens': this.executionPolicy.maxContextTokens,
+                                'agent.memories_count': relevantMemories.length,
                             },
                         },
                         async () => {
                             return this.contextAssembler.assemble(input.context, {
-                                maxTokens: this.executionPolicy.maxContextTokens
+                                maxTokens: this.executionPolicy.maxContextTokens,
+                                memories: relevantMemories,
                             });
                         }
                     );
 
-                    // 2. Loop iterativo LLM ↔ MCP
+                    // 3. Loop iterativo LLM ↔ MCP
                     let currentDecision = await withSpan(
                         'agent.llm_call',
                         {
@@ -137,7 +168,7 @@ export class AgentHarness implements IAgentHarness {
                         );
                     }
 
-                    // 3. Resolução da resposta final ou fallback de iterações
+                    // 4. Resolução da resposta final ou fallback de iterações
                     if (currentDecision.type === 'text') {
                         finalResponseText = currentDecision.content;
                         status = 'completed';
@@ -166,7 +197,7 @@ export class AgentHarness implements IAgentHarness {
                     rootSpan.setAttribute('agent.status', status);
                     rootSpan.setAttribute('agent.iterations', run.iterations);
 
-                    // 4. Salva o contexto atualizado na Short-Term Memory (Redis)
+                    // 5. Salva o contexto atualizado na Short-Term Memory (Redis)
                     if (this.shortTermMemory && finalResponseText) {
                         assembledContext.addMessage(
                             new Message(crypto.randomUUID(), 'assistant', finalResponseText)
@@ -183,7 +214,24 @@ export class AgentHarness implements IAgentHarness {
                         );
                     }
 
-                    // 5. Métricas do Prometheus
+                    // 6. Promoção Assíncrona de Memória (BullMQ) - Não bloqueia resposta ao usuário
+                    if (this.queueService && finalResponseText && status === 'completed') {
+                        const messagesPayload = assembledContext.messages.map(m => ({
+                            role: m.role,
+                            content: m.content,
+                        }));
+
+                        this.queueService.dispatchMemoryPromotion(
+                            input.tenantId,
+                            input.workspaceId,
+                            input.threadId,
+                            messagesPayload
+                        ).catch(err => {
+                            log.error({ err }, 'Erro ao enfileirar job de promoção de memória.');
+                        });
+                    }
+
+                    // 7. Métricas do Prometheus
                     const durationMs = Date.now() - startTime;
                     const durationSeconds = durationMs / 1000;
                     agentRunsTotal.inc({ tenantId: input.tenantId, status });
@@ -226,4 +274,3 @@ export class AgentHarness implements IAgentHarness {
         );
     }
 }
-
