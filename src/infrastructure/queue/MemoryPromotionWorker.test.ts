@@ -4,6 +4,7 @@ import { Worker } from 'bullmq';
 import type { ITenantRepository } from '../../domain/ports/ITenantRepository.js';
 import type { IMemoryRepository } from '../../domain/ports/IMemoryRepository.js';
 import type { IMemoryExtractor } from '../../domain/ports/IMemoryExtractor.js';
+import type { IEmbeddingProvider } from '../../domain/ports/IEmbeddingProvider.js';
 import { Tenant } from '../../domain/Tenant.js';
 import type { Memory } from '../../domain/Memory.js';
 
@@ -23,6 +24,7 @@ describe('MemoryPromotionWorker', () => {
     let mockTenantRepository: ITenantRepository;
     let mockMemoryExtractor: IMemoryExtractor;
     let mockMemoryRepository: IMemoryRepository;
+    let mockEmbeddingProvider: IEmbeddingProvider;
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -45,6 +47,11 @@ describe('MemoryPromotionWorker', () => {
             findById: vi.fn().mockResolvedValue(null),
             delete: vi.fn().mockResolvedValue(true),
         };
+
+        mockEmbeddingProvider = {
+            generateEmbedding: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+            generateEmbeddings: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
+        };
     });
 
     it('deve inicializar o Worker com o nome da fila correto', () => {
@@ -54,6 +61,7 @@ describe('MemoryPromotionWorker', () => {
             mockTenantRepository,
             mockMemoryExtractor,
             mockMemoryRepository,
+            mockEmbeddingProvider,
             'test-memory-queue'
         );
 
@@ -66,13 +74,14 @@ describe('MemoryPromotionWorker', () => {
         expect(options?.connection).toEqual(mockRedisConnection);
     });
 
-    it('deve processar o job, extrair memórias e salvar no repositório deduplicado', async () => {
+    it('deve processar o job, extrair memórias, gerar embeddings e salvar no repositório deduplicado', async () => {
         const mockRedisConnection = { host: 'localhost', port: 6379 };
         const worker = new MemoryPromotionWorker(
             mockRedisConnection,
             mockTenantRepository,
             mockMemoryExtractor,
             mockMemoryRepository,
+            mockEmbeddingProvider,
             'test-memory-queue'
         );
 
@@ -138,8 +147,8 @@ describe('MemoryPromotionWorker', () => {
                 workspaceId: 'ws-1',
                 threadId: 'thread-1',
                 messages: [
-                    { role: 'user', content: 'Qual o banco?' },
-                    { role: 'assistant', content: 'PostgreSQL 15.' }
+                    { role: 'user' as const, content: 'Qual o banco?' },
+                    { role: 'assistant' as const, content: 'PostgreSQL 15.' }
                 ],
             },
         };
@@ -155,7 +164,13 @@ describe('MemoryPromotionWorker', () => {
             llmProvider: expect.anything(),
         });
 
-        expect(mockMemoryRepository.saveBatch).toHaveBeenCalledWith([extractedMemories[0]]);
+        expect(mockEmbeddingProvider.generateEmbeddings).toHaveBeenCalledWith(['PostgreSQL 15 em produção']);
+        expect(mockMemoryRepository.saveBatch).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'mem-1',
+                embedding: [0.1, 0.2, 0.3],
+            })
+        ]);
     });
 
     it('não deve processar se o tenant estiver inativo ou não for encontrado', async () => {

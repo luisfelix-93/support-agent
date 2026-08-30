@@ -29,3 +29,26 @@ export const agentToolCallsTotal = new client.Counter({
     labelNames: ['tenantId', 'tool'],
     registers: [metricsRegister],
 });
+
+export const agentMemorySearchDurationSeconds = new client.Histogram({
+    name: 'agent_memory_search_duration_seconds',
+    help: 'Duração da busca de memórias relevantes em segundos.',
+    labelNames: ['tenantId', 'searchType'],
+    buckets: [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+    registers: [metricsRegister],
+});
+
+export const agentMemoryPromotedTotal = new client.Counter({
+    name: 'agent_memory_promoted_total',
+    help: 'Total de memórias promovidas para longo prazo por tenant e tipo.',
+    labelNames: ['tenantId', 'type'],
+    registers: [metricsRegister],
+});
+
+export const agentEmbeddingDurationSeconds = new client.Histogram({
+    name: 'agent_embedding_duration_seconds',
+    help: 'Duração da geração de embeddings em segundos.',
+    labelNames: ['provider', 'model'],
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+    registers: [metricsRegister],
+});

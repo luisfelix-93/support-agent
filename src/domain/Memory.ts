@@ -25,7 +25,8 @@ export interface Memory {
 export interface MemorySearchInput {
     tenantId: string;
     workspaceId: string;
-    query: string;
+    query?: string;
+    vector?: number[];
     limit?: number;
     threshold?: number;
     type?: MemoryType;

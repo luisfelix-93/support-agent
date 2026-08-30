@@ -53,6 +53,56 @@ describe('MongoMemoryRepository', () => {
         );
     });
 
+    it('deve realizar busca vetorial por similaridade de cosseno', async () => {
+        const queryVector = [1.0, 0.0, 0.0];
+        const mockDocs = [
+            {
+                _id: 'mem-similar',
+                tenantId: 'tenant-123',
+                workspaceId: 'workspace-456',
+                type: 'fact',
+                content: 'PostgreSQL 15',
+                importance: 0.9,
+                embedding: [0.99, 0.01, 0.0], // alta similaridade
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            },
+            {
+                _id: 'mem-different',
+                tenantId: 'tenant-123',
+                workspaceId: 'workspace-456',
+                type: 'fact',
+                content: 'MongoDB Atlas',
+                importance: 0.8,
+                embedding: [0.0, 1.0, 0.0], // ortogonal (baixa similaridade)
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            }
+        ];
+
+        const mockCursor = {
+            toArray: vi.fn().mockResolvedValue(mockDocs),
+        };
+        mockCollection.find.mockReturnValue(mockCursor);
+
+        const results = await repository.searchRelevant({
+            tenantId: 'tenant-123',
+            workspaceId: 'workspace-456',
+            vector: queryVector,
+            threshold: 0.7,
+            limit: 5,
+        });
+
+        expect(mockCollection.find).toHaveBeenCalledWith({
+            tenantId: 'tenant-123',
+            workspaceId: 'workspace-456',
+            embedding: { $exists: true, $ne: [] },
+        });
+
+        expect(results).toHaveLength(1);
+        expect(results[0].id).toBe('mem-similar');
+    });
+
     it('deve salvar um lote de memórias via bulkWrite', async () => {
         const memories: Memory[] = [
             {

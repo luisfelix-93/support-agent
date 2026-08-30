@@ -4,6 +4,7 @@ import type { IShortTermMemory } from "../domain/ports/IShortTermMemory.js";
 import type { IContextAssembler } from "../domain/ports/IContextAssembler.js";
 import type { IMemoryRepository } from "../domain/ports/IMemoryRepository.js";
 import type { IQueueService } from "../domain/ports/IQueueService.js";
+import type { IEmbeddingProvider } from "../domain/ports/IEmbeddingProvider.js";
 import type { Memory } from "../domain/Memory.js";
 import { AgentRun, type ToolCallRecord } from "../domain/AgentRun.js";
 import { Message } from "../domain/Message.js";
@@ -25,7 +26,8 @@ export class AgentHarness implements IAgentHarness {
         private readonly shortTermMemory?: IShortTermMemory,
         private readonly executionPolicy: ExecutionPolicy = new ExecutionPolicy(),
         private readonly memoryRepository?: IMemoryRepository,
-        private readonly queueService?: IQueueService
+        private readonly queueService?: IQueueService,
+        private readonly embeddingProvider?: IEmbeddingProvider
     ) {}
 
     async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -57,22 +59,33 @@ export class AgentHarness implements IAgentHarness {
                 let status: 'completed' | 'failed' | 'max_iterations' = 'completed';
 
                 try {
-                    // 1. Recuperação de Memórias de Longo Prazo (Fase 4 & 6)
+                    // 1. Recuperação de Memórias de Longo Prazo e Semântica (Fase 4 & 6)
                     let relevantMemories: Memory[] = [];
                     if (this.memoryRepository && input.userMessage) {
                         try {
+                            let queryVector: number[] | undefined;
+                            if (this.embeddingProvider) {
+                                try {
+                                    queryVector = await this.embeddingProvider.generateEmbedding(input.userMessage);
+                                } catch (embErr) {
+                                    log.warn({ err: embErr }, 'Falha ao gerar embedding da mensagem do usuário. Usando busca textual.');
+                                }
+                            }
+
                             relevantMemories = await withSpan(
                                 'agent.long_term_memory.search',
                                 {
                                     attributes: {
                                         'app.tenant_id': input.tenantId,
                                         'app.workspace_id': input.workspaceId,
+                                        'agent.has_vector': !!queryVector,
                                     },
                                 },
                                 async () => this.memoryRepository!.searchRelevant({
                                     tenantId: input.tenantId,
                                     workspaceId: input.workspaceId,
                                     query: input.userMessage,
+                                    vector: queryVector,
                                     limit: 5,
                                 })
                             );

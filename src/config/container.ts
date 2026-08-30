@@ -28,6 +28,7 @@ import { Redis } from 'ioredis';
 import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
 import { RedisShortTermMemory } from '../infrastructure/memory/RedisShortTermMemory.js';
 import { LLMMemoryExtractor } from '../infrastructure/memory/LLMMemoryExtractor.js';
+import { OpenAIEmbeddingProvider } from '../infrastructure/llm/OpenAIEmbeddingProvider.js';
 import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
 
@@ -67,18 +68,29 @@ export const chatProviderFactory = new ChatProviderFactory(
     process.env.SLACK_BOT_TOKEN
 );
 
+// ─── Embeddings & Vector Search ──────────────────────
+const embeddingApiKey = process.env.OPENAI_EMBEDDING_API_KEY || (process.env.LLM_PROVIDER === 'openai' ? process.env.LLM_API_KEY : undefined);
+const isVectorMemoryEnabled = process.env.VECTOR_MEMORY_ENABLED !== 'false';
+export const embeddingProvider = embeddingApiKey && isVectorMemoryEnabled
+    ? new OpenAIEmbeddingProvider(embeddingApiKey, process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small')
+    : undefined;
+
 // ─── Agent Harness, Short-Term & Long-Term Memory ─────
 const tokenCounter = new TiktokenAdapter();
 const contextAssembler = new ContextAssembler(tokenCounter);
 const shortTermMemory = new RedisShortTermMemory(redisConnection);
 const memoryExtractor = new LLMMemoryExtractor();
 
+const isLongTermMemoryEnabled = process.env.LONG_TERM_MEMORY_ENABLED !== 'false';
+const activeMemoryRepository = isLongTermMemoryEnabled ? memoryRepository : undefined;
+
 const agentHarness = new AgentHarness(
     contextAssembler,
     shortTermMemory,
     undefined,
-    memoryRepository,
-    queueAdapter
+    activeMemoryRepository,
+    queueAdapter,
+    embeddingProvider
 );
 
 // ─── Use Cases ───────────────────────────────────────
@@ -121,6 +133,7 @@ export const memoryPromotionWorker = new MemoryPromotionWorker(
     tenantRepository,
     memoryExtractor,
     memoryRepository,
+    embeddingProvider,
     'memory-promotion'
 );
 

@@ -4,6 +4,7 @@ import { SpanKind } from "@opentelemetry/api";
 import type { ITenantRepository } from "../../domain/ports/ITenantRepository.js";
 import type { IMemoryRepository } from "../../domain/ports/IMemoryRepository.js";
 import type { IMemoryExtractor } from "../../domain/ports/IMemoryExtractor.js";
+import type { IEmbeddingProvider } from "../../domain/ports/IEmbeddingProvider.js";
 import { LLMFactory } from "../llm/LLMFactory.js";
 import { Message, type MessageRole } from "../../domain/Message.js";
 import type { Memory } from "../../domain/Memory.js";
@@ -29,6 +30,7 @@ export class MemoryPromotionWorker {
         private readonly tenantRepository: ITenantRepository,
         private readonly memoryExtractor: IMemoryExtractor,
         private readonly memoryRepository: IMemoryRepository,
+        private readonly embeddingProvider?: IEmbeddingProvider,
         private readonly queueName: string = 'memory-promotion'
     ) {}
 
@@ -105,6 +107,21 @@ export class MemoryPromotionWorker {
                                     memoriesToSave.push(memory);
                                 } else {
                                     log.debug({ content: memory.content }, 'Memória duplicada ignorada.');
+                                }
+                            }
+
+                            // Geração de embeddings vetoriais (Fase 6)
+                            if (this.embeddingProvider && memoriesToSave.length > 0) {
+                                try {
+                                    const contents = memoriesToSave.map(m => m.content);
+                                    const embeddings = await this.embeddingProvider.generateEmbeddings(contents);
+                                    for (let i = 0; i < memoriesToSave.length; i++) {
+                                        if (embeddings[i] && embeddings[i].length > 0) {
+                                            memoriesToSave[i].embedding = embeddings[i];
+                                        }
+                                    }
+                                } catch (embError) {
+                                    log.warn({ err: embError }, 'Falha ao gerar embeddings para as memórias. Salvando sem embeddings.');
                                 }
                             }
 

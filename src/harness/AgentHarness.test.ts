@@ -9,6 +9,7 @@ import type { IMCPClient } from '../domain/ports/IMCPClient.js';
 import type { IShortTermMemory } from '../domain/ports/IShortTermMemory.js';
 import type { IMemoryRepository } from '../domain/ports/IMemoryRepository.js';
 import type { IQueueService } from '../domain/ports/IQueueService.js';
+import type { IEmbeddingProvider } from '../domain/ports/IEmbeddingProvider.js';
 import type { Memory } from '../domain/Memory.js';
 
 describe('AgentHarness', () => {
@@ -49,7 +50,12 @@ describe('AgentHarness', () => {
             dispatchMemoryPromotion: vi.fn().mockResolvedValue(undefined),
         };
 
-        return { llmProvider, mcpClient, shortTermMemory, memoryRepository, queueService };
+        const embeddingProvider: IEmbeddingProvider = {
+            generateEmbedding: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+            generateEmbeddings: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
+        };
+
+        return { llmProvider, mcpClient, shortTermMemory, memoryRepository, queueService, embeddingProvider };
     };
 
     it('deve executar o fluxo de texto e retornar resultado completed', async () => {
@@ -79,8 +85,8 @@ describe('AgentHarness', () => {
         expect(shortTermMemory.set).toHaveBeenCalledOnce();
     });
 
-    it('deve buscar memórias relevantes e enfileirar promoção de memória', async () => {
-        const { llmProvider, mcpClient, shortTermMemory, memoryRepository, queueService } = makeMocks();
+    it('deve buscar memórias relevantes com busca vetorial e enfileirar promoção de memória', async () => {
+        const { llmProvider, mcpClient, shortTermMemory, memoryRepository, queueService, embeddingProvider } = makeMocks();
         
         const mockMemories: Memory[] = [{
             id: 'mem-1',
@@ -104,7 +110,8 @@ describe('AgentHarness', () => {
             shortTermMemory,
             undefined,
             memoryRepository,
-            queueService
+            queueService,
+            embeddingProvider
         );
 
         const context = new ChatContext('thread-1', 'ws-1');
@@ -121,10 +128,12 @@ describe('AgentHarness', () => {
         });
 
         expect(result.status).toBe('completed');
+        expect(embeddingProvider.generateEmbedding).toHaveBeenCalledWith('Qual a versão do banco?');
         expect(memoryRepository.searchRelevant).toHaveBeenCalledWith({
             tenantId: 'tenant-1',
             workspaceId: 'ws-1',
             query: 'Qual a versão do banco?',
+            vector: [0.1, 0.2, 0.3],
             limit: 5,
         });
         expect(queueService.dispatchMemoryPromotion).toHaveBeenCalledWith(
