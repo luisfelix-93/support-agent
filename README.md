@@ -9,6 +9,9 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
 - [Visão Geral](#visão-geral)
 - [Arquitetura](#arquitetura)
 - [Camada Agent Harness (Runtime)](#camada-agent-harness-runtime)
+  - [Short-Term Memory (Redis)](#short-term-memory-redis)
+  - [Long-Term Memory & Busca Vetorial (MongoDB + Embeddings)](#long-term-memory--busca-vetorial-mongodb--embeddings)
+  - [Promoção Assíncrona de Memória (BullMQ Worker)](#promoção-assíncrona-de-memória-bullmq-worker)
 - [Estrutura de Diretórios](#estrutura-de-diretórios)
 - [Camadas](#camadas)
   - [Domain](#domain)
@@ -19,17 +22,22 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
   - [Use Cases](#use-cases)
 - [API Layer](#api-layer)
 - [Observabilidade](#observabilidade)
+  - [Coleta de Logs (Pino & Loki)](#coleta-de-logs)
+  - [Métricas Prometheus](#métricas-prometheus)
+  - [Tracing Distribuído (OpenTelemetry & Grafana Tempo)](#tracing-distribuído-opentelemetry--grafana-tempo)
 - [Autenticação e Autorização (JWT)](#autenticação-e-autorização-jwt)
 - [Onboarding](#onboarding)
+- [Gestão de Configurações de Chat (Multi-Tenant Slack)](#gestão-de-configurações-de-chat-multi-tenant-slack)
 - [Multi-Tenant](#multi-tenant)
 - [Provedores LLM Suportados](#provedores-llm-suportados)
 - [Integração MCP](#integração-mcp)
 - [Integração Slack](#integração-slack)
 - [Fluxo de Processamento](#fluxo-de-processamento)
 - [Stack Tecnológica](#stack-tecnológica)
+- [Testes](#testes)
 - [Pré-requisitos](#pré-requisitos)
-- [Instalação](#instalação)
-- [Configuração](#configuração)
+- [Instalação e Execução](#instalação-e-execução)
+- [Configuração e Injeção de Dependências](#configuração-e-injeção-de-dependências)
 - [Status do Projeto](#status-do-projeto)
 
 ---
@@ -40,9 +48,12 @@ O **Support Agent** é um bot de atendimento que atua como intermediário entre 
 
 **Principais capacidades:**
 
-- 🤖 Processamento de linguagem natural via múltiplos provedores de LLM
+- 🤖 Processamento de linguagem natural via múltiplos provedores de LLM (`OpenAI`, `Anthropic`, `DeepSeek`, `Google`)
 - ⚡ **Agent Harness Layer**: Runtime desacoplado (`IAgentHarness`) que gerencia o loop iterativo LLM ↔ MCP, tratamento de resiliência e medições de execução com `runId` único
 - 🧠 **Short-Term Memory**: Cache de contexto de sessão em Redis (`memory:short:{workspaceId}:{threadId}`) com TTL configurável
+- 🏛️ **Long-Term Memory**: Persistência de memórias estruturadas e fatos no MongoDB (`memories`) com isolamento estrito por `tenantId` e `workspaceId`
+- 🔍 **Busca Vetorial & Embeddings**: Recuperação semântica de memórias relevantes por similaridade de cosseno usando vetores OpenAI (`text-embedding-3-small` / 1536 dimensões)
+- 🚀 **Promoção Assíncrona de Memória**: Extração em background de fatos e preferências do diálogo via fila dedicada no BullMQ (`memory-promotion`), com zero acréscimo na latência de resposta ao usuário
 - 📊 **Token Budgeting & Assembly**: Montagem explícita de contexto com contagem precisa de tokens (`ITokenCounter`) e truncagem inteligente
 - 🔧 Descoberta e execução dinâmica de ferramentas via MCP (JSON-RPC 2.0)
 - 📊 Observabilidade nativa via Prometheus, Grafana Loki e Tracing Distribuído com Grafana Tempo (OpenTelemetry)
@@ -52,7 +63,7 @@ O **Support Agent** é um bot de atendimento que atua como intermediário entre 
 
 ## Arquitetura
 
-O projeto adota uma arquitetura hexagonal (Ports & Adapters), com uma **Camada Harness desacoplada** para o runtime de execução agentic:
+O projeto adota uma arquitetura hexagonal (Ports & Adapters), com uma **Camada Harness desacoplada** para o runtime de execução agentic e um subsistema desacoplado de memória e vetores:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -64,41 +75,49 @@ O projeto adota uma arquitetura hexagonal (Ports & Adapters), com uma **Camada H
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           Agent Harness Layer                               │
 │           AgentHarness  ──► ContextAssembler ──► ExecutionPolicy            │
-│                                  │                                          │
-│                                  ▼                                          │
-│                         TiktokenAdapter (BPE)                               │
-└───────────┬──────────────────────┬───────────────────────┬──────────────────┘
-            │                      │                       │
-      ┌─────▼───────┐        ┌─────▼──────┐          ┌─────▼─────────┐
-      │ ILLMProvider│        │ IMCPClient │          │IShortTermMem. │
-      └─────┬───────┘        └─────┬──────┘          └─────┬─────────┘
-            │                      │                       │
-      ┌─────▼───────┐        ┌─────▼──────┐          ┌─────▼─────────┐
-      │   OpenAI    │        │    MCP     │          │  Redis STM    │
-      │   Adapter   │        │   HTTP     │          │  (ioredis)    │
-      ├─────────────┤        │  Adapter   │          └───────────────┘
-      │  Anthropic  │        └────────────┘
-      │   Adapter   │
-      ├─────────────┤
-      │   DeepSeek  │
-      └─────────────┘
+│                 │                │                                          │
+│                 │                ▼                                          │
+│                 │        TiktokenAdapter (BPE)                              │
+└─────────┬───────┴──────────────┬──────────────────┬─────────────────┬───────┘
+          │                      │                  │                 │
+    ┌─────▼───────┐        ┌─────▼──────┐     ┌─────▼─────────┐ ┌─────▼─────────┐
+    │ ILLMProvider│        │ IMCPClient │     │IShortTermMem. │ │IMemoryRepos.  │
+    └─────┬───────┘        └─────┬──────┘     └─────┬─────────┘ └─────┬─────────┘
+          │                      │                  │                 │
+    ┌─────▼───────┐        ┌─────▼──────┐     ┌─────▼─────────┐ ┌─────▼─────────┐
+    │   OpenAI    │        │    MCP     │     │  Redis STM    │ │ MongoMemory   │
+    │   Adapter   │        │   HTTP     │     │  (ioredis)    │ │ (Cosine/Vector│
+    ├─────────────┤        │  Adapter   │     └───────────────┘ └───────────────┘
+    │  Anthropic  │        └────────────┘                             ▲
+    │   Adapter   │                                                   │
+    ├─────────────┤        ┌────────────────────────────────────┐     │
+    │   DeepSeek  │        │       BullMQ Queue Service         │     │
+    ├─────────────┤        │     ('memory-promotion' queue)     │     │
+    │   Google    │        └─────────────────┬──────────────────┘     │
+    └─────────────┘                          │                        │
+                                             ▼                        │
+                           ┌────────────────────────────────────┐     │
+                           │      MemoryPromotionWorker         │     │
+                           │   - LLMMemoryExtractor             │     │
+                           │   - OpenAIEmbeddingProvider (1536d)├─────┘
+                           │   - Deduplicação & Idempotência    │
+                           └────────────────────────────────────┘
 ```
 
 ---
 
 ## Camada Agent Harness (Runtime)
 
-A **Camada Agent Harness** é o motor de execução do agente. Ela abstrai e orquestra o ciclo iterativo entre o provedor de LLM (`ILLMProvider`) e o servidor MCP (`IMCPClient`), retirando essa responsabilidade do UseCase e promovendo alta testabilidade, observabilidade e gerenciamento de estado de curto prazo.
+A **Camada Agent Harness** é o motor de execução do agente. Ela abstrai e orquestra o ciclo iterativo entre o provedor de LLM (`ILLMProvider`) e o servidor MCP (`IMCPClient`), retirando essa responsabilidade do UseCase e promovendo alta testabilidade, observabilidade e gerenciamento de estado de curto e longo prazo.
 
 ### Por que um Harness?
 
-Antes da introdução da camada de Harness, a lógica do ciclo `while(tool_call)` ficava acoplada diretamente no `ProcessAgentResponseUseCase`. A arquitetura com Harness traz:
-
 1. **Desacoplamento do UseCase**: O `ProcessAgentResponseUseCase` lida apenas com a resolução de infraestrutura (busca tenant, recupera histórico do banco e envia mensagem ao chat), enquanto a execução agentic fica sob responsabilidade do `IAgentHarness`.
-2. **Short-Term Memory (Redis)**: As iterações intermediárias da conversa (chamadas e respostas de ferramentas) são mantidas em um cache de memória de curto prazo com TTL configurável em Redis (`memory:short:{workspaceId}:{threadId}`), otimizando o acesso durante a sessão sem sobrecarregar o MongoDB.
-3. **Token Budgeting (Orçamento de Tokens)**: Garantia estrita de que o contexto enviado para o LLM nunca ultrapassa a janela de contexto permitida (`maxTokens`), utilizando contagem de tokens baseada em BPE/ChatML (`TiktokenAdapter`).
-4. **Resiliência e Recuperação de Erros**: Se uma ferramenta MCP falhar ou estourar tempo limite, o erro é injetado como mensagem de contexto para o LLM. Se o número limite de iterações for atingido, o Harness intercepta e exige uma resposta final de síntese.
-5. **Observabilidade Granular**: Cada execução gera um `runId` único (UUID v4) que é injetado nos logs estruturados do Pino/Loki, além de incrementar contadores e histogramas no Prometheus.
+2. **Short-Term Memory (Redis)**: As iterações intermediárias da conversa (chamadas e respostas de ferramentas) são mantidas em um cache de memória de curto prazo com TTL configurável em Redis (`memory:short:{workspaceId}:{threadId}`).
+3. **Long-Term Memory & Vector Search (MongoDB + Embeddings)**: Fatos duradouros e preferências do usuário são recuperados semanticamente e injetados de forma resumida no início do contexto.
+4. **Token Budgeting (Orçamento de Tokens)**: Garantia estrita de que o contexto enviado para o LLM nunca ultrapassa a janela de contexto permitida (`maxTokens`), utilizando contagem de tokens baseada em BPE/ChatML (`TiktokenAdapter`).
+5. **Resiliência e Recuperação de Erros**: Se uma ferramenta MCP falhar ou estourar tempo limite, o erro é injetado como mensagem de contexto para o LLM. Se o número limite de iterações for atingido, o Harness intercepta e exige uma resposta final de síntese.
+6. **Observabilidade Granular**: Cada execução gera um `runId` único (UUID v4) que é injetado nos logs estruturados do Pino/Loki, além de incrementar contadores e histogramas no Prometheus.
 
 ### Componentes Principais
 
@@ -106,18 +125,22 @@ Antes da introdução da camada de Harness, a lógica do ciclo `while(tool_call)
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                             AgentHarness                                 │
 │  - Controla o loop iterativo LLM ↔ MCP                                   │
+│  - Realiza busca semântica vetorial pré-execução via IMemoryRepository   │
 │  - Atribui runId e mede duração da execução                              │
 │  - Captura erros de ferramentas como contexto                            │
 │  - Armazena histórico recente na Short-Term Memory                        │
+│  - Enfileira job de promoção de memória de longo prazo (BullMQ)          │
 └──────────────┬─────────────────────────────┬─────────────────────────────┘
                │                             │
                ▼                             ▼
 ┌──────────────────────────────┐ ┌─────────────────────────────────────────┐
 │       ContextAssembler       │ │             ExecutionPolicy             │
 │ - Aplica systemInstructions  │ │ - Regras de limite (máx 5 iterações)    │
-│ - Calcula orçamentos de tokens│ │ - Timeouts globais e de iteração        │
-│ - Executa truncagem inteligente│ │ - Thresholds de alerta                  │
-└──────────────┬───────────────┘ └─────────────────────────────────────────┘
+│ - Injeta memórias de longo   │ │ - Timeouts globais e de iteração        │
+│   prazo no prompt de sistema │ │ - Thresholds de alerta                  │
+│ - Calcula orçamentos de token│ └─────────────────────────────────────────┘
+│ - Executa truncagem inteligente│
+└──────────────┬───────────────┘
                │
                ▼
 ┌──────────────────────────────┐
@@ -130,28 +153,72 @@ Antes da introdução da camada de Harness, a lógica do ciclo `while(tool_call)
 | Componente | Localização | Função |
 |---|---|---|
 | **`IAgentHarness`** | `src/domain/ports/IAgentHarness.ts` | Interface principal do runtime agentic (`run(input): Promise<AgentRunResult>`). |
-| **`AgentHarness`** | `src/harness/AgentHarness.ts` | Implementação do loop agentic, orquestração de chamadas de ferramentas, resiliência e registro de métricas. |
+| **`AgentHarness`** | `src/harness/AgentHarness.ts` | Implementação do loop agentic, busca vetorial, orquestração MCP, resiliência e métricas. |
 | **`IContextAssembler`** | `src/domain/ports/IContextAssembler.ts` | Contrato para montagem e orçamentação de contexto. |
-| **`ContextAssembler`** | `src/harness/ContextAssembler.ts` | Implementação da montagem de contexto com suporte a instruções de sistema e truncamento histórico. |
+| **`ContextAssembler`** | `src/harness/ContextAssembler.ts` | Montagem de contexto com injeção de memórias de longo prazo, system prompt e truncamento. |
 | **`ITokenCounter`** | `src/domain/ports/ITokenCounter.ts` | Interface para cálculo de tokens. |
 | **`TiktokenAdapter`** | `src/infrastructure/tokenizer/TiktokenAdapter.ts` | Adaptador baseado no `tiktoken` (cl100k_base / ChatML) para contagem exata de tokens. |
 | **`IShortTermMemory`** | `src/domain/ports/IShortTermMemory.ts` | Interface de armazenamento temporário de sessão. |
-| **`RedisShortTermMemory`** | `src/infrastructure/memory/RedisShortTermMemory.ts` | Implementação de Short-Term Memory com Redis (chave: `memory:short:{workspaceId}:{threadId}`). |
+| **`RedisShortTermMemory`** | `src/infrastructure/memory/RedisShortTermMemory.ts` | Short-Term Memory com Redis (chave: `memory:short:{workspaceId}:{threadId}`). |
+| **`IMemoryRepository`** | `src/domain/ports/IMemoryRepository.ts` | Contrato para persistência e busca vetorial/textual de memórias no MongoDB. |
+| **`MongoMemoryRepository`** | `src/repositories/MongoMemoryRepository.ts` | Repositório de memórias com cálculo de similaridade por cosseno e isolamento multi-tenant. |
+| **`IEmbeddingProvider`** | `src/domain/ports/IEmbeddingProvider.ts` | Contrato para geração de embeddings vetoriais. |
+| **`OpenAIEmbeddingProvider`** | `src/infrastructure/llm/OpenAIEmbeddingProvider.ts` | Adaptador OpenAI (`text-embedding-3-small` / 1536 dimensões) com spans e métricas. |
+| **`IMemoryExtractor`** | `src/domain/ports/IMemoryExtractor.ts` | Contrato para extração estruturada de memórias via LLM. |
+| **`LLMMemoryExtractor`** | `src/infrastructure/memory/LLMMemoryExtractor.ts` | Extrator estruturado com parsing defensivo e fallback gracioso. |
+| **`MemoryPromotionWorker`** | `src/infrastructure/queue/MemoryPromotionWorker.ts` | Worker BullMQ em segundo plano que extrai memórias, gera embeddings e salva no MongoDB. |
 | **`ExecutionPolicy`** | `src/harness/ExecutionPolicy.ts` | Guardrails de execução: máximo de 5 iterações de ferramentas, timeout por iteração e limite de tokens. |
-| **`AgentMetrics`** | `src/infrastructure/metrics/AgentMetrics.ts` | Coletores de métricas Prometheus para a execução do agente. |
+| **`AgentMetrics`** | `src/infrastructure/metrics/AgentMetrics.ts` | Coletores de métricas Prometheus para execução, memória e embeddings. |
 
-### Fluxo de Execução no Harness
+---
 
-1. **Inicialização (`runId`)**: O Harness recebe as dependências e gera um `runId` único para a execução.
-2. **Consulta a Short-Term Memory**: O Harness verifica se existem mensagens de iterações recentes no Redis.
-3. **Assembly de Contexto**: O `ContextAssembler` junta o contexto atual + Short-Term Memory + `systemInstructions` e aplica truncagem se o limite de tokens for excedido.
-4. **Chamada do LLM**: O `ILLMProvider` é acionado enviando o contexto formatado e a lista de ferramentas MCP (`mcpTools`).
-5. **Avaliação da Resposta**:
-   - **Caso `type === 'text'`**: O ciclo finaliza com sucesso (`status: 'completed'`), a resposta é salva na Short-Term Memory e retornada.
-   - **Caso `type === 'tool_call'`**: O Harness incrementa a iteração, executa a ferramenta via `IMCPClient.executeTool()` medindo a duração e registra a chamada em `toolCalls`.
-6. **Recuperação de Falhas de Ferramentas**: Se a chamada da ferramenta falhar, o erro é convertido em uma mensagem `system` JSON de erro e o loop continua, permitindo que o LLM reaja e decida como prosseguir.
-7. **Guardrail de Máximo de Iterações**: Ao atingir o número máximo de iterações (`MAX_TOOL_ITERATIONS = 5`), o Harness adiciona uma instrução de sistema forçando o LLM a resumir os dados e responder ao usuário.
-8. **Finalização & Métricas**: As métricas do Prometheus (`agent_runs_total`, `agent_run_duration_seconds`, `agent_tool_calls_total`) são atualizadas.
+### Long-Term Memory & Busca Vetorial (MongoDB + Embeddings)
+
+O subsistema de **Long-Term Memory** permite que o agente mantenha conhecimento persistente entre diferentes sessões e dias de atendimento:
+
+1. **Estrutura da Memória (`Memory`)**:
+   - `id`: Identificador único (UUID v4)
+   - `tenantId` e `workspaceId`: Chaves de partição e isolamento multi-tenant
+   - `type`: Categoria (`fact`, `preference`, `summary`, `instruction`)
+   - `content`: Conteúdo textual conciso extraído do diálogo
+   - `importance`: Peso de relevância (0.0 a 1.0)
+   - `embedding`: Vetor numérico (1536 dimensões)
+   - `createdAt` e `updatedAt`: Timestamps
+
+2. **Busca Semântica por Similaridade de Cosseno**:
+   - Quando o usuário envia uma nova mensagem, o `AgentHarness` gera o embedding da query via `IEmbeddingProvider`.
+   - O `MongoMemoryRepository.searchRelevant` filtra os documentos do tenant e calcula a similaridade por cosseno entre o vetor da query e os vetores armazenados:
+     $$\text{Cosine Similarity} = \frac{\mathbf{u} \cdot \mathbf{v}}{\|\mathbf{u}\| \|\mathbf{v}\|}$$
+   - Memórias com similaridade $\ge 0.65$ (configurável) são ordenadas por relevância e retornadas para o `ContextAssembler`.
+   - Se a busca vetorial não estiver habilitada ou o provedor falhar, o repositório aplica busca textual com regex como fallback.
+
+---
+
+### Promoção Assíncrona de Memória (BullMQ Worker)
+
+Para que a extração de memórias não aumente a latência percebida pelo usuário final, a promoção é 100% desacoplada e assíncrona:
+
+```
+[AgentHarness] ────(Após responder ao usuário)────► [Fila: memory-promotion (BullMQ)]
+                                                                  │
+                                                                  ▼
+                                                      [MemoryPromotionWorker]
+                                                                  │
+                                                  ┌───────────────┴───────────────┐
+                                                  ▼                               ▼
+                                       [LLMMemoryExtractor]          [OpenAIEmbeddingProvider]
+                                       (Extrai fatos/JSON)             (Gera embeddings 1536d)
+                                                  │                               │
+                                                  └───────────────┬───────────────┘
+                                                                  ▼
+                                                    [MongoMemoryRepository.saveBatch]
+                                                    (Deduplicado por tenant e workspace)
+```
+
+1. **Publicação Sem Bloqueio**: Ao concluir a resposta com sucesso, o `AgentHarness` despacha um job na fila `memory-promotion` contendo as mensagens da rodada atual e o contexto de rastreamento (`traceContext`).
+2. **Extração Especializada**: O worker aciona o `LLMMemoryExtractor`, instruindo o LLM a identificar exclusivamente fatos novos, regras de negócio ou preferências explícitas do usuário.
+3. **Deduplicação & Idempotência**: O worker consulta o repositório para verificar se uma memória com o mesmo significado já existe antes de salvá-la.
+4. **Enriquecimento com Vetores**: As memórias aprovadas têm seus embeddings gerados pelo `OpenAIEmbeddingProvider` e são persistidas no MongoDB.
 
 ---
 
@@ -165,7 +232,7 @@ support-agent/
 │   │   ├── ChatContext.ts               # Contexto de conversação (thread + mensagens)
 │   │   ├── LLMConfig.ts                # Tipagem de configuração do provedor LLM
 │   │   ├── MCPServerCapabilities.ts     # Tipos do handshake MCP
-│   │   ├── Memory.ts                   # Modelo de memória (Short-Term & RAG)
+│   │   ├── Memory.ts                   # Modelo de memória estruturada e vetorial (Short-Term & Long-Term)
 │   │   ├── Message.ts                  # Entidade de mensagem
 │   │   ├── Password.ts                 # Value object — hash SHA-256 na criação, compare em login
 │   │   ├── SpaceMapping.ts             # Mapeamento spaceId → workspaceId
@@ -178,10 +245,13 @@ support-agent/
 │   │       ├── IChatProvider.ts
 │   │       ├── IChatRepository.ts
 │   │       ├── IContextAssembler.ts    # Contrato para montagem de contexto e token budget
+│   │       ├── IEmbeddingProvider.ts   # [NOVO] Contrato para geração de embeddings vetoriais
 │   │       ├── IEncryptionService.ts   # Interface do serviço de criptografia
 │   │       ├── ILLMProvider.ts
 │   │       ├── IMCPClient.ts
-│   │       ├── IQueueService.ts
+│   │       ├── IMemoryExtractor.ts     # [NOVO] Contrato para extração de memórias via LLM
+│   │       ├── IMemoryRepository.ts    # [NOVO] Contrato para persistência e busca de memórias
+│   │       ├── IQueueService.ts        # Enfileiramento de processamento e promoção de memória
 │   │       ├── IShortTermMemory.ts     # Contrato para cache de sessão temporária
 │   │       ├── ISpaceMappingRepository.ts
 │   │       ├── ITenantRepository.ts
@@ -189,9 +259,10 @@ support-agent/
 │   │       └── IUserRepository.ts
 │   │
 │   ├── harness/                         # Motor de execução e orquestração agentic
-│   │   ├── AgentHarness.ts             # Loop iterativo LLM ↔ MCP, resiliência e métricas
+│   │   ├── AgentHarness.ts             # Loop iterativo LLM ↔ MCP, busca vetorial e métricas
 │   │   ├── AgentHarness.test.ts
-│   │   ├── ContextAssembler.ts         # Assembly de contexto com truncamento inteligente
+│   │   ├── AgentHarness.integration.test.ts # [NOVO] Teste E2E do ciclo completo de memória
+│   │   ├── ContextAssembler.ts         # Assembly de contexto com injeção de memórias e truncamento
 │   │   ├── ContextAssembler.test.ts
 │   │   └── ExecutionPolicy.ts          # Guardrails de execução (máx iterações, timeouts)
 │   │
@@ -205,17 +276,21 @@ support-agent/
 │   │   ├── llm/
 │   │   │   ├── AnthropicAdapter.ts
 │   │   │   ├── OpenAIAdapter.ts
+│   │   │   ├── OpenAIEmbeddingProvider.ts # [NOVO] Provedor de embeddings OpenAI (1536d)
 │   │   │   └── LLMFactory.ts
 │   │   ├── mcp/
 │   │   │   └── MCPHttpAdapter.ts
-│   │   ├── memory/                     # Memória de curto prazo
+│   │   ├── memory/                     # Memória de curto prazo e extratores
 │   │   │   ├── RedisShortTermMemory.ts
-│   │   │   └── RedisShortTermMemory.test.ts
+│   │   │   ├── RedisShortTermMemory.test.ts
+│   │   │   ├── LLMMemoryExtractor.ts   # [NOVO] Extrator estruturado de memórias
+│   │   │   └── LLMMemoryExtractor.test.ts
 │   │   ├── metrics/                    # Métricas Prometheus
 │   │   │   └── AgentMetrics.ts
 │   │   ├── queue/
-│   │   │   ├── BullMQAdapter.ts            # Producer — enfileira mensagens via BullMQ
-│   │   │   ├── BullMQWorker.ts             # Consumer — processa jobs da fila BullMQ
+│   │   │   ├── BullMQAdapter.ts            # Producer — enfileira mensagens e promoções de memória
+│   │   │   ├── BullMQWorker.ts             # Consumer — processa mensagens de chat
+│   │   │   ├── MemoryPromotionWorker.ts    # [NOVO] Consumer — extrai, vetoriza e salva memórias
 │   │   │   └── QStashAdapter.ts            # Adapter legado para QStash (Upstash)
 │   │   ├── security/
 │   │   │   └── AESEncryptionService.ts     # Implementação AES-256-GCM para criptografia em repouso
@@ -230,6 +305,7 @@ support-agent/
 │   ├── repositories/                    # Implementações concretas dos repositórios
 │   │   ├── ChatConfigRepository.ts     # Coleção chat_configs (criptografia transparente de tokens)
 │   │   ├── ChatRepository.ts
+│   │   ├── MongoMemoryRepository.ts    # [NOVO] Coleção memories (busca textual e vetorial por cosseno)
 │   │   ├── SpaceMappingRepository.ts    # Coleção space_mappings
 │   │   ├── TenantRepository.ts
 │   │   └── UserRepository.ts           # Coleção users
@@ -257,7 +333,7 @@ support-agent/
 │   │   └── workerRouter.ts
 │   │
 │   ├── config/
-│   │   ├── container.ts               # Composition Root
+│   │   ├── container.ts               # Composition Root com DI de memória e embeddings
 │   │   ├── logger.ts                  # Logger Pino com mixin OpenTelemetry (trace_id / span_id)
 │   │   ├── metrics.ts                 # Registry e métricas Prometheus
 │   │   └── tracing.ts                 # Inicialização do OpenTelemetry SDK e OTLP Exporter
@@ -275,6 +351,7 @@ support-agent/
 │
 ├── api/
 │   └── index.ts                       # Entry point para Vercel Serverless Functions
+├── harness-long-term-memory.md        # [NOVO] Especificação e status de desenvolvimento do Harness
 ├── package.json
 ├── vercel.json
 ├── .env.example
@@ -295,7 +372,7 @@ Contém as entidades centrais e as regras de negócio do sistema. Não possui de
 | `ChatContext` | Agrupa um `threadID`, `workspaceId` e o histórico de `Message[]`. |
 | `Tenant` | Workspace configurado com `workspaceId`, `llmConfig`, `mcpConfig` e `isActive`. |
 | `AgentRun` | Modelo de domínio de rastreamento da execução agentic (`runId`, `tenantId`, `workspaceId`, `threadId`, `status`, `durationMs`, `toolCalls`). |
-| `Memory` | Modelo de domínio de memória estruturada (`id`, `tenantId`, `workspaceId`, `type`, `content`, `importance`). |
+| `Memory` | Modelo de domínio de memória estruturada e semântica (`id`, `tenantId`, `workspaceId`, `type`, `content`, `importance`, `embedding?: number[]`). |
 | `User` | Usuário do sistema com `id`, `name`, `email`, `password` (value object) e `workspaceId: string[]`. |
 | `Password` | Value object que encapsula senha hasheada (SHA-256). Criado via `Password.create(plain)` no entry point; comparado via `password.compare(plain)` no login. |
 | `SpaceMapping` | Mapeia um `spaceId` do Google Chat ao `workspaceId` do tenant correspondente. |
@@ -307,8 +384,8 @@ Contém as entidades centrais e as regras de negócio do sistema. Não possui de
 
 Motor desacoplado responsável pela orquestração iterativa do agente:
 
-- **`AgentHarness`**: Runtime que gerencia o loop iterativo LLM ↔ MCP, captura exceções em ferramentas, gera o `runId` e atualiza métricas Prometheus.
-- **`ContextAssembler`**: Monta o contexto para o LLM adicionando instruções de sistema e truncando histórico de forma inteligente com base no limite de tokens.
+- **`AgentHarness`**: Runtime que gerencia o loop iterativo LLM ↔ MCP, busca vetorial de memórias, captura exceções em ferramentas, gera o `runId` e atualiza métricas Prometheus.
+- **`ContextAssembler`**: Monta o contexto para o LLM adicionando instruções de sistema, memórias de longo prazo e truncando histórico de forma inteligente com base no limite de tokens.
 - **`ExecutionPolicy`**: Define regras de parada (limite de 5 iterações, timeouts e orçamentos de token).
 
 ### Ports (Interfaces)
@@ -318,13 +395,16 @@ Contratos que definem as fronteiras do domínio — implementados pela camada de
 | Port | Responsabilidade |
 |---|---|
 | `IAgentHarness` | Interface do runtime desacoplado do agente (`run(input): Promise<AgentRunResult>`). |
-| `IContextAssembler` | Interface para montagem de contexto com orçamento de tokens. |
+| `IContextAssembler` | Interface para montagem de contexto com orçamento de tokens e injeção de memórias. |
 | `ITokenCounter` | Interface para contagem precisa de tokens (BPE/ChatML). |
 | `IShortTermMemory` | Interface para gerenciamento de memória temporária de sessão com TTL. |
+| `IMemoryRepository` | Interface para persistência e busca textual/vetorial de memórias de longo prazo. |
+| `IMemoryExtractor` | Interface para extração estruturada de fatos e preferências a partir de diálogos. |
+| `IEmbeddingProvider` | Interface para geração de vetores de embedding individuais ou em lote (*batch*). |
 | `ILLMProvider` | Gera respostas a partir do `ChatContext`. Retorna `{ type: 'text' }` ou `{ type: 'tool_call' }`. |
 | `IMCPClient` | Handshake MCP, listagem e execução de ferramentas. |
 | `IChatProvider` | Envia mensagens ao canal de chat do usuário final. |
-| `IQueueService` | Despacha tarefas para processamento assíncrono. |
+| `IQueueService` | Despacha mensagens e jobs de promoção assíncrona de memória (`dispatchMemoryPromotion`). |
 | `IChatRepository` | Persiste e recupera `ChatContext` por `threadId` + `workspaceId`. |
 | `ITenantRepository` | Persiste e recupera `Tenant` por `workspaceId`. |
 | `ISpaceMappingRepository` | Persiste e recupera mapeamentos `spaceId → workspaceId`. |
@@ -336,43 +416,28 @@ Contratos que definem as fronteiras do domínio — implementados pela camada de
 
 Implementações concretas dos ports:
 
-#### LLM Adapters
+#### LLM & Embedding Adapters
 
-- **`OpenAIAdapter`** — Integra com a API da OpenAI (Chat Completions). Também suporta provedores compatíveis via `baseURL` customizada (ex: DeepSeek). Trata a tradução bidirecional entre o domínio e o formato proprietário da API.
-- **`AnthropicAdapter`** — Integra com a API da Anthropic (Messages). Separa system prompts das mensagens de conversa conforme o padrão da API do Claude. Mapeia blocos `tool_use` para a entidade `ToolCall` do domínio.
-- **`LLMFactory`** — Factory Method que instancia o adapter correto com base no `LLMConfig.provider`. Modelos padrão:
-  - `openai` → `gpt-4o`
-  - `deepseek` → `deepseek-chat` (via `OpenAIAdapter` com `baseURL` customizada)
-  - `anthropic` → `claude-3-5-sonnet`
+- **`OpenAIAdapter`** — Integra com a API da OpenAI (Chat Completions) e provedores compatíveis via `baseURL` (ex: DeepSeek).
+- **`AnthropicAdapter`** — Integra com a API da Anthropic (Messages), separando system prompts e mapeando `tool_use`.
+- **`OpenAIEmbeddingProvider`** — Gera vetores de embedding via OpenAI SDK (`text-embedding-3-small` / 1536 dimensões) com spans OpenTelemetry e métricas Prometheus.
+- **`LLMFactory`** — Factory Method que instancia o adapter correto (`openai`, `deepseek`, `anthropic`, `google`).
 
 #### MCP Adapter
 
-- **`MCPHttpAdapter`** — Cliente HTTP que se comunica com um servidor MCP via JSON-RPC 2.0. Implementa o handshake completo conforme a especificação MCP:
-  - `connect()` — Handshake em 3 etapas: envia `initialize`, recebe capabilities do servidor, envia `notifications/initialized`
-  - `isConnected()` — Verifica se o handshake foi concluído
-  - `tools/list` — Descobre dinamicamente as ferramentas disponíveis para o tenant
-  - `tools/call` — Executa uma ferramenta específica passando nome e argumentos
-  - `ensureInitialized()` — Conecta automaticamente se o handshake ainda não foi realizado
+- **`MCPHttpAdapter`** — Cliente HTTP JSON-RPC 2.0 com handshake de 3 etapas (`initialize` → capabilities → `notifications/initialized`), listagem e execução de ferramentas.
 
-#### Chat Adapters & Factory
+#### Memory & Queue Workers
 
-- **`GoogleChatAdapter`** — Envia mensagens para uma thread do Google Chat Spaces via API REST v1. Utiliza `google-auth-library` para autenticação OAuth2 via Application Default Credentials (ADC). O `threadId` é usado no formato `spaces/AAAAxxxx/threads/YYYYyyyy`.
-- **`SlackChatAdapter`** — Envia mensagens para um canal/thread do Slack via `chat.postMessage`. Autentica com Bearer token dinâmico por workspace. Usa a convenção `"CHANNEL_ID:thread_ts"` para o `threadId`.
-- **`ChatProviderFactory`** — Instancia dinamicamente o `SlackChatAdapter` buscando o `botToken` de cada tenant no banco de dados via `ChatConfigRepository`.
-
-#### Security
-
-- **`AESEncryptionService`** — Implementa `IEncryptionService` usando **AES-256-GCM** com IV aleatório de 12 bytes e Auth Tag de 16 bytes. Garante a proteção dos segredos do Slack (`botToken`, `appToken`, `signingSecret`) no banco de dados.
-
-#### Queue Adapter
-
-- **`BullMQAdapter`** — Producer baseado em [BullMQ](https://bullmq.io/) que enfileira mensagens para processamento assíncrono. Conecta-se ao Redis e adiciona jobs na fila `message-processing` com até 3 tentativas e backoff exponencial de 5s. Remove jobs da fila ao completar com sucesso, mas mantém os que falham para depuração.
-- **`BullMQWorker`** — Consumer que escuta a fila `message-processing` e processa cada job chamando o `ProcessAgentResponseUseCase` com o `ChatProvider` correspondente resolvido via `ChatProviderFactory`. Suporta concorrência configurável via `QUEUE_CONCURRENCY` (padrão: 5). Inclui graceful shutdown nos sinais `SIGTERM`/`SIGINT`.
-- **`QStashAdapter`** — Adapter legado que despacha mensagens via QStash (Upstash). Publica no endpoint `https://qstash.upstash.io/v1/publish/{workerUrl}` com header `Upstash-Retries: 3` para retentativas automáticas.
+- **`RedisShortTermMemory`** — Armazenamento de curto prazo em Redis (`memory:short:{workspaceId}:{threadId}`).
+- **`LLMMemoryExtractor`** — Extração estruturada de memórias via LLM com prompt de alta precisão e validação defensiva.
+- **`MemoryPromotionWorker`** — Worker BullMQ em background que consome jobs da fila `memory-promotion`, extrai memórias, gera embeddings e salva no MongoDB sem bloquear a resposta ao usuário.
+- **`BullMQAdapter`** — Producer BullMQ para filas `message-processing` e `memory-promotion`.
+- **`BullMQWorker`** — Consumer BullMQ para processamento principal de mensagens.
 
 #### Database
 
-- **`MongoConnection`** — Singleton que gerencia a conexão com MongoDB. Método `connect(uri, dbName)` inicia a conexão; `getDb()` retorna a instância do banco para consumo dos repositórios.
+- **`MongoConnection`** — Singleton de conexão com MongoDB nativo.
 
 ### Repositories
 
@@ -380,17 +445,18 @@ Implementações concretas dos ports de repositório utilizando MongoDB:
 
 | Repositório | Coleção | Operações |
 |---|---|---|
+| `MongoMemoryRepository` | `memories` | `save`, `saveBatch`, `searchRelevant` (busca semântica por cosseno e textual regex), `findByWorkspaceId`, `delete` |
 | `ChatRepository` | `threads` | `findById`, `save` |
 | `TenantRepository` | `tenants` | `findByWorkspaceId`, `save` |
 | `UserRepository` | `users` | `findById`, `findByEmail`, `save`, `addWorkspaceId` |
 | `SpaceMappingRepository` | `space_mappings` | `findBySpaceId`, `save` |
-| `ChatConfigRepository` | `chat_configs` | `findByWorkspaceId`, `findByTeamId`, `save` (Criptografia/Descriptografia transparente via `AESEncryptionService`) |
+| `ChatConfigRepository` | `chat_configs` | `findByWorkspaceId`, `findByTeamId`, `save` (Criptografia AES-256-GCM) |
 
 ### Use Cases
 
 | Use Case | Descrição |
 |---|---|
-| `ProcessAgentResponseUseCase` | Fluxo principal do agente: resolve tenant via `spaceId`, executa ciclo iterativo LLM↔MCP (até 5 chamadas consecutivas de ferramentas) e persiste o contexto. |
+| `ProcessAgentResponseUseCase` | Fluxo principal do agente: resolve tenant via `spaceId`, delega execução ao `AgentHarness` e envia resposta ao chat. |
 | `RegisterUserUseCase` | Cria um novo usuário. Valida unicidade do email e aplica `Password.create()` antes de persistir. |
 | `LoginUserUseCase` | Valida credenciais e emite um JWT assinado com `jose` (HS256). Expõe `verify()` estático para o middleware. |
 | `RegisterTenantUseCase` | Registra um novo tenant (workspace). Valida duplicidade de `workspaceId`. |
@@ -429,6 +495,9 @@ O endpoint `GET /metrics` expõe métricas no formato Prometheus. Em processos N
 | `agent_runs_failed_total` | Counter | `tenantId`, `reason` | Total de falhas na execução do Harness |
 | `agent_run_duration_seconds` | Histogram | `tenantId`, `status` | Duração das execuções do Agent Harness |
 | `agent_tool_calls_total` | Counter | `tenantId`, `tool` | Total de ferramentas executadas pelo Agent Harness |
+| `agent_memory_search_duration_seconds` | Histogram | `tenantId`, `type` | Latência da consulta de memórias de longo prazo (vetorial/textual) |
+| `agent_memory_promoted_total` | Counter | `tenantId`, `type` | Total de memórias de longo prazo promovidas e salvas |
+| `agent_embedding_duration_seconds` | Histogram | `provider`, `model` | Duração das chamadas à API de geração de embeddings |
 
 As rotas `/metrics`, `/api/health` e `/favicon.ico` não são contabilizadas nas métricas HTTP. As demais rotas usam o padrão do Express como label, evitando cardinalidade por URL dinâmica.
 
@@ -461,15 +530,18 @@ A aplicação utiliza o **OpenTelemetry Node SDK** para rastreamento distribuíd
 1. **Auto-Instrumentação de Infraestrutura:**
    - **Express / HTTP:** Rastreia latência de todas as rotas e requisições HTTP de entrada e saída.
    - **MongoDB & Redis (ioredis):** Spans automáticos para operações de banco e cache de memória de curto prazo.
-2. **Spans Semânticos no Agent Harness:**
+2. **Spans Semânticos no Agent Harness & Memória:**
    - `agent.execute` — Span raiz do ciclo de vida da execução com atributos `app.tenant_id`, `app.workspace_id`, `app.thread_id`, `agent.run_id`, `agent.status` e `agent.iterations`.
+   - `agent.long_term_memory.search` — Latência de consulta ao MongoDB, filtragem por similaridade de cosseno e quantidade de memórias retornadas.
    - `agent.context_assembly` — Latência de montagem e aplicação de token budgeting no contexto da conversa.
    - `agent.llm_call` — Duração de cada chamada de inferência ao LLM e contagem de iterações.
    - `agent.tool_execution:<tool_name>` — Tempo de execução e metadados de chamadas a ferramentas MCP.
    - `agent.short_term_memory.save` — Tempo de gravação do estado no Redis.
+   - `embedding.generate` — Tempo de resposta e geração de vetores semânticos com atributos `embedding.model`, `embedding.provider` e `embedding.batch_size`.
 3. **Propagação de Contexto em Filas (BullMQ):**
    - Injeção e extração transparente do cabeçalho padrão W3C (`traceparent`) no payload dos jobs.
-   - O worker executa o processamento do job dentro do span `bullmq.process_job`, mantendo o mesmo `trace_id` da requisição HTTP de origem.
+   - `bullmq.process_job` — Worker principal de chat mantendo o `trace_id` de origem.
+   - `bullmq.process_memory_promotion` — Worker de promoção assíncrona executando sob o mesmo trace da sessão de chat.
 4. **Correlação Bidirecional (Trace ⇄ Log):**
    - O mixin do Pino injeta automaticamente `trace_id`, `span_id` e `trace_flags` em cada entrada de log. No Grafana, isso habilita a navegação com um clique entre o Grafana Tempo e o Grafana Loki.
 
@@ -886,37 +958,34 @@ sequenceDiagram
     participant User as Usuário
     participant Chat as ChatProvider
     participant UC as ProcessAgentResponse
+    participant Harness as AgentHarness
     participant MCP as MCP Server
     participant LLM as LLM Provider
+    participant Queue as BullMQ (memory-promotion)
 
     User->>Chat: Envia mensagem
     Chat->>UC: execute(workspaceId, threadId, text)
+    UC->>Harness: run(input)
     
-    UC->>Repo: Busca Tenant + ChatContext
-    Repo-->>UC: Tenant + histórico
-    
-    rect rgb(230, 245, 255)
-        Note over UC,MCP: Handshake MCP (se não conectado)
-        UC->>MCP: initialize
-        MCP-->>UC: capabilities + serverInfo
-        UC->>MCP: notifications/initialized
+    rect rgb(240, 248, 255)
+        Note over Harness: 1. Busca Memórias Semânticas (MongoDB + Cosine)
+        Note over Harness: 2. Context Assembly com Token Budgeting
     end
-    
-    UC->>MCP: listTools()
-    MCP-->>UC: tools disponíveis
-    UC->>LLM: generateResponse(context, tools)
+
+    Harness->>LLM: generateResponse(context, tools)
     
     loop Até 5 iterações (enquanto LLM retornar tool_call)
-        LLM-->>UC: { type: 'tool_call', tool }
-        UC->>MCP: executeTool(tool)
-        MCP-->>UC: resultado da ferramenta
-        UC->>UC: Adiciona resultado ao contexto (role: system)
-        UC->>LLM: generateResponse(context atualizado, tools)
+        LLM-->>Harness: { type: 'tool_call', tool }
+        Harness->>MCP: executeTool(tool)
+        MCP-->>Harness: resultado da ferramenta
+        Harness->>Harness: Adiciona resultado ao contexto (role: system)
+        Harness->>LLM: generateResponse(context atualizado, tools)
     end
     
-    LLM-->>UC: { type: 'text', content }
-    
-    UC->>Repo: save(context)
+    LLM-->>Harness: { type: 'text', content }
+    Harness->>Harness: Salva Short-Term Memory (Redis)
+    Harness-->>Queue: dispatchMemoryPromotion (Assíncrono)
+    Harness-->>UC: AgentRunResult (resposta final)
     UC->>Chat: sendMessage(threadId, content)
     Chat-->>User: Resposta do agente
 ```
@@ -929,22 +998,23 @@ sequenceDiagram
 |---|---|---|
 | **TypeScript** | 6.x | Linguagem principal |
 | **Node.js** | ≥ 20 | Runtime (ESM nativo) |
-| **OpenAI SDK** | ^6.45.0 | Client para APIs compatíveis com OpenAI |
+| **OpenAI SDK** | ^6.45.0 | Client para APIs compatíveis com OpenAI e Embeddings |
 | **Anthropic SDK** | ^0.110.0 | Client para API da Anthropic |
 | **google-auth-library** | ^10.9.0 | Autenticação OAuth2 para Google APIs |
 | **Express** | ^5.2.1 | Framework HTTP |
 | **helmet** | ^8.2.0 | Segurança HTTP (headers) |
 | **cors** | ^2.8.6 | Liberação de CORS |
 | **dotenv** | ^17.4.2 | Variáveis de ambiente em dev |
-| **MongoDB Driver** | ^7.4.0 | Driver nativo MongoDB |
+| **MongoDB Driver** | ^7.4.0 | Driver nativo MongoDB para persistência de threads, tenants e memórias |
 | **jose** | ^6.x | JWT ESM-native (assinar e verificar tokens HS256) |
-| **BullMQ** | ^5.80.2 | Gerenciamento de filas baseado em Redis |
-| **Redis** | — | Backend de filas do BullMQ (ioredis) |
+| **BullMQ** | ^5.80.2 | Gerenciamento de filas baseado em Redis para chat e promoção de memória |
+| **Redis** | — | Backend de filas do BullMQ e Short-Term Memory (ioredis) |
+| **Tiktoken** | ^1.0.20 | Contagem precisa de tokens (BPE / ChatML) |
 | **@opentelemetry/sdk-node** | ^0.221.0 | OpenTelemetry Node.js SDK central |
 | **@opentelemetry/auto-instrumentations-node** | ^0.79.0 | Auto-instrumentações de HTTP, DB e Redis |
 | **@opentelemetry/exporter-trace-otlp-http** | ^0.221.0 | Exportador OTLP via HTTP para Grafana Tempo |
 | **tsx** | ^4.23.0 | Execução direta de TypeScript em dev |
-| **Vitest** | ^4.1.10 | Runner de testes unitários |
+| **Vitest** | ^4.1.10 | Runner de testes unitários e de integração |
 | **@vitest/coverage-v8** | ^4.1.10 | Relatório de cobertura de código |
 
 ### Scripts
@@ -954,7 +1024,7 @@ sequenceDiagram
 | `npm run dev` | Desenvolvimento com hot-reload (`tsx watch src/index.ts`) |
 | `npm run build` | Compilação TypeScript (`tsc`) |
 | `npm start` | Execução do build compilado (`node dist/index.js`) |
-| `npm test` | Executa testes unitários (`vitest run`) |
+| `npm test` | Executa testes unitários e de integração (`vitest run`) |
 | `npm run test:watch` | Modo watch (`vitest`) |
 | `npm run test:coverage` | Relatório de cobertura (`vitest run --coverage`) |
 
@@ -964,39 +1034,63 @@ sequenceDiagram
 
 O projeto utiliza **Vitest** como framework de testes. Os testes estão organizados lado a lado com o código-fonte (`*.test.ts`) seguindo o padrão de co-locação.
 
-### Cobertura
+### Cobertura e Suite Atual
 
-| Camada | Arquivos testados | Testes |
-|---|---|---|---|
-| Domínio | `Password` | 11 |
-| Infraestrutura | `GoogleChatAdapter`, `MCPHttpAdapter`, `SlackChatAdapter`, `GeminiAdapter`, `BullMQAdapter`, `BullMQWorker` | 39 |
-| Controllers | `SlackWebhookController` | 9 |
-| Use Cases | Todos os 6 use cases | 29 |
-| **Total** | **14 arquivos** | **88** |
+| Camada / Componente | Arquivos testados | Testes |
+|---|---|---|
+| **Domínio** | `Password`, `ChatConfig` | 16 |
+| **Agent Harness & Context** | `AgentHarness`, `ContextAssembler`, `AgentHarness.integration` (E2E) | 9 |
+| **Memória & Embeddings** | `MongoMemoryRepository`, `RedisShortTermMemory`, `LLMMemoryExtractor`, `OpenAIEmbeddingProvider` | 20 |
+| **Filas & Workers** | `BullMQAdapter`, `BullMQWorker`, `MemoryPromotionWorker` | 9 |
+| **Infraestrutura & LLM** | `GoogleChatAdapter`, `SlackChatAdapter`, `ChatProviderFactory`, `MCPHttpAdapter`, `GeminiAdapter`, `TiktokenAdapter` | 28 |
+| **Tracing & Context** | `TraceContext`, `TracerProvider` | 6 |
+| **Controllers & Middlewares** | `SlackWebhookController`, `ChatConfigController`, `rateLimiter` | 16 |
+| **Use Cases** | Todos os 8 use cases | 37 |
+| **Total** | **32 arquivos** | **161 testes (100% passing)** |
 
 ### Estrutura
 
 ```
 src/
 ├── domain/
+│   ├── ChatConfig.test.ts
 │   └── Password.test.ts
+├── harness/
+│   ├── AgentHarness.test.ts
+│   ├── AgentHarness.integration.test.ts # Fluxo ponta a ponta com busca vetorial
+│   └── ContextAssembler.test.ts
 ├── infrastructure/
 │   ├── chat/
+│   │   ├── ChatProviderFactory.test.ts
 │   │   ├── GoogleChatAdapter.test.ts
 │   │   └── SlackChatAdapter.test.ts
 │   ├── llm/
-│   │   └── GeminiAdapter.test.ts
+│   │   ├── GeminiAdapter.test.ts
+│   │   └── OpenAIEmbeddingProvider.test.ts
 │   ├── mcp/
 │   │   └── MCPHttpAdapter.test.ts
-│   └── queue/
-│       ├── BullMQAdapter.test.ts
-│       └── BullMQWorker.test.ts
+│   ├── memory/
+│   │   ├── LLMMemoryExtractor.test.ts
+│   │   └── RedisShortTermMemory.test.ts
+│   ├── queue/
+│   │   ├── BullMQAdapter.test.ts
+│   │   ├── BullMQWorker.test.ts
+│   │   └── MemoryPromotionWorker.test.ts
+│   └── tracing/
+│       ├── TraceContext.test.ts
+│       └── TracerProvider.test.ts
+├── repositories/
+│   ├── ChatConfigRepository.test.ts
+│   └── MongoMemoryRepository.test.ts
 ├── controllers/
+│   ├── ChatConfigController.test.ts
 │   └── SlackWebhookController.test.ts
 └── usecases/
     ├── AssociateTenantToUserUseCase.test.ts
+    ├── GetChatConfigUseCase.test.ts
     ├── LoginUserUseCase.test.ts
     ├── ProcessAgentResponseUseCase.test.ts
+    ├── RegisterChatConfigUseCase.test.ts
     ├── RegisterSpaceUseCase.test.ts
     ├── RegisterTenantUseCase.test.ts
     └── RegisterUserUseCase.test.ts
@@ -1007,13 +1101,13 @@ src/
 - **Mocks**: repositórios mockados com `vi.fn()`, HTTP global mockado com `vi.stubGlobal('fetch', ...)`, JWT testado com `process.env` temporário
 - **Isolamento**: sem dependência de banco de dados ou serviços externos
 - **Factory functions**: funções reutilizáveis (`makeUserRepo`, `makeTenantRepo`, etc.) para criar mocks tipados
-- **Cobertura**: configurada com `@vitest/coverage-v8` nos diretórios `usecases`, `infrastructure` e `domain`
+- **Cobertura**: configurada com `@vitest/coverage-v8` nos diretórios `usecases`, `infrastructure`, `harness` e `domain`
 
 ### CI/CD
 
 O pipeline do **GitHub Actions** (`.github/workflows/ci-cd.yml`) executa duas etapas:
 
-1. **Testes unitários** — `npm test` em todo PR para a branch `dev`
+1. **Testes unitários e de integração** — `npm test` em todo PR para a branch `dev`
 2. **Build & Push Docker** — Constrói a imagem Docker multi-stage e publica no Docker Hub com as tags `latest` e o SHA do commit (apenas em push para `dev`, após testes passarem)
 
 ---
@@ -1022,8 +1116,8 @@ O pipeline do **GitHub Actions** (`.github/workflows/ci-cd.yml`) executa duas et
 
 - **Node.js** ≥ 20.x
 - **npm** ≥ 10.x
-- **MongoDB** ≥ 6.x (local ou Atlas) — para persistência de conversas e tenants
-- **Redis** ≥ 7.x — backend de filas do BullMQ
+- **MongoDB** ≥ 6.x (local ou Atlas) — para persistência de conversas, memórias e tenants
+- **Redis** ≥ 7.x — backend de filas do BullMQ e memória de curto prazo
 - Chaves de API para pelo menos um provedor LLM (OpenAI, Anthropic ou DeepSeek)
 - URL de um servidor MCP ativo (para integração com ferramentas)
 - Google Cloud service account com escopo `chat.messages.create` (para Google Chat)
@@ -1076,12 +1170,16 @@ Variáveis essenciais (`.env`):
 - `LOG_LEVEL`: Nível mínimo de logs (`info` em produção e `debug` nos demais ambientes)
 - `LOKI_HOST`, `LOKI_USER` e `LOKI_PASSWORD`: Endpoint e credenciais opcionais para envio de logs ao Grafana Loki
 - `MONGODB_URI` e `MONGODB_DB_NAME`: Conexão com MongoDB
-- `REDIS_URL`: String de conexão com Redis (ex: `redis://localhost:6379`) — usado pelo BullMQ
-- `START_WORKER`: Habilita o worker BullMQ na inicialização (`true`/`false`, padrão: `true`)
-- `QUEUE_CONCURRENCY`: Número de jobs processados em paralelo pelo worker (padrão: `5`)
-- `QSTASH_TOKEN` e `WORKER_URL`: Integração legada com Upstash (filas assíncronas)
+- `REDIS_URL`: String de conexão com Redis (ex: `redis://localhost:6379`) — usado pelo BullMQ e Short-Term Memory
+- `START_WORKER`: Habilita os workers BullMQ na inicialização (`true`/`false`, padrão: `true`)
+- `QUEUE_CONCURRENCY`: Número de jobs processados em paralelo pelo worker principal (padrão: `5`)
+- `MEMORY_WORKER_CONCURRENCY`: Concorrência do worker de promoção de memória (padrão: `2`)
+- `LONG_TERM_MEMORY_ENABLED`: Habilita o subsistema de memória de longo prazo (`true`/`false`, padrão: `true`)
+- `VECTOR_MEMORY_ENABLED`: Habilita a busca vetorial semântica por cosseno (`true`/`false`, padrão: `true`)
+- `OPENAI_EMBEDDING_API_KEY`: Chave de API para geração de embeddings da OpenAI
+- `OPENAI_EMBEDDING_MODEL`: Modelo de embeddings (padrão: `text-embedding-3-small`)
 - `MCP_SERVER_URL` e `MCP_API_KEY`: Comunicação com o servidor MCP
-- `LLM_PROVIDER`, `LLM_API_KEY` e `LLM_MODEL`: Configurações de LLM
+- `LLM_PROVIDER`, `LLM_API_KEY` e `LLM_MODEL`: Configurações de LLM principal
 - `JWT_SECRET`: Chave secreta para assinar tokens JWT (mínimo 32 caracteres recomendado)
 - `JWT_EXPIRES_IN`: Tempo de expiração do token (ex: `8h`, `1d`, `7d`)
 - `ENCRYPTION_KEY`: Chave secreta de 32 bytes (64 caracteres hex ou 32 ASCII) para criptografia AES-256-GCM dos tokens de chat em repouso
@@ -1098,48 +1196,42 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 
 | Componente | Status |
 |---|---|
-| Entidades de domínio | ✅ Implementado |
-| Ports / Interfaces | ✅ Implementado |
+| Entidades de domínio & Value Objects | ✅ Implementado |
+| Ports / Interfaces (Hexagonal) | ✅ Implementado |
+| Agent Harness Runtime (`IAgentHarness`) | ✅ Implementado |
+| ContextAssembler (Token Budgeting BPE/ChatML) | ✅ Implementado |
+| TiktokenAdapter (`cl100k_base`) | ✅ Implementado |
+| Short-Term Memory com Redis (`memory:short:*`) | ✅ Implementado |
+| Long-Term Memory no MongoDB (`MongoMemoryRepository`) | ✅ Implementado |
+| Busca Semântica Vetorial por Cosseno | ✅ Implementado |
+| OpenAIEmbeddingProvider (`text-embedding-3-small` / 1536d) | ✅ Implementado |
+| Extração Estruturada de Memória (`LLMMemoryExtractor`) | ✅ Implementado |
+| Promoção Assíncrona de Memória (`MemoryPromotionWorker` BullMQ) | ✅ Implementado |
 | OpenAI Adapter | ✅ Implementado |
 | Anthropic Adapter | ✅ Implementado |
 | DeepSeek (via OpenAI) | ✅ Implementado |
 | Google LLM Adapter | ✅ Implementado |
-| MCP HTTP Adapter | ✅ Implementado |
+| MCP HTTP Adapter (JSON-RPC 2.0) | ✅ Implementado |
 | ChatProvider Adapter (Google Chat) | ✅ Implementado |
 | ChatProvider Adapter (Slack) | ✅ Implementado |
 | ChatProviderFactory (Slack multi-tenant dinâmico) | ✅ Implementado |
 | AESEncryptionService (AES-256-GCM em repouso) | ✅ Implementado |
 | ChatConfigRepository (`chat_configs`) | ✅ Implementado |
-| QueueService Adapter (QStash) | ✅ Implementado |
-| MongoDB Connection | ✅ Implementado |
-| ChatRepository | ✅ Implementado |
-| TenantRepository | ✅ Implementado |
-| UserRepository | ✅ Implementado |
-| SpaceMappingRepository | ✅ Implementado |
-| Multi-tenant no Use Case | ✅ Implementado |
-| Express App (`app.ts`) | ✅ Implementado |
-| Composition Root (`container.ts`) | ✅ Implementado |
-| Controllers (Webhook + Worker) | ✅ Implementado |
-| Slack Webhook Controller + Router | ✅ Implementado |
-| Onboarding Controllers + Routers | ✅ Implementado |
-| Auth Controller + Router (Login) | ✅ Implementado |
-| ChatConfig Controller + Router | ✅ Implementado |
-| JWT Middleware (`authMiddleware`) | ✅ Implementado |
-| Entry point dev (`index.ts`) | ✅ Implementado |
-| Entry point Vercel (`api/index.ts`) | ✅ Implementado |
-| Deploy Serverless (Vercel) | ✅ Implementado |
-| Deploy Docker (multi-stage) | ✅ Implementado |
-| BullMQ Queue Adapter | ✅ Implementado |
-| BullMQWorker (consumer com resolução dinâmica de ChatProvider) | ✅ Implementado |
-| Graceful shutdown (SIGTERM/SIGINT) | ✅ Implementado |
-| Testes unitários | ✅ Implementado |
+| QueueService Adapter (BullMQ) | ✅ Implementado |
+| MongoDB Connection & Repositories | ✅ Implementado |
+| Multi-tenant no Use Case & Harness | ✅ Implementado |
+| Express App & Routers | ✅ Implementado |
+| Composition Root (`container.ts` com Feature Flags) | ✅ Implementado |
+| Tracing OpenTelemetry & Grafana Tempo (spans semânticos) | ✅ Implementado |
+| Métricas Prometheus completas (`/metrics`) | ✅ Implementado |
+| Teste de Integração E2E (Ciclo Completo de Memória) | ✅ Implementado |
+| Testes unitários (161 testes passing) | ✅ Implementado |
 | Pipeline CI/CD (GitHub Actions) | ✅ Implementado |
 | Docker Image Push (Docker Hub) | ✅ Implementado |
-| Loop iterativo de ferramentas (LLM↔MCP, max 5) | ✅ Implementado |
-| Safe Send no SSE Handler (Go MCP Server) | ✅ Implementado |
 
 ---
 
 ## Licença
 
 ISC
+
