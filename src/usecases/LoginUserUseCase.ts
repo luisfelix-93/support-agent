@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { IUserRepository } from '../domain/ports/IUserRepository.js';
+import type { Role } from '../domain/Role.js';
 
 interface LoginInput {
     email: string;
@@ -9,6 +10,7 @@ interface LoginInput {
 export interface JwtPayload {
     sub: string;
     email: string;
+    role: Role;
     workspaceIds: string[];
 }
 
@@ -36,8 +38,26 @@ export class LoginUserUseCase {
             throw new Error('Invalid credentials.');
         }
 
+        // Re-hash legacy SHA-256 passwords to scrypt on successful login
+        if (user.password.needsRehash()) {
+            const { Password } = await import('../domain/Password.js');
+            const upgraded = Password.create(input.password);
+            const updatedUser = new (await import('../domain/User.js')).User(
+                user.id,
+                user.name,
+                user.email,
+                upgraded,
+                user.workspaceId,
+                user.role,
+                user.createdAt,
+                new Date()
+            );
+            await this.userRepository.save(updatedUser);
+        }
+
         const token = await new SignJWT({
             email: user.email,
+            role: user.role,
             workspaceIds: user.workspaceId,
         })
             .setProtectedHeader({ alg: 'HS256' })
@@ -59,6 +79,7 @@ export class LoginUserUseCase {
         return {
             sub: payload.sub as string,
             email: payload['email'] as string,
+            role: payload['role'] as Role,
             workspaceIds: (payload['workspaceIds'] as string[]) ?? [],
         };
     }

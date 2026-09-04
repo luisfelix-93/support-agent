@@ -3,6 +3,8 @@ import { LoginUserUseCase } from './LoginUserUseCase.js';
 import type { IUserRepository } from '../domain/ports/IUserRepository.js';
 import { User } from '../domain/User.js';
 import { Password } from '../domain/Password.js';
+import { Role } from '../domain/Role.js';
+import { createHash } from 'crypto';
 
 function makeUserRepo(overrides: Partial<IUserRepository> = {}): IUserRepository {
     return {
@@ -14,14 +16,28 @@ function makeUserRepo(overrides: Partial<IUserRepository> = {}): IUserRepository
     };
 }
 
-// Cria um User real com senha hasheada, simulando o que viria do banco
-function makeFakeUser(plainPassword: string): User {
+function makeFakeUser(plainPassword: string, role: Role = Role.OPERATOR): User {
     return new User(
         'user-uuid-123',
         'João Silva',
         'joao@example.com',
         Password.create(plainPassword),
         ['workspace-abc'],
+        role,
+        new Date(),
+        new Date()
+    );
+}
+
+function makeLegacyUser(plainPassword: string): User {
+    const legacyHash = createHash('sha256').update(plainPassword).digest('hex');
+    return new User(
+        'user-uuid-legacy',
+        'Legacy User',
+        'legacy@example.com',
+        Password.restore(legacyHash),
+        ['workspace-abc'],
+        Role.OPERATOR,
         new Date(),
         new Date()
     );
@@ -60,7 +76,6 @@ describe('LoginUserUseCase', () => {
 
         expect(result).toHaveProperty('token');
         expect(typeof result.token).toBe('string');
-        // JWTs têm 3 partes separadas por ponto
         expect(result.token.split('.')).toHaveLength(3);
     });
 
@@ -83,8 +98,8 @@ describe('LoginUserUseCase', () => {
         ).rejects.toThrow('Invalid credentials.');
     });
 
-    it('deve gerar um token verificável com LoginUserUseCase.verify()', async () => {
-        const fakeUser = makeFakeUser('senha-correta');
+    it('deve gerar um token verificável com role no payload', async () => {
+        const fakeUser = makeFakeUser('senha-correta', Role.ADMIN);
         const repo = makeUserRepo({ findByEmail: vi.fn().mockResolvedValue(fakeUser) });
         const useCase = new LoginUserUseCase(repo);
 
@@ -97,6 +112,7 @@ describe('LoginUserUseCase', () => {
 
         expect(payload.sub).toBe('user-uuid-123');
         expect(payload.email).toBe('joao@example.com');
+        expect(payload.role).toBe(Role.ADMIN);
         expect(payload.workspaceIds).toEqual(['workspace-abc']);
     });
 
@@ -104,5 +120,43 @@ describe('LoginUserUseCase', () => {
         await expect(
             LoginUserUseCase.verify('token.invalido.aqui')
         ).rejects.toThrow();
+    });
+
+    it('deve re-hash senha legada SHA-256 para scrypt no login', async () => {
+        const legacyUser = makeLegacyUser('senha-legado');
+        const saveMock = vi.fn().mockResolvedValue(undefined);
+        const repo = makeUserRepo({
+            findByEmail: vi.fn().mockResolvedValue(legacyUser),
+            save: saveMock,
+        });
+        const useCase = new LoginUserUseCase(repo);
+
+        const result = await useCase.execute({
+            email: 'legacy@example.com',
+            password: 'senha-legado',
+        });
+
+        expect(result).toHaveProperty('token');
+        expect(saveMock).toHaveBeenCalledOnce();
+        const savedUser = saveMock.mock.calls[0][0] as User;
+        expect(savedUser.password.getValue()).toMatch(/^scrypt:/);
+        expect(savedUser.password.needsRehash()).toBe(false);
+    });
+
+    it('não deve re-hash se senha já está em scrypt', async () => {
+        const fakeUser = makeFakeUser('senha-scrypt');
+        const saveMock = vi.fn().mockResolvedValue(undefined);
+        const repo = makeUserRepo({
+            findByEmail: vi.fn().mockResolvedValue(fakeUser),
+            save: saveMock,
+        });
+        const useCase = new LoginUserUseCase(repo);
+
+        await useCase.execute({
+            email: 'joao@example.com',
+            password: 'senha-scrypt',
+        });
+
+        expect(saveMock).not.toHaveBeenCalled();
     });
 });

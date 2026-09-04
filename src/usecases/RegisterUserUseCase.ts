@@ -2,11 +2,13 @@ import { randomUUID } from 'crypto';
 import { IUserRepository } from '../domain/ports/IUserRepository.js';
 import { User } from '../domain/User.js';
 import { Password } from '../domain/Password.js';
+import { Role } from '../domain/Role.js';
 
 interface RegisterUserInput {
     name: string;
     email: string;
     password: string;
+    role?: Role;
 }
 
 export class RegisterUserUseCase {
@@ -25,6 +27,7 @@ export class RegisterUserUseCase {
             input.email,
             Password.create(input.password),
             [],          // workspaceId começa vazio — associado depois via AssociateTenantToUserUseCase
+            input.role ?? Role.OPERATOR,
             now,
             now
         );

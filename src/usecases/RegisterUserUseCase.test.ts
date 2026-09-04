@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RegisterUserUseCase } from './RegisterUserUseCase.js';
 import type { IUserRepository } from '../domain/ports/IUserRepository.js';
 import type { User } from '../domain/User.js';
+import { Role } from '../domain/Role.js';
 
-// Mock de repositório reutilizável
 function makeUserRepo(overrides: Partial<IUserRepository> = {}): IUserRepository {
     return {
         findById: vi.fn().mockResolvedValue(null),
@@ -35,7 +35,7 @@ describe('RegisterUserUseCase', () => {
         expect(repo.save).toHaveBeenCalledOnce();
     });
 
-    it('deve salvar o usuário com a senha hasheada (não em texto plano)', async () => {
+    it('deve salvar o usuário com a senha hasheada em scrypt', async () => {
         await useCase.execute({
             name: 'Maria',
             email: 'maria@example.com',
@@ -44,7 +44,7 @@ describe('RegisterUserUseCase', () => {
 
         const savedUser = vi.mocked(repo.save).mock.calls[0][0] as User;
         expect(savedUser.password.getValue()).not.toBe('senha-segura');
-        expect(savedUser.password.getValue()).toMatch(/^[a-f0-9]{64}$/);
+        expect(savedUser.password.getValue()).toMatch(/^scrypt:/);
     });
 
     it('deve criar o usuário com workspaceId vazio', async () => {
@@ -56,6 +56,29 @@ describe('RegisterUserUseCase', () => {
 
         const savedUser = vi.mocked(repo.save).mock.calls[0][0] as User;
         expect(savedUser.workspaceId).toEqual([]);
+    });
+
+    it('deve atribuir role OPERATOR por padrão', async () => {
+        await useCase.execute({
+            name: 'Default User',
+            email: 'default@example.com',
+            password: 'senha123',
+        });
+
+        const savedUser = vi.mocked(repo.save).mock.calls[0][0] as User;
+        expect(savedUser.role).toBe(Role.OPERATOR);
+    });
+
+    it('deve aceitar role explícita', async () => {
+        await useCase.execute({
+            name: 'Admin User',
+            email: 'admin@example.com',
+            password: 'senha123',
+            role: Role.ADMIN,
+        });
+
+        const savedUser = vi.mocked(repo.save).mock.calls[0][0] as User;
+        expect(savedUser.role).toBe(Role.ADMIN);
     });
 
     it('deve lançar erro se o email já estiver cadastrado', async () => {
