@@ -5,9 +5,12 @@ import { ToolCall } from "../../domain/ToolCall.js";
 
 export class GeminiAdapter implements ILLMProvider {
     private client: GoogleGenAI;
+    public readonly providerName: string = 'google';
+    public readonly modelName: string;
 
     constructor(private apiKey: string, private model: string) {
         this.client = new GoogleGenAI({ apiKey: this.apiKey });
+        this.modelName = this.model;
     }
 
     async generateResponse(context: ChatContext, tools?: any[]): Promise<LLMResponse> {
@@ -46,6 +49,13 @@ export class GeminiAdapter implements ILLMProvider {
             },
         });
 
+        const meta = response.usageMetadata;
+        const usage = meta ? {
+            inputTokens: meta.promptTokenCount ?? 0,
+            outputTokens: meta.candidatesTokenCount ?? 0,
+            totalTokens: meta.totalTokenCount ?? ((meta.promptTokenCount ?? 0) + (meta.candidatesTokenCount ?? 0)),
+        } : undefined;
+
         // 5. Verificar se o modelo pediu para chamar uma ferramenta
         const candidate = response.candidates?.[0];
         const parts = candidate?.content?.parts ?? [];
@@ -53,17 +63,21 @@ export class GeminiAdapter implements ILLMProvider {
         const functionCallPart = parts.find(p => p.functionCall != null);
         if (functionCallPart?.functionCall) {
             const fc = functionCallPart.functionCall;
-            return {
+            const toolResponse: LLMResponse = {
                 type: "tool_call",
                 tool: new ToolCall(fc.name ?? "", (fc.args as Record<string, any>) ?? {}),
             };
+            if (usage) toolResponse.usage = usage;
+            return toolResponse;
         }
 
         // 6. Retornar resposta textual
         const textPart = parts.find(p => typeof p.text === "string");
-        return {
+        const textResponse: LLMResponse = {
             type: "text",
             content: textPart?.text ?? "",
         };
+        if (usage) textResponse.usage = usage;
+        return textResponse;
     }
 }

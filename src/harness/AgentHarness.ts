@@ -5,8 +5,11 @@ import type { IContextAssembler } from "../domain/ports/IContextAssembler.js";
 import type { IMemoryRepository } from "../domain/ports/IMemoryRepository.js";
 import type { IQueueService } from "../domain/ports/IQueueService.js";
 import type { IEmbeddingProvider } from "../domain/ports/IEmbeddingProvider.js";
+import type { IAgentRunRepository } from "../domain/ports/IAgentRunRepository.js";
 import type { Memory } from "../domain/Memory.js";
 import { AgentRun, type ToolCallRecord } from "../domain/AgentRun.js";
+import type { LLMCallRecord } from "../domain/LLMCallRecord.js";
+import { calculateCost } from "../domain/pricing/LLMPricingTable.js";
 import { Message } from "../domain/Message.js";
 import { ExecutionPolicy } from "./ExecutionPolicy.js";
 import { logger } from "../config/logger.js";
@@ -16,6 +19,11 @@ import {
     agentRunDurationSeconds,
     agentToolCallsTotal
 } from "../infrastructure/metrics/AgentMetrics.js";
+import {
+    agentLlmTokensTotal,
+    agentRunCostUsd,
+    agentContextUtilization
+} from "../infrastructure/metrics/EvaluationMetrics.js";
 import { withSpan } from "../infrastructure/tracing/TracerProvider.js";
 import { CircuitBreakerOpenError } from "../infrastructure/resilience/CircuitBreaker.js";
 
@@ -28,7 +36,8 @@ export class AgentHarness implements IAgentHarness {
         private readonly executionPolicy: ExecutionPolicy = new ExecutionPolicy(),
         private readonly memoryRepository?: IMemoryRepository,
         private readonly queueService?: IQueueService,
-        private readonly embeddingProvider?: IEmbeddingProvider
+        private readonly embeddingProvider?: IEmbeddingProvider,
+        private readonly agentRunRepository?: IAgentRunRepository
     ) {}
 
     async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -55,6 +64,7 @@ export class AgentHarness implements IAgentHarness {
                     input.workspaceId,
                     input.threadId
                 );
+                run.userMessage = input.userMessage;
 
                 let finalResponseText = '';
                 let status: 'completed' | 'failed' | 'max_iterations' = 'completed';
@@ -75,11 +85,44 @@ export class AgentHarness implements IAgentHarness {
                         }, this.executionPolicy.llmTimeoutMs);
                     });
 
+                    const callStartTime = Date.now();
                     try {
-                        return await Promise.race([
+                        const response = await Promise.race([
                             input.llmProvider.generateResponse(ctx, tools),
                             timeoutPromise,
                         ]);
+                        const latencyMs = Date.now() - callStartTime;
+
+                        const provider = input.llmProvider.providerName || 'unknown';
+                        const model = input.llmProvider.modelName || 'unknown';
+                        const inputTokens = response.usage?.inputTokens ?? 0;
+                        const outputTokens = response.usage?.outputTokens ?? 0;
+                        const totalTokens = response.usage?.totalTokens ?? (inputTokens + outputTokens);
+                        const costUsd = calculateCost(model, inputTokens, outputTokens);
+
+                        const callRecord: LLMCallRecord = {
+                            provider,
+                            model,
+                            inputTokens,
+                            outputTokens,
+                            totalTokens,
+                            latencyMs,
+                            resultType: response.type,
+                            costUsd,
+                        };
+                        run.recordLLMCall(callRecord);
+
+                        if (inputTokens > 0) {
+                            agentLlmTokensTotal.inc({ tenantId: input.tenantId, provider, model, direction: 'input' }, inputTokens);
+                        }
+                        if (outputTokens > 0) {
+                            agentLlmTokensTotal.inc({ tenantId: input.tenantId, provider, model, direction: 'output' }, outputTokens);
+                        }
+                        if (costUsd > 0) {
+                            agentRunCostUsd.inc({ tenantId: input.tenantId, provider, model }, costUsd);
+                        }
+
+                        return response;
                     } finally {
                         if (timer) clearTimeout(timer);
                     }
@@ -148,6 +191,13 @@ export class AgentHarness implements IAgentHarness {
                             });
                         }
                     );
+
+                    run.memoriesInjected = relevantMemories.length;
+                    const budget = this.executionPolicy.maxContextTokens;
+                    const usedTokens = assembledContext.estimatedTokens ?? (assembledContext.messages.reduce((acc, m) => acc + Math.ceil(m.content.length / 4), 0));
+                    const utilization = budget > 0 ? Math.min(1, Math.round((usedTokens / budget) * 100) / 100) : 0;
+                    run.contextUtilization = utilization;
+                    agentContextUtilization.observe({ tenantId: input.tenantId }, utilization);
 
                     // Fallback imediato se o Circuit Breaker do MCP já estiver aberto antes da chamada
                     const cbInitiallyOpen = isCircuitBreakerOpen(input.mcpClient);
@@ -296,9 +346,12 @@ export class AgentHarness implements IAgentHarness {
                             : 'Desculpe, não consegui completar a análise no momento.';
                     }
 
+                    run.finalResponse = finalResponseText;
                     run.finish(status);
                     rootSpan.setAttribute('agent.status', status);
                     rootSpan.setAttribute('agent.iterations', run.iterations);
+                    rootSpan.setAttribute('agent.total_tokens', run.totalTokens);
+                    rootSpan.setAttribute('agent.cost_usd', run.costUsd);
 
                     // 5. Salva o contexto atualizado na Short-Term Memory (Redis)
                     if (this.shortTermMemory && finalResponseText) {
@@ -334,8 +387,43 @@ export class AgentHarness implements IAgentHarness {
                         });
                     }
 
-                    // 7. Métricas do Prometheus
+                    // 7. Persistência do AgentRun no MongoDB
+                    if (this.agentRunRepository) {
+                        await this.agentRunRepository.save(run).catch(err => {
+                            log.error({ err, runId }, 'Erro ao persistir AgentRun.');
+                        });
+                    }
+
+                    // 8. Auto-Avaliação Assíncrona (BullMQ)
+                    const isSelfEvalEnabled = process.env.SELF_EVALUATION_ENABLED !== 'false';
                     const durationMs = Date.now() - startTime;
+                    if (this.queueService && typeof this.queueService.dispatchEvaluation === 'function' && finalResponseText && status === 'completed' && isSelfEvalEnabled) {
+                        this.queueService.dispatchEvaluation(
+                            run.id,
+                            input.tenantId,
+                            input.workspaceId,
+                            {
+                                threadId: input.threadId,
+                                userMessage: input.userMessage,
+                                finalResponse: finalResponseText,
+                                iterations: run.iterations,
+                                toolCalls: run.toolCalls,
+                                llmCalls: run.llmCalls,
+                                totalInputTokens: run.totalInputTokens,
+                                totalOutputTokens: run.totalOutputTokens,
+                                totalTokens: run.totalTokens,
+                                costUsd: run.costUsd,
+                                durationMs,
+                                memoriesInjected: run.memoriesInjected,
+                                contextUtilization: run.contextUtilization,
+                                agentVersion: run.agentVersion,
+                            }
+                        ).catch(err => {
+                            log.error({ err, runId }, 'Erro ao enfileirar job de auto-avaliação.');
+                        });
+                    }
+
+                    // 9. Métricas do Prometheus
                     const durationSeconds = durationMs / 1000;
                     agentRunsTotal.inc({ tenantId: input.tenantId, status });
                     agentRunDurationSeconds.observe({ tenantId: input.tenantId, status }, durationSeconds);
@@ -356,6 +444,12 @@ export class AgentHarness implements IAgentHarness {
                     run.finish('failed', errorMessage);
                     rootSpan.setAttribute('agent.status', 'failed');
                     rootSpan.setAttribute('agent.error', errorMessage);
+
+                    if (this.agentRunRepository) {
+                        await this.agentRunRepository.save(run).catch(err => {
+                            log.error({ err, runId }, 'Erro ao persistir AgentRun com falha.');
+                        });
+                    }
 
                     log.error({ err: error, durationMs }, 'Erro durante a execução do Agent Harness.');
 

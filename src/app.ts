@@ -6,6 +6,7 @@ import authRouter from './api/authRouter.js';
 import onboardingRouter from './api/onboardingRouter.js';
 import slackRouter from './api/slackRouter.js';
 import chatConfigRouter from './api/chatConfigRouter.js';
+import evaluationRouter from './api/evaluationRouter.js';
 import { apiRateLimiter, authRateLimiter } from './api/middlewares/rateLimiter.js';
 import { metricsHandler, metricsMiddleware } from './config/metrics.js';
 
@@ -73,6 +74,7 @@ app.use('/api', authRouter);
 app.use('/api', onboardingRouter);
 app.use('/api', slackRouter);
 app.use('/api', chatConfigRouter);
+app.use('/api', evaluationRouter);
 
 export default app;
 

@@ -3,8 +3,10 @@ import type { ILLMProvider, LLMResponse } from "../../domain/ports/ILLMProvider.
 import type { ChatContext } from "../../domain/ChatContext.js";
 import { ToolCall } from "../../domain/ToolCall.js";
 
-export class OpenAIAdapter implements ILLMProvider{
+export class OpenAIAdapter implements ILLMProvider {
     private client: OpenAI;
+    public readonly providerName: string;
+    public readonly modelName: string;
 
     constructor(
         private apiKey: string,
@@ -14,7 +16,9 @@ export class OpenAIAdapter implements ILLMProvider{
         this.client = new OpenAI({
             apiKey: this.apiKey,
             baseURL: baseUrl // vital para injetar o endpoint do DeepSeek
-        })
+        });
+        this.providerName = baseUrl?.includes('deepseek') ? 'deepseek' : 'openai';
+        this.modelName = this.model;
     }
 
     async generateResponse(context: ChatContext, tools?: any[]): Promise<LLMResponse> {
@@ -45,23 +49,33 @@ export class OpenAIAdapter implements ILLMProvider{
             throw new Error("No response choices returned from OpenAI API");
         }
 
+        const usage = response.usage ? {
+            inputTokens: response.usage.prompt_tokens,
+            outputTokens: response.usage.completion_tokens,
+            totalTokens: response.usage.total_tokens,
+        } : undefined;
+
         // 2. Traduzir a resposta proprietária de volta para o domínio
         if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
             const toolCall = choice.message.tool_calls[0];
             if (toolCall && toolCall.type === 'function') {
-                return {
+                const toolResponse: LLMResponse = {
                     type: 'tool_call',
                     tool: new ToolCall(
                         toolCall.function.name, 
                         JSON.parse(toolCall.function.arguments)
                     )
                 };
+                if (usage) toolResponse.usage = usage;
+                return toolResponse;
             }
         }
 
-        return {
+        const textResponse: LLMResponse = {
             type: 'text',
             content: choice.message.content || ''
         };
+        if (usage) textResponse.usage = usage;
+        return textResponse;
     }
 }

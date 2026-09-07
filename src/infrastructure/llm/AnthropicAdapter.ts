@@ -3,12 +3,14 @@ import type { ILLMProvider, LLMResponse } from "../../domain/ports/ILLMProvider.
 import type { ChatContext } from "../../domain/ChatContext.js";
 import { ToolCall } from "../../domain/ToolCall.js";
 
-
 export class AnthropicAdapter implements ILLMProvider {
-    private client: Anthropic
+    private client: Anthropic;
+    public readonly providerName: string = 'anthropic';
+    public readonly modelName: string;
 
     constructor(private apiKey: string, private model: string){
-        this.client = new Anthropic({ apiKey: this.apiKey })
+        this.client = new Anthropic({ apiKey: this.apiKey });
+        this.modelName = this.model;
     }
 
     async generateResponse(context: ChatContext, tools?: any[]): Promise<LLMResponse> {
@@ -37,20 +39,30 @@ export class AnthropicAdapter implements ILLMProvider {
 
         const response = await this.client.messages.create(payload);
 
+        const usage = response.usage ? {
+            inputTokens: response.usage.input_tokens,
+            outputTokens: response.usage.output_tokens,
+            totalTokens: (response.usage.input_tokens ?? 0) + (response.usage.output_tokens ?? 0),
+        } : undefined;
+
         // O Claude retorna tool_use no array do content
         const toolUseBlock = response.content.find(block => block.type === 'tool_use');
 
         if (toolUseBlock && toolUseBlock.type === 'tool_use') {
-            return {
+            const toolResponse: LLMResponse = {
                 type: 'tool_call',
                 tool: new ToolCall(toolUseBlock.name, toolUseBlock.input as any)
-            }
+            };
+            if (usage) toolResponse.usage = usage;
+            return toolResponse;
         }
 
         const textBlock = response.content.find(block => block.type === 'text');
-        return {
+        const textResponse: LLMResponse = {
             type: 'text',
             content: textBlock?.type === 'text' ? textBlock.text : ''
         };
+        if (usage) textResponse.usage = usage;
+        return textResponse;
     }
 }

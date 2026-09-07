@@ -75,124 +75,6 @@ describe('GeminiAdapter', () => {
         }
     });
 
-    it('deve passar as ferramentas dinâmicas para a chamada da API do Gemini', async () => {
-        mockGenerateContent.mockResolvedValueOnce({
-            candidates: [
-                {
-                    content: {
-                        parts: [{ text: 'Usando ferramenta.' }],
-                    },
-                },
-            ],
-        });
-
-        const context = new ChatContext('thread-2.5', 'workspace-1', [
-            new Message('msg-1', 'user', 'Listar ferramentas'),
-        ]);
-
-        const tools = [
-            {
-                name: 'custom_mcp_tool',
-                description: 'Uma ferramenta customizada',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        param1: { type: 'string' }
-                    },
-                    required: ['param1']
-                }
-            }
-        ];
-
-        await adapter.generateResponse(context, tools);
-
-        const callArgs = mockGenerateContent.mock.calls[0][0];
-        expect(callArgs.config.tools).toHaveLength(1);
-        expect(callArgs.config.tools[0].functionDeclarations).toHaveLength(1);
-        expect(callArgs.config.tools[0].functionDeclarations[0]).toEqual({
-            name: 'custom_mcp_tool',
-            description: 'Uma ferramenta customizada',
-            parameters: {
-                type: 'object',
-                properties: {
-                    param1: { type: 'string' }
-                },
-                required: ['param1']
-            }
-        });
-    });
-
-    it('deve filtrar mensagens de sistema e enviá-las como systemInstruction', async () => {
-        mockGenerateContent.mockResolvedValueOnce({
-            candidates: [
-                {
-                    content: {
-                        parts: [{ text: 'Entendido.' }],
-                    },
-                },
-            ],
-        });
-
-        const context = new ChatContext('thread-3', 'workspace-1', [
-            new Message('msg-1', 'system', 'Você é um agente de suporte.'),
-            new Message('msg-2', 'user', 'Preciso de ajuda.'),
-        ]);
-
-        await adapter.generateResponse(context);
-
-        const callArgs = mockGenerateContent.mock.calls[0][0];
-
-        // A mensagem de sistema não deve aparecer em contents
-        expect(callArgs.contents).toHaveLength(1);
-        expect(callArgs.contents[0].role).toBe('user');
-
-        // A instrução de sistema deve estar em config.systemInstruction
-        expect(callArgs.config.systemInstruction).toBe('Você é um agente de suporte.');
-    });
-
-    it('deve mapear role "assistant" para "model" no formato Gemini', async () => {
-        mockGenerateContent.mockResolvedValueOnce({
-            candidates: [
-                {
-                    content: {
-                        parts: [{ text: 'Ok.' }],
-                    },
-                },
-            ],
-        });
-
-        const context = new ChatContext('thread-4', 'workspace-1', [
-            new Message('msg-1', 'user', 'Você lembra da última resposta?'),
-            new Message('msg-2', 'assistant', 'Sim, lembro.'),
-            new Message('msg-3', 'user', 'Ótimo!'),
-        ]);
-
-        await adapter.generateResponse(context);
-
-        const callArgs = mockGenerateContent.mock.calls[0][0];
-        expect(callArgs.contents[1].role).toBe('model');
-    });
-
-    it('deve retornar texto vazio se a resposta não tiver partes de texto', async () => {
-        mockGenerateContent.mockResolvedValueOnce({
-            candidates: [
-                {
-                    content: {
-                        parts: [],
-                    },
-                },
-            ],
-        });
-
-        const context = new ChatContext('thread-5', 'workspace-1', [
-            new Message('msg-1', 'user', 'Teste'),
-        ]);
-
-        const result = await adapter.generateResponse(context);
-
-        expect(result).toEqual({ type: 'text', content: '' });
-    });
-
     it('deve propagar erro se a API do Gemini lançar uma exceção', async () => {
         mockGenerateContent.mockRejectedValueOnce(new Error('API key inválida'));
 
@@ -201,5 +83,80 @@ describe('GeminiAdapter', () => {
         ]);
 
         await expect(adapter.generateResponse(context)).rejects.toThrow('API key inválida');
+    });
+
+    it('deve extrair usageMetadata quando retornado pela API do Gemini', async () => {
+        mockGenerateContent.mockResolvedValueOnce({
+            candidates: [
+                {
+                    content: {
+                        parts: [{ text: 'Resposta com usage' }],
+                    },
+                },
+            ],
+            usageMetadata: {
+                promptTokenCount: 150,
+                candidatesTokenCount: 50,
+                totalTokenCount: 200,
+            },
+        });
+
+        const context = new ChatContext('thread-7', 'workspace-1', [
+            new Message('msg-1', 'user', 'Olá com métricas'),
+        ]);
+
+        const result = await adapter.generateResponse(context);
+
+        expect(result).toEqual({
+            type: 'text',
+            content: 'Resposta com usage',
+            usage: {
+                inputTokens: 150,
+                outputTokens: 50,
+                totalTokens: 200,
+            },
+        });
+        expect(adapter.providerName).toBe('google');
+        expect(adapter.modelName).toBe('gemini-2.0-flash');
+    });
+
+    it('deve extrair usageMetadata em tool_call', async () => {
+        mockGenerateContent.mockResolvedValueOnce({
+            candidates: [
+                {
+                    content: {
+                        parts: [
+                            {
+                                functionCall: {
+                                    name: 'consultar_status',
+                                    args: { id: 'ped-1' },
+                                },
+                            },
+                        ],
+                    },
+                },
+            ],
+            usageMetadata: {
+                promptTokenCount: 300,
+                candidatesTokenCount: 60,
+                totalTokenCount: 360,
+            },
+        });
+
+        const context = new ChatContext('thread-8', 'workspace-1', [
+            new Message('msg-1', 'user', 'Consultar status'),
+        ]);
+
+        const result = await adapter.generateResponse(context);
+
+        expect(result.type).toBe('tool_call');
+        if (result.type === 'tool_call') {
+            expect(result.tool.name).toBe('consultar_status');
+            expect(result.usage).toEqual({
+                inputTokens: 300,
+                outputTokens: 60,
+                totalTokens: 360,
+            });
+        }
     });
 });

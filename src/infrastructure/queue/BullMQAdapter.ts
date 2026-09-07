@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Queue } from 'bullmq';
-import type { IQueueService } from '../../domain/ports/IQueueService.js';
+import type { IQueueService, EvaluationPayload } from '../../domain/ports/IQueueService.js';
 import type { MessageRole } from '../../domain/Message.js';
 import { logger } from '../../config/logger.js';
 import { injectTraceContext } from '../tracing/TraceContext.js';
@@ -10,11 +10,13 @@ const log = logger.child({ module: 'BullMQAdapter' });
 export class BullMQAdapter implements IQueueService {
     private readonly messageQueue: Queue;
     private readonly memoryQueue: Queue;
+    private readonly evaluationQueue: Queue;
 
     constructor(
         redisConnection: any,
         messageQueueName: string = 'message-processing',
-        memoryQueueName: string = 'memory-promotion'
+        memoryQueueName: string = 'memory-promotion',
+        evaluationQueueName: string = 'agent-evaluation'
     ) {
         this.messageQueue = new Queue(messageQueueName, {
             connection: redisConnection,
@@ -30,6 +32,19 @@ export class BullMQAdapter implements IQueueService {
         });
 
         this.memoryQueue = new Queue(memoryQueueName, {
+            connection: redisConnection,
+            defaultJobOptions: {
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 3000,
+                },
+                removeOnComplete: true,
+                removeOnFail: false,
+            },
+        });
+
+        this.evaluationQueue = new Queue(evaluationQueueName, {
             connection: redisConnection,
             defaultJobOptions: {
                 attempts: 3,
@@ -93,6 +108,28 @@ export class BullMQAdapter implements IQueueService {
             });
         } catch (error) {
             log.error({ err: error, tenantId, workspaceId, threadId }, 'Erro ao enfileirar promoção de memória.');
+            throw error;
+        }
+    }
+
+    async dispatchEvaluation(
+        runId: string,
+        tenantId: string,
+        workspaceId: string,
+        payload: EvaluationPayload
+    ): Promise<void> {
+        log.info({ runId, tenantId, workspaceId }, 'Enfileirando job de auto-avaliação do agente.');
+        try {
+            const traceContext = injectTraceContext();
+            await this.evaluationQueue.add('evaluate-run', {
+                runId,
+                tenantId,
+                workspaceId,
+                ...payload,
+                traceContext,
+            });
+        } catch (error) {
+            log.error({ err: error, runId, tenantId, workspaceId }, 'Erro ao enfileirar auto-avaliação.');
             throw error;
         }
     }

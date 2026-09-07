@@ -1,222 +1,208 @@
-# TODO — Fase 1: Production Hardening
+# TODO — Fase 2: Agent Evaluation
 
 > Checklist de implementação organizado por sub-fase.
 > Marque `[x]` conforme cada item for concluído.
-> Referência: [production-hardening.md](production-hardening.md)
+> Referência: [agent-evaluation.md](docs/agent-evaluation.md)
 
 ---
 
-## Sub-Fase 1A: Security Foundation
+## Sub-Fase 2A: Passive Metrics & Run Persistence
 
-**Branch:** `feat/phase1a-security`
-
-### Implementação
-
-- [x] Criar `src/domain/Role.ts` — Enum `Role` (ADMIN, OPERATOR, VIEWER)
-- [x] Modificar `src/domain/Password.ts` — Migrar SHA-256 → `crypto.scrypt`
-  - [x] `create()` com salt aleatório de 16 bytes
-  - [x] `compare()` com `timingSafeEqual` e detecção de formato (scrypt vs legacy)
-  - [x] `needsRehash()` para detectar hash legado
-  - [x] Manter `restore()` compatível com ambos formatos
-- [x] Modificar `src/domain/User.ts` — Adicionar campo `role: Role`
-- [x] Modificar `src/usecases/LoginUserUseCase.ts`
-  - [x] Incluir `role` no JWT payload
-  - [x] `verify()` retorna `role` no `JwtPayload`
-  - [x] Re-hash automático de senhas legacy no login
-- [x] Modificar `src/usecases/RegisterUserUseCase.ts` — Aceitar `role` opcional (default: OPERATOR)
-- [x] Criar `src/api/middlewares/requireRole.ts` — Middleware factory RBAC
-- [x] Criar `src/api/middlewares/auditLogger.ts` — Auditoria de operações admin
-- [x] Modificar `src/api/onboardingRouter.ts`
-  - [x] `POST /onboarding/tenants` → auth + requireRole(ADMIN)
-  - [x] `POST /onboarding/spaces` → auth + requireRole(ADMIN)
-  - [x] `POST /onboarding/associate-tenant` → adicionar requireRole(ADMIN)
-- [x] Modificar `src/api/chatConfigRouter.ts`
-  - [x] `POST /chat-configs` → auth + requireRole(ADMIN)
-  - [x] `GET /chat-configs/:workspaceId` → auth
-- [x] Modificar `src/repositories/UserRepository.ts` — Persistir/ler campo `role` (backward compat)
-- [x] Modificar `src/api/types/express.d.ts` — Adicionar `role` ao `req.user`
-
-### Testes
-
-- [x] `src/domain/Password.test.ts` — scrypt create/compare, legacy compat, needsRehash, timing-safe
-- [x] `src/api/middlewares/requireRole.test.ts` — permite/rejeita roles, formato do 403
-- [x] `src/api/middlewares/auditLogger.test.ts` — loga campos corretos
-- [x] `src/usecases/LoginUserUseCase.test.ts` — JWT inclui role, re-hash automático
-- [ ] Integração: rotas protegidas retornam 401/403 corretamente
-
-### Verificação
-
-- [x] `npm test` — todos os testes passam (109/109 ✅)
-- [x] `npm run build` — build sem erros (tsc --noEmit ✅)
-- [ ] Manual: login com senha SHA-256 existente funciona e faz re-hash
-- [ ] Manual: rotas admin sem token → 401, sem role → 403
-
----
-
-## Sub-Fase 1B: Tenant Isolation & Secrets Management
-
-**Branch:** `feat/phase1b-isolation`
-**Depende de:** ✅ 1A concluída
+**Branch:** `feature/agent-evaluation`
 
 ### Implementação
 
-- [x] Criar `src/api/middlewares/tenantGuard.ts` — Guard de isolamento de tenant
-  - [x] Extrai workspaceId de params ou body
-  - [x] Valida contra `req.user.workspaceIds`
-  - [x] Retorna 403 se user não pertence ao workspace
-- [x] Modificar `src/infrastructure/security/AESEncryptionService.ts`
-  - [x] Extrair interface genérica para encrypt/decrypt
-  - [x] Adicionar HKDF key derivation com contexto separado para MCP
-- [x] Modificar `src/repositories/TenantRepository.ts`
-  - [x] Injetar `IEncryptionService` no construtor
-  - [x] `save()`: criptografar `mcpConfig.apiKey`
-  - [x] `findByWorkspaceId()`: descriptografar `mcpConfig.apiKey`
-  - [x] `findByWorkspaceIdSafe()`: retornar com apiKey mascarada
-- [x] Modificar `src/usecases/ProcessAgentResponseUseCase.ts`
-  - [x] Guard cross-tenant: validar workspaceId do mapping
-- [x] Modificar `src/api/chatConfigRouter.ts`
-  - [x] `GET /chat-configs/:workspaceId` → adicionar `tenantGuard('workspaceId')`
-- [x] Modificar `src/config/container.ts`
-  - [x] Injetar `AESEncryptionService` no `TenantRepository`
-
-### Testes
-
-- [x] `src/api/middlewares/tenantGuard.test.ts` — permite own workspace, rejeita cross-tenant
-- [x] `src/repositories/TenantRepository.test.ts` — apiKey criptografada/descriptografada/mascarada
-- [x] Integração: tenant A não acessa dados de tenant B (`src/api/chatConfigRouter.test.ts`)
-
-### Verificação
-
-- [x] `npm test` — todos os testes passam (206/206 ✅)
-- [x] `npm run build` — build sem erros (tsc ✅)
-- [ ] Manual: verificar no MongoDB que `mcpConfig.apiKey` está criptografada
-- [ ] Manual: GET chat-config com user de outro tenant → 403
-
----
-
-## Sub-Fase 1C: Reliability Core
-
-**Branch:** `feat/phase1c-reliability`
-**Depende de:** Nenhuma (parallelizável com 1A/1B)
-
-### Implementação
-
-- [x] Criar `src/infrastructure/resilience/CircuitBreaker.ts`
-  - [x] Estados: CLOSED → OPEN → HALF_OPEN → CLOSED
-  - [x] Config: failureThreshold (5), resetTimeoutMs (30s), halfOpenMaxCalls (1)
-  - [x] `execute<T>(fn)` com tracking de falhas e transições
-  - [x] `CircuitBreakerOpenError` para quando circuito está aberto
-  - [x] Métricas Prometheus: `circuit_breaker_state`, `circuit_breaker_failures_total`
-- [x] Criar `src/infrastructure/resilience/RetryPolicy.ts`
-  - [x] Retry com exponential backoff + jitter
-  - [x] Config: maxRetries (3), baseDelayMs (1000), maxDelayMs (10000)
-  - [x] `isRetryable(error)`: apenas erros transitórios (network, 502, 503, 504)
-- [x] Criar `src/infrastructure/resilience/IdempotencyGuard.ts`
-  - [x] `isDuplicate(key)` via Redis SET NX EX
-  - [x] TTL configurável (default: 3600s)
-- [x] Modificar `src/infrastructure/mcp/MCPHttpAdapter.ts`
-  - [x] Aceitar `CircuitBreaker` e `RetryPolicy` no construtor
-  - [x] `executeTool()` → circuit breaker + retry
-  - [x] `listTools()` → circuit breaker + retry
-- [x] Modificar `src/harness/ExecutionPolicy.ts`
-  - [x] Adicionar `maxRunTimeMs` (default: 120000)
-  - [x] Adicionar `llmTimeoutMs` (default: 60000)
+- [x] Modificar `src/domain/ports/ILLMProvider.ts` — Adicionar `LLMUsage` ao `LLMResponse`
+  - [x] Interface `LLMUsage { inputTokens, outputTokens, totalTokens }`
+  - [x] Campo opcional `usage?: LLMUsage` em ambos os tipos de resposta
+- [x] Modificar `src/infrastructure/llm/OpenAIAdapter.ts` — Extrair `response.usage`
+  - [x] Mapear `prompt_tokens`, `completion_tokens`, `total_tokens`
+  - [x] Incluir `usage` no retorno de `generateResponse()`
+- [x] Modificar `src/infrastructure/llm/GeminiAdapter.ts` — Extrair `response.usageMetadata`
+  - [x] Mapear `promptTokenCount`, `candidatesTokenCount`, `totalTokenCount`
+- [x] Modificar `src/infrastructure/llm/AnthropicAdapter.ts` — Extrair `response.usage`
+  - [x] Mapear `input_tokens`, `output_tokens`
+- [x] Criar `src/domain/LLMCallRecord.ts` — Modelo de chamada LLM individual
+  - [x] Campos: provider, model, inputTokens, outputTokens, latencyMs, resultType, costUsd
+- [x] Criar `src/domain/pricing/LLMPricingTable.ts` — Tabela de preços por modelo
+  - [x] Preços para gpt-4o, gpt-4o-mini, gemini-2.0-flash, claude-3-5-sonnet, deepseek-chat
+  - [x] Função `calculateCost(model, inputTokens, outputTokens): number`
+- [x] Modificar `src/domain/AgentRun.ts` — Enriquecer com métricas
+  - [x] Adicionar `llmCalls: LLMCallRecord[]`
+  - [x] Adicionar `totalInputTokens`, `totalOutputTokens`, `totalTokens`, `costUsd`
+  - [x] Adicionar `memoriesInjected`, `contextUtilization`
+  - [x] Adicionar `agentVersion`, `finalResponse`, `userMessage`
+  - [x] Método `recordLLMCall(record)` e `computeTotals()`
+- [x] Criar `src/domain/ports/IAgentRunRepository.ts` — Interface de persistência
+  - [x] `save(run)`, `findByRunId(runId)`, `findByTenant(tenantId, options)`
+- [x] Criar `src/repositories/AgentRunRepository.ts` — Implementação MongoDB
+  - [x] Collection `agent_runs`
+  - [x] Indexes: `{ tenantId: 1, startedAt: -1 }`, `{ runId: 1 }` (unique)
 - [x] Modificar `src/harness/AgentHarness.ts`
-  - [x] Timeout global via AbortController + setTimeout
-  - [x] Fallback quando circuit breaker MCP está aberto
-  - [x] Resposta parcial se timeout atingido
-- [x] Modificar `src/controllers/ChatWebhookController.ts`
-  - [x] Injetar `IdempotencyGuard`
-  - [x] Verificar duplicidade antes de enfileirar
-- [x] Modificar `src/controllers/SlackWebhookController.ts`
-  - [x] Injetar `IdempotencyGuard`
-  - [x] Usar `event_id` como chave de idempotência
-- [x] Modificar `src/infrastructure/queue/BullMQAdapter.ts`
-  - [x] `jobId` determinístico com hash + timestamp bucket (5s)
+  - [x] Acumular `LLMCallRecord` a cada `generateLlmWithTimeout()`
+  - [x] Registrar `memoriesInjected` e `contextUtilization`
+  - [x] Guardar `finalResponse` e `userMessage` no AgentRun
+  - [x] Persistir AgentRun via `IAgentRunRepository`
+  - [x] Disparar job de self-evaluation via `IQueueService.dispatchEvaluation()`
+- [x] Modificar `src/domain/ports/IQueueService.ts` — Adicionar `dispatchEvaluation()`
+- [x] Modificar `src/infrastructure/queue/BullMQAdapter.ts` — Implementar `dispatchEvaluation()`
+  - [x] Criar queue `agent-evaluation`
 - [x] Modificar `src/config/container.ts`
-  - [x] Criar e injetar `IdempotencyGuard` nos controllers
-  - [x] Criar `CircuitBreaker` por tenant no `ProcessAgentResponseUseCase`
+  - [x] Instanciar `AgentRunRepository`
+  - [x] Injetar no `AgentHarness`
+- [x] Criar `src/infrastructure/metrics/EvaluationMetrics.ts`
+  - [x] `agent_llm_tokens_total { tenantId, provider, model, direction }`
+  - [x] `agent_run_cost_usd { tenantId, provider, model }`
+  - [x] `agent_context_utilization { tenantId }`
 
 ### Testes
 
-- [x] `CircuitBreaker.test.ts` — transições de estado, threshold, half-open, reset, métricas
-- [x] `RetryPolicy.test.ts` — retry em transitório, skip em 4xx, exponential, max retries
-- [x] `IdempotencyGuard.test.ts` — primeira → false, segunda → true, TTL expira → false
-- [x] `MCPHttpAdapter.test.ts` — circuit breaker + retry + timeout integrados
-- [x] `AgentHarness.test.ts` — timeout global aborta, fallback sem tools
-- [x] `ChatWebhookController.test.ts` — webhook duplicado → 200 sem enfileirar
-- [x] `SlackWebhookController.test.ts` — event_id duplicado → 200 sem enfileirar
+- [x] `OpenAIAdapter.test.ts` — Retorna `usage` quando presente, `undefined` quando ausente
+- [x] `GeminiAdapter.test.ts` — Retorna `usage` de `usageMetadata`
+- [x] `AnthropicAdapter.test.ts` — Retorna `usage` de `response.usage`
+- [x] `AgentRun.test.ts` — `recordLLMCall()`, `computeTotals()` soma tokens/cost
+- [x] `LLMPricingTable.test.ts` — Cálculo correto, modelo desconhecido → 0
+- [x] `AgentRunRepository.test.ts` — Save, findByRunId, findByTenant
+- [x] `AgentHarness.test.ts` — LLM calls registrados, run persistido, eval dispatched
 
 ### Verificação
 
-- [x] `npm test` — todos os testes passam (233/233 ✅)
-- [x] `npm run build` — build sem erros (tsc ✅)
-- [ ] Manual: simular falha de MCP 5x → circuit breaker abre → log de transição
-- [ ] Manual: enviar mesmo webhook 2x → segundo ignorado
-- [ ] Manual: run com MCP lento → timeout global aborta após 2min
+- [x] `npm test` — todos os testes passam (271/271)
+- [x] `npm run build` — build sem erros
+- [x] Verificar no MongoDB que `agent_runs` recebe documentos com token counts
 
 ---
 
-## Sub-Fase 1D: Operational Readiness
+## Sub-Fase 2B: Self-Evaluation Worker
 
-**Branch:** `feat/phase1d-operations`
-**Depende de:** ✅ 1A concluída (rate limit por tenant usa auth context)
+**Branch:** `feat/phase2b-self-evaluation`
+**Depende de:** ✅ 2A concluída
 
 ### Implementação
 
-- [x] Criar `src/infrastructure/health/HealthChecker.ts`
-  - [x] `checkReadiness()` → verifica MongoDB + Redis
-  - [x] Retorna `{ status: 'ready'|'degraded', checks: {...} }`
-- [x] Modificar `src/app.ts`
-  - [x] Manter `GET /api/health` como liveness (rápido)
-  - [x] Adicionar `GET /api/health/ready` como readiness probe
-- [x] Modificar `src/index.ts`
-  - [x] Shutdown sequence completa: servers → workers → tracing → Redis → MongoDB
-  - [x] Safety timeout: `setTimeout(() => process.exit(1), 30000).unref()`
-  - [x] Log de cada etapa do shutdown
-- [x] Modificar `src/infrastructure/database/MongoConnection.ts`
-  - [x] Adicionar `disconnect()` method
-  - [x] Adicionar `ping()` method para health check
-- [x] Modificar `src/api/middlewares/rateLimiter.ts`
-  - [x] Adicionar `tenantRateLimiter` com key generator customizado
-  - [x] Config: 200 req/15min por tenant
-  - [x] Fallback para IP se user não autenticado
-- [x] Modificar `Dockerfile`
-  - [x] Adicionar `USER node` no stage final
-  - [x] Adicionar `STOPSIGNAL SIGTERM`
-  - [x] Adicionar `HEALTHCHECK` instruction
+- [x] Criar `src/domain/EvaluationResult.ts` — Modelo do resultado
+  - [x] `SelfEvalScores { confidence, hallucinationRisk, contextRelevance, completeness, toolSelectionQuality }`
+  - [x] `PassiveMetrics { durationMs, iterations, toolCallsTotal, toolCallsFailed, toolSuccessRate, ... }`
+  - [x] `EvaluationResult { runId, tenantId, passive, selfEval, compositeScore, evaluatedAt }`
+- [x] Criar `src/domain/ports/IEvaluationRepository.ts` — Interface de persistência
+  - [x] `save(result)`, `findByRunId(runId)`, `findByTenant(tenantId, options)`
+- [x] Criar `src/repositories/EvaluationRepository.ts` — Implementação MongoDB
+  - [x] Collection `evaluation_results`
+  - [x] Indexes: `{ runId: 1 }` (unique), `{ tenantId: 1, evaluatedAt: -1 }`, `{ agentVersion: 1 }`
+- [x] Criar `src/evaluation/SelfEvaluationPrompt.ts` — Prompt de auto-avaliação
+  - [x] Recebe userMessage, toolCalls, finalResponse, memoriesUsed
+  - [x] Retorna prompt instruindo LLM a devolver JSON com 5 scores (0-1)
+  - [x] Inclui few-shot examples para calibração
+- [x] Criar `src/evaluation/ScoreCalculator.ts` — Cálculo do composite score
+  - [x] Pesos: confidence (0.20), hallucinationRisk invertido (0.25), completeness (0.20), toolSelectionQuality (0.15), contextRelevance (0.10), performance (0.10)
+  - [x] Função `calculateCompositeScore(passive, selfEval): number`
+- [x] Criar `src/infrastructure/queue/EvaluationWorker.ts` — Worker BullMQ
+  - [x] Queue: `agent-evaluation`
+  - [x] Busca config do tenant → cria LLM provider
+  - [x] Chama LLM com prompt de self-evaluation
+  - [x] Parse JSON com retry (1x) se malformado
+  - [x] Calcula composite score
+  - [x] Persiste `EvaluationResult` no MongoDB
+- [x] Modificar `src/config/container.ts`
+  - [x] Instanciar `EvaluationRepository`
+  - [x] Instanciar `EvaluationWorker`
+  - [x] Registrar start do worker
+- [x] Modificar `src/index.ts` — Adicionar `evaluationWorker.stop()` no graceful shutdown
 
 ### Testes
 
-- [x] `HealthChecker.test.ts` — all ok → ready, MongoDB down → degraded, Redis down → degraded
-- [x] Health API (integração) — `/api/health` → 200, `/api/health/ready` com mocks (`health.integration.test.ts`)
-- [x] `rateLimiter.test.ts` — tenant rate limit: authenticated tenant, IP fallback, health checks skip
-- [x] Shutdown (integração) — SIGTERM → drain → exit 0
+- [x] `SelfEvaluationPrompt.test.ts` — Prompt gerado corretamente, escapa caracteres especiais
+- [x] `ScoreCalculator.test.ts` — Pesos corretos, normalização, edge cases (todos 0, todos 1)
+- [x] `EvaluationRepository.test.ts` — Save, findByRunId, findByTenant com filtros
+- [x] `EvaluationWorker.test.ts` — Processa job, persiste resultado, retry JSON malformado, skip tenant inativo
 
 ### Verificação
 
-- [x] `npm test` — todos os testes passam (245/245 ✅)
-- [x] `npm run build` — build sem erros (tsc ✅)
-- [x] `npm run test:coverage` — cobertura de 85.4% de statements e 87% de linhas ✅
-- [ ] `docker build` — image constrói sem erros
-- [ ] Manual: `/api/health/ready` com Redis parado → 503
-- [ ] Manual: SIGTERM com jobs em andamento → drena antes de sair
-- [ ] Manual: Docker container roda como non-root (verificar `whoami`)
+- [x] `npm test` — todos os testes passam (291/291)
+- [x] `npm run build` — build sem erros
+- [x] Verificar no MongoDB que `evaluation_results` recebe documentos com composite score
+- [x] Verificar que resposta ao usuário NÃO é atrasada pela avaliação
 
 ---
 
-## Definition of Done (Fase 1 Completa)
+## Sub-Fase 2C: Aggregation & Version Comparison
 
-- [x] Todas as 4 sub-fases concluídas (1A, 1B, 1C, 1D)
-- [x] Todos os testes unitários passam (`npm test` - 245 testes)
-- [x] Coverage ≥ 80% nos arquivos novos (`npm run test:coverage` - 87% global)
+**Branch:** `feat/phase2c-aggregation`
+**Depende de:** ✅ 2A + 2B concluídas
+
+### Implementação
+
+- [x] Criar `src/evaluation/types.ts` — Types de agregação
+  - [x] `VersionStats`, `ComparisonResult`, `RegressionReport`, `TenantEvalSummary`
+- [x] Criar `src/evaluation/AggregationService.ts` — Serviço de agregação
+  - [x] `getVersionStats(version)` — média de scores por versão
+  - [x] `compareVersions(versionA, versionB)` — deltas e regressões
+  - [x] `getTenantSummary(tenantId, from, to)` — resumo por tenant
+  - [x] `detectRegression(currentVersion, previousVersion)` — threshold > 10%
+- [x] Modificar `src/domain/ports/IEvaluationRepository.ts`
+  - [x] Adicionar `aggregateByVersion(version)`
+  - [x] Adicionar `aggregateByTenant(tenantId, from, to)`
+- [x] Modificar `src/repositories/EvaluationRepository.ts`
+  - [x] Implementar MongoDB aggregation pipelines
+
+### Testes
+
+- [x] `AggregationService.test.ts` — Médias corretas, regressão detectada, sem dados → vazio
+- [x] `EvaluationRepository.test.ts` — Aggregation pipelines retornam formatos esperados
+
+### Verificação
+
+- [x] `npm test` — todos os testes passam (302/302)
+- [x] `npm run build` — build sem erros
+
+---
+
+## Sub-Fase 2D: Evaluation API & Observability
+
+**Branch:** `feat/phase2d-evaluation-api`
+**Depende de:** ✅ 2C concluída
+
+### Implementação
+
+- [x] Criar `src/api/evaluationRouter.ts` — Endpoints REST
+  - [x] `GET /api/evaluations/:runId` — resultado por runId
+  - [x] `GET /api/evaluations?tenantId=X` — lista por tenant (paginado)
+  - [x] `GET /api/evaluations/stats/:version` — stats agregados
+  - [x] `GET /api/evaluations/compare?versionA=X&versionB=Y` — comparação
+  - [x] `GET /api/evaluations/regression` — detecção de regressão
+  - [x] Todos com `authMiddleware` + `requireRole(ADMIN)`
+- [x] Modificar `src/app.ts` — Registrar `evaluationRouter`
+- [x] Modificar `src/infrastructure/metrics/EvaluationMetrics.ts` — Adicionar gauges
+  - [x] `agent_evaluation_composite_score { tenantId, version }`
+  - [x] `agent_evaluation_confidence_avg { tenantId, version }`
+  - [x] `agent_evaluation_hallucination_avg { tenantId, version }`
+  - [x] `agent_evaluation_runs_evaluated { tenantId, version }`
+- [x] Modificar `src/config/container.ts` — Instanciar controller e AggregationService
+
+### Testes
+
+- [x] `evaluationRouter.test.ts` — 401 sem auth, 403 sem ADMIN, 200 com dados, 404 não encontrado
+
+### Verificação
+
+- [x] `npm test` — todos os testes passam (321/321)
+- [x] `npm run build` — build sem erros
+- [x] `npm run test:coverage` — cobertura ≥ 80% nos arquivos novos (~90% global)
+- [x] Endpoints retornam dados corretos via Postman/curl
+
+---
+
+## Definition of Done (Fase 2 Completa)
+
+- [x] Todas as 4 sub-fases concluídas (2A, 2B, 2C, 2D)
+- [x] Todos os testes unitários passam (`npm test`)
+- [x] Coverage ≥ 80% nos arquivos novos (`npm run test:coverage`)
 - [x] Build de produção sem erros (`npm run build`)
-- [x] Docker image configurada como non-root (`node`), STOPSIGNAL e HEALTHCHECK ativo
-- [x] Nenhum endpoint administrativo acessível sem auth + role
-- [x] Nenhuma credencial em plain text no MongoDB (criptografadas via AES-256-GCM + HKDF)
-- [x] Webhook duplicado não gera processamento duplo (IdempotencyGuard + deterministic jobId)
-- [x] MCP failure não derruba todo o sistema (CircuitBreaker + RetryPolicy + Harness fallback)
-- [x] Graceful shutdown drena todos os jobs antes de exit com timeout defensivo de 30s
-- [x] Health check readiness retorna 503 quando dependência está down
-- [x] Atualizar `docs/roadmap.md` — marcar itens da Fase 1 como `[x]`
-
+- [x] Cada `AgentHarness.run()` persiste AgentRun com token counts no MongoDB
+- [x] Cost per run calculado para todos os 4 providers (OpenAI, Gemini, Anthropic, DeepSeek)
+- [x] Self-evaluation roda em background sem impactar latência
+- [x] EvaluationResult com composite score persistido para cada run
+- [x] API de comparação responde "versão X é melhor que Y?" com dados
+- [x] Regression detection identifica queda > 10% no composite score
+- [x] Métricas de avaliação expostas no Prometheus
+- [x] Atualizar `docs/roadmap.md` — marcar itens da Fase 2 como `[x]`

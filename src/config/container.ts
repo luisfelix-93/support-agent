@@ -1,6 +1,7 @@
 import { BullMQAdapter } from '../infrastructure/queue/BullMQAdapter.js';
 import { BullMQWorker } from '../infrastructure/queue/BullMQWorker.js';
 import { MemoryPromotionWorker } from '../infrastructure/queue/MemoryPromotionWorker.js';
+import { EvaluationWorker } from '../infrastructure/queue/EvaluationWorker.js';
 import { GoogleChatAdapter } from '../infrastructure/chat/GoogleChatAdapter.js';
 import { SlackChatAdapter } from '../infrastructure/chat/SlackChatAdapter.js';
 import { ChatProviderFactory } from '../infrastructure/chat/ChatProviderFactory.js';
@@ -15,6 +16,8 @@ import { UserRepository } from '../repositories/UserRepository.js';
 import { SpaceMappingRepository } from '../repositories/SpaceMappingRepository.js';
 import { ChatConfigRepository } from '../repositories/ChatConfigRepository.js';
 import { MongoMemoryRepository } from '../repositories/MongoMemoryRepository.js';
+import { AgentRunRepository } from '../repositories/AgentRunRepository.js';
+import { EvaluationRepository } from '../repositories/EvaluationRepository.js';
 import { RegisterUserUseCase } from '../usecases/RegisterUserUseCase.js';
 import { LoginUserUseCase } from '../usecases/LoginUserUseCase.js';
 import { RegisterTenantUseCase } from '../usecases/RegisterTenantUseCase.js';
@@ -24,6 +27,8 @@ import { RegisterChatConfigUseCase } from '../usecases/RegisterChatConfigUseCase
 import { GetChatConfigUseCase } from '../usecases/GetChatConfigUseCase.js';
 import { OnboardingController } from '../controllers/OnboardingController.js';
 import { AuthController } from '../controllers/AuthController.js';
+import { EvaluationController } from '../controllers/EvaluationController.js';
+import { AggregationService } from '../evaluation/AggregationService.js';
 import { Redis } from 'ioredis';
 import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
 import { RedisShortTermMemory } from '../infrastructure/memory/RedisShortTermMemory.js';
@@ -62,6 +67,8 @@ const userRepository = new UserRepository();
 const spaceMappingRepository = new SpaceMappingRepository();
 export const chatConfigRepository = new ChatConfigRepository(encryptionService);
 export const memoryRepository = new MongoMemoryRepository();
+export const agentRunRepository = new AgentRunRepository();
+export const evaluationRepository = new EvaluationRepository();
 
 // ─── Infrastructure Adapters & Factories ─────────────
 const queueAdapter = new BullMQAdapter(redisConnection);
@@ -97,7 +104,8 @@ const agentHarness = new AgentHarness(
     undefined,
     activeMemoryRepository,
     queueAdapter,
-    embeddingProvider
+    embeddingProvider,
+    agentRunRepository
 );
 
 // ─── Use Cases ───────────────────────────────────────
@@ -126,6 +134,8 @@ export const chatConfigController = new ChatConfigController(
     registerChatConfigUseCase,
     getChatConfigUseCase
 );
+export const aggregationService = new AggregationService(evaluationRepository);
+export const evaluationController = new EvaluationController(evaluationRepository, aggregationService);
 
 export const queueWorker = new BullMQWorker(
     redisConnection,
@@ -147,9 +157,17 @@ export const memoryPromotionWorker = new MemoryPromotionWorker(
     'memory-promotion'
 );
 
+export const evaluationWorker = new EvaluationWorker(
+    redisConnection,
+    tenantRepository,
+    evaluationRepository,
+    'agent-evaluation'
+);
+
 if (process.env.START_WORKER !== 'false') {
     queueWorker.start();
     memoryPromotionWorker.start();
+    evaluationWorker.start();
 }
 
 export const authController = new AuthController(loginUserUseCase);
