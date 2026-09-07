@@ -101,56 +101,56 @@
 
 ### Implementação
 
-- [ ] Criar `src/infrastructure/resilience/CircuitBreaker.ts`
-  - [ ] Estados: CLOSED → OPEN → HALF_OPEN → CLOSED
-  - [ ] Config: failureThreshold (5), resetTimeoutMs (30s), halfOpenMaxCalls (1)
-  - [ ] `execute<T>(fn)` com tracking de falhas e transições
-  - [ ] `CircuitBreakerOpenError` para quando circuito está aberto
-  - [ ] Métricas Prometheus: `circuit_breaker_state`, `circuit_breaker_failures_total`
-- [ ] Criar `src/infrastructure/resilience/RetryPolicy.ts`
-  - [ ] Retry com exponential backoff + jitter
-  - [ ] Config: maxRetries (3), baseDelayMs (1000), maxDelayMs (10000)
-  - [ ] `isRetryable(error)`: apenas erros transitórios (network, 502, 503, 504)
-- [ ] Criar `src/infrastructure/resilience/IdempotencyGuard.ts`
-  - [ ] `isDuplicate(key)` via Redis SET NX EX
-  - [ ] TTL configurável (default: 3600s)
-- [ ] Modificar `src/infrastructure/mcp/MCPHttpAdapter.ts`
-  - [ ] Aceitar `CircuitBreaker` e `RetryPolicy` no construtor
-  - [ ] `executeTool()` → circuit breaker + retry
-  - [ ] `listTools()` → circuit breaker + retry
-- [ ] Modificar `src/harness/ExecutionPolicy.ts`
-  - [ ] Adicionar `maxRunTimeMs` (default: 120000)
-  - [ ] Adicionar `llmTimeoutMs` (default: 60000)
-- [ ] Modificar `src/harness/AgentHarness.ts`
-  - [ ] Timeout global via AbortController + setTimeout
-  - [ ] Fallback quando circuit breaker MCP está aberto
-  - [ ] Resposta parcial se timeout atingido
-- [ ] Modificar `src/controllers/ChatWebhookController.ts`
-  - [ ] Injetar `IdempotencyGuard`
-  - [ ] Verificar duplicidade antes de enfileirar
-- [ ] Modificar `src/controllers/SlackWebhookController.ts`
-  - [ ] Injetar `IdempotencyGuard`
-  - [ ] Usar `event_id` como chave de idempotência
-- [ ] Modificar `src/infrastructure/queue/BullMQAdapter.ts`
-  - [ ] `jobId` determinístico com hash + timestamp bucket (5s)
-- [ ] Modificar `src/config/container.ts`
-  - [ ] Criar e injetar `IdempotencyGuard` nos controllers
-  - [ ] Criar `CircuitBreaker` por tenant no `ProcessAgentResponseUseCase`
+- [x] Criar `src/infrastructure/resilience/CircuitBreaker.ts`
+  - [x] Estados: CLOSED → OPEN → HALF_OPEN → CLOSED
+  - [x] Config: failureThreshold (5), resetTimeoutMs (30s), halfOpenMaxCalls (1)
+  - [x] `execute<T>(fn)` com tracking de falhas e transições
+  - [x] `CircuitBreakerOpenError` para quando circuito está aberto
+  - [x] Métricas Prometheus: `circuit_breaker_state`, `circuit_breaker_failures_total`
+- [x] Criar `src/infrastructure/resilience/RetryPolicy.ts`
+  - [x] Retry com exponential backoff + jitter
+  - [x] Config: maxRetries (3), baseDelayMs (1000), maxDelayMs (10000)
+  - [x] `isRetryable(error)`: apenas erros transitórios (network, 502, 503, 504)
+- [x] Criar `src/infrastructure/resilience/IdempotencyGuard.ts`
+  - [x] `isDuplicate(key)` via Redis SET NX EX
+  - [x] TTL configurável (default: 3600s)
+- [x] Modificar `src/infrastructure/mcp/MCPHttpAdapter.ts`
+  - [x] Aceitar `CircuitBreaker` e `RetryPolicy` no construtor
+  - [x] `executeTool()` → circuit breaker + retry
+  - [x] `listTools()` → circuit breaker + retry
+- [x] Modificar `src/harness/ExecutionPolicy.ts`
+  - [x] Adicionar `maxRunTimeMs` (default: 120000)
+  - [x] Adicionar `llmTimeoutMs` (default: 60000)
+- [x] Modificar `src/harness/AgentHarness.ts`
+  - [x] Timeout global via AbortController + setTimeout
+  - [x] Fallback quando circuit breaker MCP está aberto
+  - [x] Resposta parcial se timeout atingido
+- [x] Modificar `src/controllers/ChatWebhookController.ts`
+  - [x] Injetar `IdempotencyGuard`
+  - [x] Verificar duplicidade antes de enfileirar
+- [x] Modificar `src/controllers/SlackWebhookController.ts`
+  - [x] Injetar `IdempotencyGuard`
+  - [x] Usar `event_id` como chave de idempotência
+- [x] Modificar `src/infrastructure/queue/BullMQAdapter.ts`
+  - [x] `jobId` determinístico com hash + timestamp bucket (5s)
+- [x] Modificar `src/config/container.ts`
+  - [x] Criar e injetar `IdempotencyGuard` nos controllers
+  - [x] Criar `CircuitBreaker` por tenant no `ProcessAgentResponseUseCase`
 
 ### Testes
 
-- [ ] `CircuitBreaker.test.ts` — transições de estado, threshold, half-open, reset, métricas
-- [ ] `RetryPolicy.test.ts` — retry em transitório, skip em 4xx, exponential, max retries
-- [ ] `IdempotencyGuard.test.ts` — primeira → false, segunda → true, TTL expira → false
-- [ ] `MCPHttpAdapter.test.ts` — circuit breaker + retry + timeout integrados
-- [ ] `AgentHarness.test.ts` — timeout global aborta, fallback sem tools
-- [ ] `ChatWebhookController.test.ts` — webhook duplicado → 200 sem enfileirar
-- [ ] `SlackWebhookController.test.ts` — event_id duplicado → 200 sem enfileirar
+- [x] `CircuitBreaker.test.ts` — transições de estado, threshold, half-open, reset, métricas
+- [x] `RetryPolicy.test.ts` — retry em transitório, skip em 4xx, exponential, max retries
+- [x] `IdempotencyGuard.test.ts` — primeira → false, segunda → true, TTL expira → false
+- [x] `MCPHttpAdapter.test.ts` — circuit breaker + retry + timeout integrados
+- [x] `AgentHarness.test.ts` — timeout global aborta, fallback sem tools
+- [x] `ChatWebhookController.test.ts` — webhook duplicado → 200 sem enfileirar
+- [x] `SlackWebhookController.test.ts` — event_id duplicado → 200 sem enfileirar
 
 ### Verificação
 
-- [ ] `npm test` — todos os testes passam
-- [ ] `npm run build` — build sem erros
+- [x] `npm test` — todos os testes passam (233/233 ✅)
+- [x] `npm run build` — build sem erros (tsc ✅)
 - [ ] Manual: simular falha de MCP 5x → circuit breaker abre → log de transição
 - [ ] Manual: enviar mesmo webhook 2x → segundo ignorado
 - [ ] Manual: run com MCP lento → timeout global aborta após 2min

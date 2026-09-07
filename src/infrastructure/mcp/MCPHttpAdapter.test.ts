@@ -284,5 +284,49 @@ describe('MCPHttpAdapter', () => {
             await expect(adapter.executeTool({ name: 'hanging_tool', parameters: {} }))
                 .rejects.toThrow('Conexão SSE encerrada pelo servidor antes de receber resposta');
         });
+
+        it('deve respeitar o CircuitBreaker e lançar CircuitBreakerOpenError quando o circuito estiver aberto', async () => {
+            const { CircuitBreaker, CircuitBreakerOpenError } = await import('../resilience/CircuitBreaker.js');
+            const cb = new CircuitBreaker({ name: 'test-mcp-cb', failureThreshold: 1 });
+
+            // Força a abertura do circuito falhando 1x
+            await expect(cb.execute(() => Promise.reject(new Error('Falha simulada')))).rejects.toThrow();
+            expect(cb.isOpen()).toBe(true);
+
+            const cbAdapter = new MCPHttpAdapter('https://mcp.example.com', 'my-api-key', 5000, cb);
+            // Simula já inicializado para testar a chamada direta
+            (cbAdapter as any).initialized = true;
+            (cbAdapter as any).postUrl = 'https://mcp.example.com/message';
+
+            await expect(cbAdapter.executeTool({ name: 'any_tool', parameters: {} }))
+                .rejects.toThrow(CircuitBreakerOpenError);
+
+            await expect(cbAdapter.listTools())
+                .rejects.toThrow(CircuitBreakerOpenError);
+        });
+
+        it('deve utilizar RetryPolicy em falhas transitórias durante executeTool', async () => {
+            const { RetryPolicy } = await import('../resilience/RetryPolicy.js');
+            const retryPolicy = new RetryPolicy({ maxRetries: 2, baseDelayMs: 1, sleepFn: () => Promise.resolve() });
+            const retrySpy = vi.spyOn(retryPolicy, 'execute');
+
+            const retryAdapter = new MCPHttpAdapter(
+                'https://mcp.example.com',
+                'my-api-key',
+                5000,
+                undefined,
+                retryPolicy
+            );
+            (retryAdapter as any).initialized = true;
+            (retryAdapter as any).postUrl = 'https://mcp.example.com/message';
+
+            // Simula resposta bem sucedida
+            (retryAdapter as any).sendJsonRpc = vi.fn().mockResolvedValue({ result: 'sucesso-com-retry' });
+
+            const result = await retryAdapter.executeTool({ name: 'tested_tool', parameters: {} });
+            expect(result).toEqual({ result: 'sucesso-com-retry' });
+            expect(retrySpy).toHaveBeenCalled();
+        });
     });
 });
+

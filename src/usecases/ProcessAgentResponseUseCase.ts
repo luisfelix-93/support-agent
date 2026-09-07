@@ -5,6 +5,7 @@ import { IChatRepository } from "../domain/ports/IChatRepository.js";
 import { LLMFactory } from "../infrastructure/llm/LLMFactory.js";
 import { IChatProvider } from "../domain/ports/IChatProvider.js";
 import { MCPHttpAdapter } from "../infrastructure/mcp/MCPHttpAdapter.js";
+import { CircuitBreaker } from "../infrastructure/resilience/CircuitBreaker.js";
 import { ISpaceMappingRepository } from "../domain/ports/ISpaceMappingRepository.js";
 import { IAgentHarness } from "../domain/ports/IAgentHarness.js";
 import { logger } from "../config/logger.js";
@@ -13,6 +14,7 @@ const log = logger.child({ module: 'ProcessAgentResponseUseCase' });
 
 export class ProcessAgentResponseUse {
     private readonly mcpClients = new Map<string, MCPHttpAdapter>();
+    private readonly circuitBreakers = new Map<string, CircuitBreaker>();
 
     constructor(
         private readonly spaceMappingRepository: ISpaceMappingRepository,
@@ -79,7 +81,17 @@ export class ProcessAgentResponseUse {
             const mcpConfigKey = JSON.stringify(tenant.mcpConfig);
             let cachedClient = this.mcpClients.get(mcpConfigKey);
             if (!cachedClient) {
-                cachedClient = new MCPHttpAdapter(tenant.mcpConfig.url, tenant.mcpConfig.apiKey);
+                let circuitBreaker = this.circuitBreakers.get(tenant.workspaceId);
+                if (!circuitBreaker) {
+                    circuitBreaker = new CircuitBreaker({ name: `mcp-${tenant.workspaceId}` });
+                    this.circuitBreakers.set(tenant.workspaceId, circuitBreaker);
+                }
+                cachedClient = new MCPHttpAdapter(
+                    tenant.mcpConfig.url,
+                    tenant.mcpConfig.apiKey,
+                    25000,
+                    circuitBreaker
+                );
                 this.mcpClients.set(mcpConfigKey, cachedClient);
             }
             mcpClient = cachedClient;

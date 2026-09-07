@@ -32,6 +32,7 @@ import { OpenAIEmbeddingProvider } from '../infrastructure/llm/OpenAIEmbeddingPr
 import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
 import { AESEncryptionService } from '../infrastructure/security/AESEncryptionService.js';
+import { IdempotencyGuard } from '../infrastructure/resilience/IdempotencyGuard.js';
 
 // ─── Database Connection ─────────────────────────────
 await MongoConnection.connect(
@@ -112,8 +113,11 @@ const associateTenantUseCase = new AssociateTenantToUserUseCase(userRepository, 
 export const registerChatConfigUseCase = new RegisterChatConfigUseCase(chatConfigRepository);
 export const getChatConfigUseCase = new GetChatConfigUseCase(chatConfigRepository);
 
+// ─── Resilience & Idempotency ────────────────────────
+export const idempotencyGuard = new IdempotencyGuard(redisConnection);
+
 // ─── Controllers ────────────────────────────────────
-export const webhookController = new ChatWebhookController(queueAdapter);
+export const webhookController = new ChatWebhookController(queueAdapter, idempotencyGuard);
 export const chatConfigController = new ChatConfigController(
     registerChatConfigUseCase,
     getChatConfigUseCase
@@ -154,5 +158,6 @@ export const onboardingController = new OnboardingController(
 export const slackWebhookController = new SlackWebhookController(
     queueAdapter,
     process.env.SLACK_SIGNING_SECRET,
-    chatConfigRepository
+    chatConfigRepository,
+    idempotencyGuard
 );
