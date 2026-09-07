@@ -2,6 +2,7 @@ import type { Collection } from "mongodb";
 import { MongoConnection } from "../infrastructure/database/MongoConnection.js";
 import { EvaluationResult, type PassiveMetrics, type SelfEvalScores } from "../domain/EvaluationResult.js";
 import type { IEvaluationRepository, FindEvaluationsOptions } from "../domain/ports/IEvaluationRepository.js";
+import type { AggregatedEvaluation } from "../evaluation/types.js";
 import { logger } from "../config/logger.js";
 
 const log = logger.child({ module: 'EvaluationRepository' });
@@ -70,6 +71,99 @@ export class EvaluationRepository implements IEvaluationRepository {
 
         const docs = await cursor.toArray();
         return docs.map(doc => this.toDomain(doc));
+    }
+
+    async aggregateByVersion(version: string): Promise<AggregatedEvaluation | null> {
+        const pipeline = [
+            { $match: { agentVersion: version } },
+            {
+                $group: {
+                    _id: "$agentVersion",
+                    totalRuns: { $sum: 1 },
+                    avgCompositeScore: { $avg: "$compositeScore" },
+                    avgConfidence: { $avg: "$selfEval.confidence" },
+                    avgHallucinationRisk: { $avg: "$selfEval.hallucinationRisk" },
+                    avgToolSuccessRate: { $avg: "$passive.toolSuccessRate" },
+                    avgCostUsd: { $avg: "$passive.costUsd" },
+                    avgLatencyMs: { $avg: "$passive.durationMs" },
+                    totalCostUsd: { $sum: "$passive.costUsd" },
+                    totalTokens: { $sum: "$passive.totalTokens" },
+                    minDate: { $min: "$evaluatedAt" },
+                    maxDate: { $max: "$evaluatedAt" },
+                },
+            },
+        ];
+
+        const cursor = this.collection.aggregate(pipeline);
+        const results = await cursor.toArray();
+        if (!results || results.length === 0) {
+            return null;
+        }
+
+        const doc = results[0] as any;
+        return {
+            id: doc._id,
+            totalRuns: doc.totalRuns,
+            avgCompositeScore: doc.avgCompositeScore ?? 0,
+            avgConfidence: doc.avgConfidence ?? 0,
+            avgHallucinationRisk: doc.avgHallucinationRisk ?? 0,
+            avgToolSuccessRate: doc.avgToolSuccessRate ?? 0,
+            avgCostUsd: doc.avgCostUsd ?? 0,
+            avgLatencyMs: doc.avgLatencyMs ?? 0,
+            totalCostUsd: doc.totalCostUsd ?? 0,
+            totalTokens: doc.totalTokens ?? 0,
+            minDate: doc.minDate ? new Date(doc.minDate) : undefined,
+            maxDate: doc.maxDate ? new Date(doc.maxDate) : undefined,
+        };
+    }
+
+    async aggregateByTenant(tenantId: string, from: Date, to: Date): Promise<AggregatedEvaluation | null> {
+        const pipeline = [
+            {
+                $match: {
+                    tenantId,
+                    evaluatedAt: { $gte: from, $lte: to },
+                },
+            },
+            {
+                $group: {
+                    _id: "$tenantId",
+                    totalRuns: { $sum: 1 },
+                    avgCompositeScore: { $avg: "$compositeScore" },
+                    avgConfidence: { $avg: "$selfEval.confidence" },
+                    avgHallucinationRisk: { $avg: "$selfEval.hallucinationRisk" },
+                    avgToolSuccessRate: { $avg: "$passive.toolSuccessRate" },
+                    avgCostUsd: { $avg: "$passive.costUsd" },
+                    avgLatencyMs: { $avg: "$passive.durationMs" },
+                    totalCostUsd: { $sum: "$passive.costUsd" },
+                    totalTokens: { $sum: "$passive.totalTokens" },
+                    minDate: { $min: "$evaluatedAt" },
+                    maxDate: { $max: "$evaluatedAt" },
+                },
+            },
+        ];
+
+        const cursor = this.collection.aggregate(pipeline);
+        const results = await cursor.toArray();
+        if (!results || results.length === 0) {
+            return null;
+        }
+
+        const doc = results[0] as any;
+        return {
+            id: doc._id,
+            totalRuns: doc.totalRuns,
+            avgCompositeScore: doc.avgCompositeScore ?? 0,
+            avgConfidence: doc.avgConfidence ?? 0,
+            avgHallucinationRisk: doc.avgHallucinationRisk ?? 0,
+            avgToolSuccessRate: doc.avgToolSuccessRate ?? 0,
+            avgCostUsd: doc.avgCostUsd ?? 0,
+            avgLatencyMs: doc.avgLatencyMs ?? 0,
+            totalCostUsd: doc.totalCostUsd ?? 0,
+            totalTokens: doc.totalTokens ?? 0,
+            minDate: doc.minDate ? new Date(doc.minDate) : undefined,
+            maxDate: doc.maxDate ? new Date(doc.maxDate) : undefined,
+        };
     }
 
     private toDocument(domain: EvaluationResult): Omit<EvaluationResultDocument, '_id'> {

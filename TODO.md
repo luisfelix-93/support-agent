@@ -132,28 +132,28 @@
 
 ### Implementação
 
-- [ ] Criar `src/evaluation/types.ts` — Types de agregação
-  - [ ] `VersionStats`, `ComparisonResult`, `RegressionReport`, `TenantEvalSummary`
-- [ ] Criar `src/evaluation/AggregationService.ts` — Serviço de agregação
-  - [ ] `getVersionStats(version)` — média de scores por versão
-  - [ ] `compareVersions(versionA, versionB)` — deltas e regressões
-  - [ ] `getTenantSummary(tenantId, from, to)` — resumo por tenant
-  - [ ] `detectRegression(currentVersion, previousVersion)` — threshold > 10%
-- [ ] Modificar `src/domain/ports/IEvaluationRepository.ts`
-  - [ ] Adicionar `aggregateByVersion(version)`
-  - [ ] Adicionar `aggregateByTenant(tenantId, from, to)`
-- [ ] Modificar `src/repositories/EvaluationRepository.ts`
-  - [ ] Implementar MongoDB aggregation pipelines
+- [x] Criar `src/evaluation/types.ts` — Types de agregação
+  - [x] `VersionStats`, `ComparisonResult`, `RegressionReport`, `TenantEvalSummary`
+- [x] Criar `src/evaluation/AggregationService.ts` — Serviço de agregação
+  - [x] `getVersionStats(version)` — média de scores por versão
+  - [x] `compareVersions(versionA, versionB)` — deltas e regressões
+  - [x] `getTenantSummary(tenantId, from, to)` — resumo por tenant
+  - [x] `detectRegression(currentVersion, previousVersion)` — threshold > 10%
+- [x] Modificar `src/domain/ports/IEvaluationRepository.ts`
+  - [x] Adicionar `aggregateByVersion(version)`
+  - [x] Adicionar `aggregateByTenant(tenantId, from, to)`
+- [x] Modificar `src/repositories/EvaluationRepository.ts`
+  - [x] Implementar MongoDB aggregation pipelines
 
 ### Testes
 
-- [ ] `AggregationService.test.ts` — Médias corretas, regressão detectada, sem dados → vazio
-- [ ] `EvaluationRepository.test.ts` — Aggregation pipelines retornam formatos esperados
+- [x] `AggregationService.test.ts` — Médias corretas, regressão detectada, sem dados → vazio
+- [x] `EvaluationRepository.test.ts` — Aggregation pipelines retornam formatos esperados
 
 ### Verificação
 
-- [ ] `npm test` — todos os testes passam
-- [ ] `npm run build` — build sem erros
+- [x] `npm test` — todos os testes passam (302/302)
+- [x] `npm run build` — build sem erros
 
 ---
 
@@ -164,45 +164,45 @@
 
 ### Implementação
 
-- [ ] Criar `src/api/evaluationRouter.ts` — Endpoints REST
-  - [ ] `GET /api/evaluations/:runId` — resultado por runId
-  - [ ] `GET /api/evaluations?tenantId=X` — lista por tenant (paginado)
-  - [ ] `GET /api/evaluations/stats/:version` — stats agregados
-  - [ ] `GET /api/evaluations/compare?versionA=X&versionB=Y` — comparação
-  - [ ] `GET /api/evaluations/regression` — detecção de regressão
-  - [ ] Todos com `authMiddleware` + `requireRole(ADMIN)`
-- [ ] Modificar `src/app.ts` — Registrar `evaluationRouter`
-- [ ] Modificar `src/infrastructure/metrics/EvaluationMetrics.ts` — Adicionar gauges
-  - [ ] `agent_evaluation_composite_score { tenantId, version }`
-  - [ ] `agent_evaluation_confidence_avg { tenantId, version }`
-  - [ ] `agent_evaluation_hallucination_avg { tenantId, version }`
-  - [ ] `agent_evaluation_runs_evaluated { tenantId, version }`
-- [ ] Modificar `src/config/container.ts` — Instanciar controller e AggregationService
+- [x] Criar `src/api/evaluationRouter.ts` — Endpoints REST
+  - [x] `GET /api/evaluations/:runId` — resultado por runId
+  - [x] `GET /api/evaluations?tenantId=X` — lista por tenant (paginado)
+  - [x] `GET /api/evaluations/stats/:version` — stats agregados
+  - [x] `GET /api/evaluations/compare?versionA=X&versionB=Y` — comparação
+  - [x] `GET /api/evaluations/regression` — detecção de regressão
+  - [x] Todos com `authMiddleware` + `requireRole(ADMIN)`
+- [x] Modificar `src/app.ts` — Registrar `evaluationRouter`
+- [x] Modificar `src/infrastructure/metrics/EvaluationMetrics.ts` — Adicionar gauges
+  - [x] `agent_evaluation_composite_score { tenantId, version }`
+  - [x] `agent_evaluation_confidence_avg { tenantId, version }`
+  - [x] `agent_evaluation_hallucination_avg { tenantId, version }`
+  - [x] `agent_evaluation_runs_evaluated { tenantId, version }`
+- [x] Modificar `src/config/container.ts` — Instanciar controller e AggregationService
 
 ### Testes
 
-- [ ] `evaluationRouter.test.ts` — 401 sem auth, 403 sem ADMIN, 200 com dados, 404 não encontrado
+- [x] `evaluationRouter.test.ts` — 401 sem auth, 403 sem ADMIN, 200 com dados, 404 não encontrado
 
 ### Verificação
 
-- [ ] `npm test` — todos os testes passam
-- [ ] `npm run build` — build sem erros
-- [ ] `npm run test:coverage` — cobertura ≥ 80% nos arquivos novos
-- [ ] Endpoints retornam dados corretos via Postman/curl
+- [x] `npm test` — todos os testes passam (321/321)
+- [x] `npm run build` — build sem erros
+- [x] `npm run test:coverage` — cobertura ≥ 80% nos arquivos novos (~90% global)
+- [x] Endpoints retornam dados corretos via Postman/curl
 
 ---
 
 ## Definition of Done (Fase 2 Completa)
 
-- [ ] Todas as 4 sub-fases concluídas (2A, 2B, 2C, 2D)
-- [ ] Todos os testes unitários passam (`npm test`)
-- [ ] Coverage ≥ 80% nos arquivos novos (`npm run test:coverage`)
-- [ ] Build de produção sem erros (`npm run build`)
-- [ ] Cada `AgentHarness.run()` persiste AgentRun com token counts no MongoDB
-- [ ] Cost per run calculado para todos os 4 providers (OpenAI, Gemini, Anthropic, DeepSeek)
-- [ ] Self-evaluation roda em background sem impactar latência
-- [ ] EvaluationResult com composite score persistido para cada run
-- [ ] API de comparação responde "versão X é melhor que Y?" com dados
-- [ ] Regression detection identifica queda > 10% no composite score
-- [ ] Métricas de avaliação expostas no Prometheus
-- [ ] Atualizar `docs/roadmap.md` — marcar itens da Fase 2 como `[x]`
+- [x] Todas as 4 sub-fases concluídas (2A, 2B, 2C, 2D)
+- [x] Todos os testes unitários passam (`npm test`)
+- [x] Coverage ≥ 80% nos arquivos novos (`npm run test:coverage`)
+- [x] Build de produção sem erros (`npm run build`)
+- [x] Cada `AgentHarness.run()` persiste AgentRun com token counts no MongoDB
+- [x] Cost per run calculado para todos os 4 providers (OpenAI, Gemini, Anthropic, DeepSeek)
+- [x] Self-evaluation roda em background sem impactar latência
+- [x] EvaluationResult com composite score persistido para cada run
+- [x] API de comparação responde "versão X é melhor que Y?" com dados
+- [x] Regression detection identifica queda > 10% no composite score
+- [x] Métricas de avaliação expostas no Prometheus
+- [x] Atualizar `docs/roadmap.md` — marcar itens da Fase 2 como `[x]`

@@ -14,6 +14,12 @@ import type { LLMCallRecord } from "../../domain/LLMCallRecord.js";
 import { logger } from "../../config/logger.js";
 import { extractTraceContext } from "../tracing/TraceContext.js";
 import { withContext, withSpan } from "../tracing/TracerProvider.js";
+import {
+    agentEvaluationCompositeScore,
+    agentEvaluationConfidenceAvg,
+    agentEvaluationHallucinationAvg,
+    agentEvaluationRunsEvaluated,
+} from "../metrics/EvaluationMetrics.js";
 
 const log = logger.child({ module: 'EvaluationWorker' });
 
@@ -159,6 +165,12 @@ export class EvaluationWorker {
                             );
 
                             await this.evaluationRepository.save(evaluationResult);
+
+                            const versionLabel = agentVersion || '1.0.0';
+                            agentEvaluationCompositeScore.set({ tenantId, version: versionLabel }, compositeScore);
+                            agentEvaluationConfidenceAvg.set({ tenantId, version: versionLabel }, selfEvalScores.confidence);
+                            agentEvaluationHallucinationAvg.set({ tenantId, version: versionLabel }, selfEvalScores.hallucinationRisk);
+                            agentEvaluationRunsEvaluated.inc({ tenantId, version: versionLabel });
 
                             log.info(
                                 {

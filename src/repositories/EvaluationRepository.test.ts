@@ -13,6 +13,7 @@ describe('EvaluationRepository', () => {
             updateOne: vi.fn().mockResolvedValue({ acknowledged: true }),
             findOne: vi.fn(),
             find: vi.fn(),
+            aggregate: vi.fn(),
         };
 
         vi.spyOn(MongoConnection, 'getDb').mockReturnValue({
@@ -190,5 +191,111 @@ describe('EvaluationRepository', () => {
         expect(mockCursor.limit).toHaveBeenCalledWith(5);
         expect(results).toHaveLength(1);
         expect(results[0].runId).toBe('run-filtered-1');
+    });
+
+    describe('aggregateByVersion', () => {
+        it('deve retornar métricas agregadas quando houver execuções da versão', async () => {
+            const minDate = new Date('2026-09-01T00:00:00Z');
+            const maxDate = new Date('2026-09-07T00:00:00Z');
+            mockCollection.aggregate.mockReturnValue({
+                toArray: vi.fn().mockResolvedValue([
+                    {
+                        _id: '1.5.0',
+                        totalRuns: 10,
+                        avgCompositeScore: 0.91,
+                        avgConfidence: 0.94,
+                        avgHallucinationRisk: 0.06,
+                        avgToolSuccessRate: 0.98,
+                        avgCostUsd: 0.002,
+                        avgLatencyMs: 1400,
+                        totalCostUsd: 0.02,
+                        totalTokens: 1500,
+                        minDate,
+                        maxDate,
+                    },
+                ]),
+            });
+
+            const result = await repository.aggregateByVersion('1.5.0');
+
+            expect(mockCollection.aggregate).toHaveBeenCalledWith([
+                { $match: { agentVersion: '1.5.0' } },
+                {
+                    $group: expect.objectContaining({
+                        _id: '$agentVersion',
+                        totalRuns: { $sum: 1 },
+                    }),
+                },
+            ]);
+
+            expect(result).toBeDefined();
+            expect(result?.totalRuns).toBe(10);
+            expect(result?.avgCompositeScore).toBe(0.91);
+            expect(result?.minDate).toEqual(minDate);
+            expect(result?.maxDate).toEqual(maxDate);
+        });
+
+        it('deve retornar null se não houver execuções para a versão', async () => {
+            mockCollection.aggregate.mockReturnValue({
+                toArray: vi.fn().mockResolvedValue([]),
+            });
+
+            const result = await repository.aggregateByVersion('9.9.9');
+            expect(result).toBeNull();
+        });
+    });
+
+    describe('aggregateByTenant', () => {
+        it('deve agregar métricas por tenant dentro da janela temporal', async () => {
+            const from = new Date('2026-09-01T00:00:00Z');
+            const to = new Date('2026-09-07T23:59:59Z');
+
+            mockCollection.aggregate.mockReturnValue({
+                toArray: vi.fn().mockResolvedValue([
+                    {
+                        _id: 'tenant-acme',
+                        totalRuns: 25,
+                        avgCompositeScore: 0.88,
+                        avgConfidence: 0.90,
+                        avgHallucinationRisk: 0.08,
+                        avgToolSuccessRate: 1.0,
+                        avgCostUsd: 0.0015,
+                        avgLatencyMs: 1200,
+                        totalCostUsd: 0.0375,
+                        totalTokens: 3500,
+                    },
+                ]),
+            });
+
+            const result = await repository.aggregateByTenant('tenant-acme', from, to);
+
+            expect(mockCollection.aggregate).toHaveBeenCalledWith([
+                {
+                    $match: {
+                        tenantId: 'tenant-acme',
+                        evaluatedAt: { $gte: from, $lte: to },
+                    },
+                },
+                {
+                    $group: expect.objectContaining({
+                        _id: '$tenantId',
+                        totalRuns: { $sum: 1 },
+                    }),
+                },
+            ]);
+
+            expect(result).toBeDefined();
+            expect(result?.totalRuns).toBe(25);
+            expect(result?.totalCostUsd).toBe(0.0375);
+        });
+
+        it('deve retornar null se não houver execuções no período', async () => {
+            mockCollection.aggregate.mockReturnValue({
+                toArray: vi.fn().mockResolvedValue([]),
+            });
+
+            const result = await repository.aggregateByTenant('tenant-empty', new Date(), new Date());
+            expect(result).toBeNull();
+        });
     });
 });

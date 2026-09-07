@@ -27,6 +27,8 @@ import { RegisterChatConfigUseCase } from '../usecases/RegisterChatConfigUseCase
 import { GetChatConfigUseCase } from '../usecases/GetChatConfigUseCase.js';
 import { OnboardingController } from '../controllers/OnboardingController.js';
 import { AuthController } from '../controllers/AuthController.js';
+import { EvaluationController } from '../controllers/EvaluationController.js';
+import { AggregationService } from '../evaluation/AggregationService.js';
 import { Redis } from 'ioredis';
 import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
 import { RedisShortTermMemory } from '../infrastructure/memory/RedisShortTermMemory.js';
@@ -132,6 +134,8 @@ export const chatConfigController = new ChatConfigController(
     registerChatConfigUseCase,
     getChatConfigUseCase
 );
+export const aggregationService = new AggregationService(evaluationRepository);
+export const evaluationController = new EvaluationController(evaluationRepository, aggregationService);
 
 export const queueWorker = new BullMQWorker(
     redisConnection,

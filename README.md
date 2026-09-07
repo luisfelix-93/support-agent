@@ -12,6 +12,11 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
   - [Short-Term Memory (Redis)](#short-term-memory-redis)
   - [Long-Term Memory & Busca Vetorial (MongoDB + Embeddings)](#long-term-memory--busca-vetorial-mongodb--embeddings)
   - [Promoção Assíncrona de Memória (BullMQ Worker)](#promoção-assíncrona-de-memória-bullmq-worker)
+- [Camada de Avaliação e Telemetria (Fase 2)](#camada-de-avaliação-e-telemetria-fase-2)
+  - [Telemetria de Execuções e Custos (`AgentRun`)](#telemetria-de-execuções-e-custos-agentrun)
+  - [Worker de Auto-Avaliação e Pontuação Composta](#worker-de-auto-avaliação-e-pontuação-composta)
+  - [Agregação, Comparação e Detecção de Regressão](#agregação-comparação-e-detecção-de-regressão)
+  - [Endpoints REST de Avaliação](#endpoints-rest-de-avaliação)
 - [Estrutura de Diretórios](#estrutura-de-diretórios)
 - [Camadas](#camadas)
   - [Domain](#domain)
@@ -20,7 +25,7 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
   - [Infrastructure](#infrastructure)
   - [Repositories](#repositories)
   - [Use Cases](#use-cases)
-- [API Layer](#api-layer)
+- [Camada de API (REST Reference)](#camada-de-api-rest-reference)
 - [Observabilidade](#observabilidade)
   - [Coleta de Logs (Pino & Loki)](#coleta-de-logs)
   - [Métricas Prometheus](#métricas-prometheus)
@@ -57,6 +62,7 @@ O **Support Agent** é um bot de atendimento que atua como intermediário entre 
 - 🔍 **Busca Vetorial & Embeddings**: Recuperação semântica de memórias relevantes por similaridade de cosseno usando vetores OpenAI (`text-embedding-3-small` / 1536 dimensões)
 - 🚀 **Promoção Assíncrona de Memória**: Extração em background de fatos e preferências do diálogo via fila dedicada no BullMQ (`memory-promotion`), com zero acréscimo na latência de resposta ao usuário
 - 📊 **Token Budgeting & Assembly**: Montagem explícita de contexto com contagem precisa de tokens (`ITokenCounter`) e truncagem inteligente
+- 📈 **Camada de Avaliação e Telemetria de Custos (Fase 2)**: Rastreamento persistente de cada execução (`AgentRun`), cálculo exato de custos de inferência (OpenAI, Gemini, Anthropic, DeepSeek), auto-avaliação analítica assíncrona via BullMQ (`EvaluationWorker`), pontuação composta (0-1.0), detecção de regressão em releases e API REST protegida com RBAC
 - 🔧 Descoberta e execução dinâmica de ferramentas via MCP (JSON-RPC 2.0)
 - 📊 Observabilidade nativa via Prometheus, Grafana Loki e Tracing Distribuído com Grafana Tempo (OpenTelemetry)
 - 💬 Suporte multi-plataforma de chat: **Google Chat** e **Slack** prontos para uso
@@ -69,7 +75,7 @@ O projeto adota uma arquitetura hexagonal (Ports & Adapters), com uma **Camada H
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                             Use Cases                                      │
+│                             Use Cases                                       │
 │                     ProcessAgentResponseUseCase                             │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │ (Delega execução ao Runtime Harness)
@@ -97,13 +103,46 @@ O projeto adota uma arquitetura hexagonal (Ports & Adapters), com uma **Camada H
     ├─────────────┤        │     ('memory-promotion' queue)     │     │
     │   Google    │        └─────────────────┬──────────────────┘     │
     └─────────────┘                          │                        │
-                                             ▼                        │
-                           ┌────────────────────────────────────┐     │
-                           │      MemoryPromotionWorker         │     │
-                           │   - LLMMemoryExtractor             │     │
-                           │   - OpenAIEmbeddingProvider (1536d)├─────┘
-                           │   - Deduplicação & Idempotência    │
-                           └────────────────────────────────────┘
+          │                                  ▼                        │
+          │ (Persiste Run) ┌────────────────────────────────────┐     │
+          ▼                │      MemoryPromotionWorker         │     │
+    ┌───────────────┐      │   - LLMMemoryExtractor             │     │
+    │AgentRunRepos. │      │   - OpenAIEmbeddingProvider (1536d)├─────┘
+    │(MongoDB: runs)│      │   - Deduplicação & Idempotência    │
+    └───────┬───────┘      └────────────────────────────────────┘
+            │
+            │ (Enfileira auto-avaliação)
+            ▼
+    ┌────────────────────────────────────┐
+    │       BullMQ Queue Service         │
+    │     ('agent-evaluation' queue)     │
+    └─────────────────┬──────────────────┘
+                      │
+                      ▼
+    ┌────────────────────────────────────┐
+    │        EvaluationWorker            │
+    │   - SelfEvaluationPrompt (LLM)     │
+    │   - ScoreCalculator (Composite)    │
+    │   - Prometheus Metrics Gauges      │
+    └─────────────────┬──────────────────┘
+                      │
+                      ▼
+    ┌────────────────────────────────────┐
+    │       EvaluationRepository         │
+    │    (MongoDB: 'evaluations')        │
+    └─────────────────┬──────────────────┘
+                      │
+                      ▼
+    ┌────────────────────────────────────┐
+    │        AggregationService          │
+    │   - Versões, Comparação & Regressão│
+    └─────────────────┬──────────────────┘
+                      │
+                      ▼
+    ┌────────────────────────────────────┐
+    │     EvaluationController (API)     │
+    │       GET /api/evaluations/*       │
+    └────────────────────────────────────┘
 ```
 
 ---
@@ -453,6 +492,8 @@ Implementações concretas dos ports de repositório utilizando MongoDB:
 | `UserRepository` | `users` | `findById`, `findByEmail`, `save`, `addWorkspaceId` |
 | `SpaceMappingRepository` | `space_mappings` | `findBySpaceId`, `save` |
 | `ChatConfigRepository` | `chat_configs` | `findByWorkspaceId`, `findByTeamId`, `save` (Criptografia AES-256-GCM) |
+| `AgentRunRepository` | `agent_runs` | `save`, `findById`, `listByTenant`, `findByVersion` |
+| `EvaluationRepository` | `evaluations` | `save`, `findByRunId`, `listByTenant`, `getVersionStats`, `getTenantSummary` |
 
 ### Use Cases
 
@@ -466,6 +507,65 @@ Implementações concretas dos ports de repositório utilizando MongoDB:
 | `GetChatConfigUseCase` | Recupera as configurações de bot de um tenant (sem expor segredos sensíveis na resposta da API). |
 | `RegisterSpaceUseCase` | Registra um espaço do Google Chat e associa ao tenant via `workspaceId`. Exige que o tenant exista. |
 | `AssociateTenantToUserUseCase` | Vincula um `workspaceId` de tenant a um usuário existente via `addWorkspaceId()`. |
+
+---
+
+## Camada de API (REST Reference)
+
+A aplicação expõe uma API REST robusta sob o prefixo `/api`, organizada por domínio, com suporte a autenticação JWT, controle de acesso baseado em papéis (RBAC), auditoria estruturada e limitação de taxa por tenant.
+
+> 📖 **Documentação Completa da API:** Para payloads detalhados de requisição/resposta, schemas JSON, códigos de status e exemplos via cURL, consulte o arquivo [docs/api.md](docs/api.md).
+
+### Resumo dos Endpoints
+
+| Categoria | Método | Rota | Autenticação & Autorização | Descrição |
+|---|---|---|---|---|
+| **Health** | `GET` | `/api/health` | Pública | Liveness probe do processo Node.js |
+| **Health** | `GET` | `/api/health/ready` | Pública | Readiness probe (MongoDB + Redis pings) |
+| **Auth** | `POST` | `/api/auth/register` | Pública | Registro de novos usuários |
+| **Auth** | `POST` | `/api/auth/login` | Pública | Autenticação e emissão de JWT |
+| **Onboarding** | `POST` | `/api/onboarding/tenant` | `ADMIN` + `auditLogger` | Cadastro de novos tenants/workspaces |
+| **Onboarding** | `POST` | `/api/onboarding/space` | `ADMIN` + `auditLogger` | Mapeamento de Google Chat Space para Tenant |
+| **Onboarding** | `POST` | `/api/onboarding/user/tenant` | `ADMIN` + `auditLogger` | Associação de tenant a usuário |
+| **Chat Configs** | `POST` | `/api/chat-configs` | `ADMIN` + `rateLimiter` + `auditLogger` | Registro/atualização de credenciais de bot (Slack) |
+| **Chat Configs** | `GET` | `/api/chat-configs/:workspaceId` | JWT + `tenantGuard` + `rateLimiter` | Consulta segura de configs (chaves mascaradas) |
+| **Webhooks** | `POST` | `/api/webhook` | Verificação de token Google Chat | Recebimento de mensagens do Google Chat |
+| **Webhooks** | `POST` | `/api/webhooks/slack/events` | HMAC-SHA256 Slack Signing Secret | Recebimento de eventos e menções do Slack |
+| **Evaluations** | `GET` | `/api/evaluations/:runId` | `ADMIN` + `rateLimiter` + `auditLogger` | Resultado de avaliação de um run individual |
+| **Evaluations** | `GET` | `/api/evaluations?tenantId=X` | `ADMIN` + `rateLimiter` + `auditLogger` | Listagem histórica paginada de avaliações |
+| **Evaluations** | `GET` | `/api/evaluations/stats/:version` | `ADMIN` + `rateLimiter` + `auditLogger` | Estatísticas agregadas de uma versão |
+| **Evaluations** | `GET` | `/api/evaluations/compare` | `ADMIN` + `rateLimiter` + `auditLogger` | Comparativo analítico entre versões (A vs B) |
+| **Evaluations** | `GET` | `/api/evaluations/regression` | `ADMIN` + `rateLimiter` + `auditLogger` | Detecção automatizada de regressão de qualidade |
+| **Evaluations** | `GET` | `/api/evaluations/summary/:tenantId` | `ADMIN` + `rateLimiter` + `auditLogger` | Visão executiva de qualidade do tenant |
+| **Metrics** | `GET` | `/metrics` | Opcional (`METRICS_TOKEN`) | Métricas em formato Prometheus (porta 9090 ou 3000) |
+
+---
+
+## Camada de Avaliação e Telemetria (Fase 2)
+
+A **Camada de Avaliação e Telemetria** (Fase 2 do Roadmap) transforma o Support Agent em uma plataforma de IA observável, quantitativa e orientada a dados, medindo acurácia das respostas, consumo de tokens, custos operacionais e estabilidade entre releases.
+
+### 1. Telemetria de Execuções e Custos (`AgentRun` & `CostCalculator`)
+- **Entidade `AgentRun`**: Captura cada execução do `AgentHarness` com `runId`, tempos de início/conclusão, modelo, provedor, prompt tokens, completion tokens, etapas de execução de ferramentas e custo em USD.
+- **Tabela de Precificação Multi-Provider**: O `CostCalculator` computa automaticamente o custo por run para os 4 provedores integrados:
+  - **OpenAI:** `gpt-4o`, `gpt-4o-mini`, `o1`, `o1-mini`, etc.
+  - **Google Gemini:** `gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-2.0-flash`.
+  - **Anthropic:** `claude-3-5-sonnet`, `claude-3-opus`, `claude-3-haiku`.
+  - **DeepSeek:** `deepseek-chat`, `deepseek-coder`, `deepseek-reasoner`.
+- **Persistência Assíncrona**: O `AgentRunRepository` grava os runs no MongoDB (`agent_runs`) com índices compostos otimizados (`tenantId + createdAt`, `version + createdAt`), sem penalizar a latência de entrega ao usuário final.
+
+### 2. Worker de Auto-Avaliação e Pontuação Composta
+- **Fila BullMQ `agent-evaluation`**: Ao concluir um run, um job assíncrono é despachado para a fila de avaliação.
+- **`EvaluationWorker`**: Executa em background sob concorrência controlada. Utiliza o `SelfEvaluationPrompt` para avaliar analiticamente a resposta gerada.
+- **Fórmula do Composite Score (`ScoreCalculator`)**:
+  $$\text{Composite Score} = (0.35 \times \text{Correctness}) + (0.25 \times \text{Tool Accuracy}) + (0.20 \times (1 - \text{Hallucination})) + (0.20 \times \text{Context Relevance})$$
+- Gera notas parciais, score composto (0.0 a 1.0), confiança estimada e penalidade por risco de alucinação.
+- Os resultados são armazenados no MongoDB na coleção `evaluations` via `EvaluationRepository`.
+
+### 3. Agregação, Comparação e Detecção de Regressão (`AggregationService`)
+- **Pipelines Otimizadas**: Agregações com `$facet`, `$group` e `$match` para calcular médias de score, latência e custo por versão e tenant.
+- **Comparação de Versões (`compareVersions`)**: Informa se a `versionB` é superior à `versionA` com deltas de qualidade, latência e custo.
+- **Detecção de Regressão (`detectRegression`)**: Alerta imediatamente se uma nova versão apresentar queda superior a 10% no composite score ou aumento de 15% em alucinações em relação ao baseline.
 
 ---
 
@@ -500,6 +600,10 @@ O endpoint `GET /metrics` expõe métricas no formato Prometheus. Em processos N
 | `agent_memory_search_duration_seconds` | Histogram | `tenantId`, `type` | Latência da consulta de memórias de longo prazo (vetorial/textual) |
 | `agent_memory_promoted_total` | Counter | `tenantId`, `type` | Total de memórias de longo prazo promovidas e salvas |
 | `agent_embedding_duration_seconds` | Histogram | `provider`, `model` | Duração das chamadas à API de geração de embeddings |
+| `agent_evaluation_composite_score` | Gauge | `tenantId`, `version` | Pontuação composta de qualidade da resposta (0.0 a 1.0) |
+| `agent_evaluation_confidence_avg` | Gauge | `tenantId`, `version` | Grau médio de confiança estimado da resposta gerada |
+| `agent_evaluation_hallucination_avg` | Gauge | `tenantId`, `version` | Grau médio de risco de alucinação detectado |
+| `agent_evaluation_runs_evaluated` | Counter | `tenantId`, `version` | Total de avaliações processadas pelo worker em background |
 
 As rotas `/metrics`, `/api/health` e `/favicon.ico` não são contabilizadas nas métricas HTTP. As demais rotas usam o padrão do Express como label, evitando cardinalidade por URL dinâmica.
 
@@ -1250,8 +1354,9 @@ O [Dockerfile](Dockerfile) segue padrões recomendados de segurança e observabi
 
 ## Status do Projeto
 
-> 🚀 **Fase 1 (Production Hardening) Concluída com Sucesso!**  
-> Consulte o relatório detalhado em [docs/phase1-production-hardening-summary.md](docs/phase1-production-hardening-summary.md) e o [Roadmap](docs/roadmap.md).
+> 🚀 **Fase 2 (Agent Evaluation, Telemetry & Cost Analytics) Concluída com Sucesso!**  
+> Consulte o relatório detalhado em [docs/phase2-summary.md](docs/phase2-summary.md), a especificação completa da API em [docs/api.md](docs/api.md) e o [Roadmap](docs/roadmap.md).  
+> Para a Fase 1 (Production Hardening), consulte [docs/phase1-production-hardening-summary.md](docs/phase1-production-hardening-summary.md).
 
 | Componente / Funcionalidade | Status |
 |---|---|
@@ -1281,7 +1386,12 @@ O [Dockerfile](Dockerfile) segue padrões recomendados de segurança e observabi
 | Chat Adapters (Google Chat & Slack multi-tenant dinâmico) | ✅ Implementado |
 | Tracing OpenTelemetry & Grafana Tempo (spans semânticos) | ✅ Implementado |
 | Métricas Prometheus completas (`/metrics`) | ✅ Implementado |
-| **Suíte de Testes Automatizados (245 testes passing / 87% coverage)** | ✅ Implementado |
+| **Telemetria de Execuções e Custos (`AgentRun.ts` / `CostCalculator.ts`)** | ✅ Implementado (Fase 2A) |
+| **Worker de Auto-Avaliação & Composite Score (`EvaluationWorker.ts` / `ScoreCalculator.ts`)** | ✅ Implementado (Fase 2B) |
+| **Agregação, Comparação e Detecção de Regressão (`AggregationService.ts`)** | ✅ Implementado (Fase 2C) |
+| **API REST de Avaliações com RBAC (`evaluationRouter.ts` / `EvaluationController.ts`)** | ✅ Implementado (Fase 2D) |
+| **Métricas Prometheus de Avaliação (`EvaluationMetrics.ts`)** | ✅ Implementado (Fase 2D) |
+| **Suíte de Testes Automatizados (321 testes passing / ~90% coverage)** | ✅ Implementado |
 | Pipeline CI/CD & Docker Hub Build | ✅ Implementado |
 
 ---

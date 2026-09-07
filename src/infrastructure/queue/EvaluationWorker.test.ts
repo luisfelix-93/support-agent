@@ -65,6 +65,8 @@ describe('EvaluationWorker', () => {
             save: vi.fn().mockResolvedValue(undefined),
             findByRunId: vi.fn(),
             findByTenant: vi.fn(),
+            aggregateByVersion: vi.fn(),
+            aggregateByTenant: vi.fn(),
         };
 
         mockLlmProvider = {

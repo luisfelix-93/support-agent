@@ -22,3 +22,32 @@ export const agentContextUtilization = new client.Histogram({
     buckets: [0.1, 0.25, 0.5, 0.75, 0.9, 1.0],
     registers: [metricsRegister],
 });
+
+export const agentEvaluationCompositeScore = new client.Gauge({
+    name: 'agent_evaluation_composite_score',
+    help: 'Último composite score avaliado para a versão do agente.',
+    labelNames: ['tenantId', 'version'],
+    registers: [metricsRegister],
+});
+
+export const agentEvaluationConfidenceAvg = new client.Gauge({
+    name: 'agent_evaluation_confidence_avg',
+    help: 'Último score de confiança avaliado para a versão do agente.',
+    labelNames: ['tenantId', 'version'],
+    registers: [metricsRegister],
+});
+
+export const agentEvaluationHallucinationAvg = new client.Gauge({
+    name: 'agent_evaluation_hallucination_avg',
+    help: 'Último score de risco de alucinação avaliado para a versão do agente.',
+    labelNames: ['tenantId', 'version'],
+    registers: [metricsRegister],
+});
+
+export const agentEvaluationRunsEvaluated = new client.Counter({
+    name: 'agent_evaluation_runs_evaluated',
+    help: 'Total de execuções avaliadas pelo EvaluationWorker.',
+    labelNames: ['tenantId', 'version'],
+    registers: [metricsRegister],
+});
+
