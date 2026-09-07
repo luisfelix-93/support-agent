@@ -23,4 +23,28 @@ export class MongoConnection {
         }
         return this.db;
     }
-}
+
+    static async ping(): Promise<boolean> {
+        if (!this.db) {
+            return false;
+        }
+        try {
+            await this.db.command({ ping: 1 });
+            return true;
+        } catch (error) {
+            log.error({ err: error }, 'Falha ao executar ping no MongoDB');
+            return false;
+        }
+    }
+
+    static async disconnect(): Promise<void> {
+        if (this.client) {
+            await this.client.close();
+            // @ts-ignore
+            this.client = undefined;
+            // @ts-ignore
+            this.db = undefined;
+            log.info('Conexão com MongoDB encerrada com sucesso.');
+        }
+    }
+}

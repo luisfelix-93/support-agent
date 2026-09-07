@@ -5,6 +5,7 @@ import { requireRole } from './middlewares/requireRole.js';
 import { auditLogger } from './middlewares/auditLogger.js';
 import { tenantGuard } from './middlewares/tenantGuard.js';
 import { Role } from '../domain/Role.js';
+import { tenantRateLimiter } from './middlewares/rateLimiter.js';
 
 const router = Router();
 
@@ -14,6 +15,7 @@ const router = Router();
  */
 router.post('/chat-configs',
     authMiddleware,
+    tenantRateLimiter,
     requireRole(Role.ADMIN),
     auditLogger('register-chat-config'),
     (req, res) => chatConfigController.register(req, res)
@@ -25,6 +27,7 @@ router.post('/chat-configs',
  */
 router.get('/chat-configs/:workspaceId',
     authMiddleware,
+    tenantRateLimiter,
     tenantGuard('workspaceId'),
     auditLogger('get-chat-config'),
     (req, res) => chatConfigController.getByWorkspaceId(req, res)

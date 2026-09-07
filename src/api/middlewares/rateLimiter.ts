@@ -1,3 +1,4 @@
+import type { Request } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
 import { Redis } from 'ioredis';
@@ -49,10 +50,13 @@ export const apiRateLimiter = rateLimit({
     legacyHeaders: false, // Desabilita X-RateLimit-* headers
     store: createRedisStore('rl:api:'),
     skip: (req) => {
-        // Ignora a rota de healthcheck e as rotas de auth/onboarding que possuem seu próprio limiter estrito
+        // Ignora rotas de healthcheck e as rotas de auth/onboarding que possuem seu próprio limiter estrito
         return (
             req.path === '/health' ||
             req.path === '/api/health' ||
+            req.path === '/api/health/ready' ||
+            req.path.startsWith('/health') ||
+            req.path.startsWith('/api/health') ||
             req.path.startsWith('/auth') ||
             req.path.startsWith('/api/auth') ||
             req.path.startsWith('/onboarding') ||
@@ -77,3 +81,33 @@ export const authRateLimiter = rateLimit({
         status: 429
     }
 });
+
+// Limiter por tenant (200 requisições por 15 minutos por tenant)
+export const tenantRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutos
+    limit: 200, // limite de 200 requisições por tenant
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: { keyGeneratorIpFallback: false },
+    store: createRedisStore('rl:tenant:'),
+    keyGenerator: (req: Request): string => {
+        if (req.user?.workspaceIds && req.user.workspaceIds.length > 0) {
+            return `tenant:${req.user.workspaceIds[0]}`;
+        }
+        return `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`;
+    },
+    skip: (req) => {
+        return (
+            req.path === '/health' ||
+            req.path === '/api/health' ||
+            req.path === '/api/health/ready' ||
+            req.path.startsWith('/health') ||
+            req.path.startsWith('/api/health')
+        );
+    },
+    message: {
+        error: 'Too many requests for this tenant, please try again later.',
+        status: 429
+    }
+});
+

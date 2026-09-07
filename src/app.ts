@@ -33,10 +33,23 @@ app.use(
     })
 );
 
-// ─── Health Check ────────────────────────────────────
+import { healthChecker } from './config/container.js';
+
+// ─── Health Checks ───────────────────────────────────
+// Liveness probe (rápido, sem dependências externas)
 app.get('/api/health', (_req, res) => {
     res.status(200).json({
         status: 'ok',
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Readiness probe (verifica integridade de MongoDB e Redis)
+app.get('/api/health/ready', async (_req, res) => {
+    const result = await healthChecker.checkReadiness();
+    const statusCode = result.status === 'ready' ? 200 : 503;
+    res.status(statusCode).json({
+        ...result,
         timestamp: new Date().toISOString()
     });
 });

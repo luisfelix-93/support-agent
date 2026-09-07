@@ -34,6 +34,8 @@ import { AgentHarness } from '../harness/AgentHarness.js';
 import { AESEncryptionService } from '../infrastructure/security/AESEncryptionService.js';
 import { IdempotencyGuard } from '../infrastructure/resilience/IdempotencyGuard.js';
 
+import { HealthChecker } from '../infrastructure/health/HealthChecker.js';
+
 // ─── Database Connection ─────────────────────────────
 await MongoConnection.connect(
     process.env.MONGODB_URI!,
@@ -41,7 +43,7 @@ await MongoConnection.connect(
 );
 
 // ─── Redis Connection (ioredis) ──────────────────────
-const redisConnection = process.env.REDIS_URL
+export const redisConnection = process.env.REDIS_URL
     ? new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null })
     : new Redis({
         host: process.env.REDIS_HOST || 'localhost',
@@ -49,6 +51,8 @@ const redisConnection = process.env.REDIS_URL
         password: process.env.REDIS_PASSWORD || undefined,
         maxRetriesPerRequest: null,
     });
+
+export const healthChecker = new HealthChecker({ redisClient: redisConnection });
 
 // ─── Repositories ────────────────────────────────────
 const encryptionService = new AESEncryptionService();

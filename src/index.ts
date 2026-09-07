@@ -3,7 +3,8 @@ import './config/tracing.js';
 import type { Server } from 'node:http';
 import express from 'express';
 import app from './app.js';
-import { queueWorker, memoryPromotionWorker } from './config/container.js';
+import { queueWorker, memoryPromotionWorker, redisConnection } from './config/container.js';
+import { MongoConnection } from './infrastructure/database/MongoConnection.js';
 import { logger } from './config/logger.js';
 import { metricsHandler } from './config/metrics.js';
 import { shutdownTracing } from './config/tracing.js';
@@ -16,6 +17,7 @@ const METRICS_PORT = Number(process.env.METRICS_PORT) || 9090;
 const server = app.listen(PORT, () => {
     log.info({ port: PORT }, '🚀 Servidor rodando');
     log.info(`Health check: http://localhost:${PORT}/api/health`);
+    log.info(`Readiness check: http://localhost:${PORT}/api/health/ready`);
 });
 
 const metricsApp = express();
@@ -41,14 +43,42 @@ function closeServer(server: Server): Promise<void> {
 const shutdown = async (signal: string) => {
     log.info({ signal }, 'Recebido sinal. Iniciando graceful shutdown...');
 
+    // Safety timeout de 30s para evitar travamento indefinido
+    const forceExitTimeout = setTimeout(() => {
+        log.error('Timeout de 30s excedido durante o shutdown. Forçando encerramento imediato.');
+        process.exit(1);
+    }, 30000);
+    forceExitTimeout.unref();
+
     try {
+        log.info('1/5 Encerrando servidores HTTP (App e Metrics)...');
         await Promise.all([closeServer(server), closeServer(metricsServer)]);
+        log.info('Servidores HTTP finalizados.');
+
+        log.info('2/5 Parando e drenando workers BullMQ...');
         await Promise.all([queueWorker.stop(), memoryPromotionWorker.stop()]);
+        log.info('Workers BullMQ finalizados.');
+
+        log.info('3/5 Finalizando tracing do OpenTelemetry...');
         await shutdownTracing();
-        log.info('Servidores HTTP, BullMQ Workers e OpenTelemetry finalizados. Saindo de forma limpa...');
+        log.info('Tracing OpenTelemetry finalizado.');
+
+        log.info('4/5 Desconectando cliente Redis...');
+        if (redisConnection && redisConnection.status !== 'end') {
+            await redisConnection.quit();
+        }
+        log.info('Conexão Redis finalizada.');
+
+        log.info('5/5 Desconectando MongoDB...');
+        await MongoConnection.disconnect();
+        log.info('Conexão MongoDB finalizada.');
+
+        clearTimeout(forceExitTimeout);
+        log.info('Graceful shutdown concluído com sucesso. Saindo de forma limpa.');
         process.exit(0);
     } catch (error) {
-        log.error({ err: error }, 'Erro ao encerrar recursos');
+        clearTimeout(forceExitTimeout);
+        log.error({ err: error }, 'Erro durante encerramento gracioso de recursos');
         process.exit(1);
     }
 };
