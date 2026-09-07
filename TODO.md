@@ -1,208 +1,145 @@
-# TODO — Fase 2: Agent Evaluation
+# TODO — Fase 3: Agent Runs, Cost & Analytics (Opção B)
 
-> Checklist de implementação organizado por sub-fase.
-> Marque `[x]` conforme cada item for concluído.
-> Referência: [agent-evaluation.md](docs/agent-evaluation.md)
+> Checklist de implementação organizado por sub-fases para acompanhamento contínuo da Fase 3.  
+> Marque `[x]` conforme cada item for concluído.  
+> Plano de referência: [agent-runs-costs.md](agent-runs-costs.md) | Roadmap: [roadmap.md](docs/roadmap.md)  
+> Fase anterior: [Fase 2 Concluída](docs/phase2-summary.md)
 
 ---
 
-## Sub-Fase 2A: Passive Metrics & Run Persistence
+## Sub-Fase 3A: Domain Ports & Repositório com Aggregations
 
-**Branch:** `feature/agent-evaluation`
+**Branch:** `feature/costs`  
+**Responsável:** `backend-specialist` / `database-architect`
 
 ### Implementação
-
-- [x] Modificar `src/domain/ports/ILLMProvider.ts` — Adicionar `LLMUsage` ao `LLMResponse`
-  - [x] Interface `LLMUsage { inputTokens, outputTokens, totalTokens }`
-  - [x] Campo opcional `usage?: LLMUsage` em ambos os tipos de resposta
-- [x] Modificar `src/infrastructure/llm/OpenAIAdapter.ts` — Extrair `response.usage`
-  - [x] Mapear `prompt_tokens`, `completion_tokens`, `total_tokens`
-  - [x] Incluir `usage` no retorno de `generateResponse()`
-- [x] Modificar `src/infrastructure/llm/GeminiAdapter.ts` — Extrair `response.usageMetadata`
-  - [x] Mapear `promptTokenCount`, `candidatesTokenCount`, `totalTokenCount`
-- [x] Modificar `src/infrastructure/llm/AnthropicAdapter.ts` — Extrair `response.usage`
-  - [x] Mapear `input_tokens`, `output_tokens`
-- [x] Criar `src/domain/LLMCallRecord.ts` — Modelo de chamada LLM individual
-  - [x] Campos: provider, model, inputTokens, outputTokens, latencyMs, resultType, costUsd
-- [x] Criar `src/domain/pricing/LLMPricingTable.ts` — Tabela de preços por modelo
-  - [x] Preços para gpt-4o, gpt-4o-mini, gemini-2.0-flash, claude-3-5-sonnet, deepseek-chat
-  - [x] Função `calculateCost(model, inputTokens, outputTokens): number`
-- [x] Modificar `src/domain/AgentRun.ts` — Enriquecer com métricas
-  - [x] Adicionar `llmCalls: LLMCallRecord[]`
-  - [x] Adicionar `totalInputTokens`, `totalOutputTokens`, `totalTokens`, `costUsd`
-  - [x] Adicionar `memoriesInjected`, `contextUtilization`
-  - [x] Adicionar `agentVersion`, `finalResponse`, `userMessage`
-  - [x] Método `recordLLMCall(record)` e `computeTotals()`
-- [x] Criar `src/domain/ports/IAgentRunRepository.ts` — Interface de persistência
-  - [x] `save(run)`, `findByRunId(runId)`, `findByTenant(tenantId, options)`
-- [x] Criar `src/repositories/AgentRunRepository.ts` — Implementação MongoDB
-  - [x] Collection `agent_runs`
-  - [x] Indexes: `{ tenantId: 1, startedAt: -1 }`, `{ runId: 1 }` (unique)
-- [x] Modificar `src/harness/AgentHarness.ts`
-  - [x] Acumular `LLMCallRecord` a cada `generateLlmWithTimeout()`
-  - [x] Registrar `memoriesInjected` e `contextUtilization`
-  - [x] Guardar `finalResponse` e `userMessage` no AgentRun
-  - [x] Persistir AgentRun via `IAgentRunRepository`
-  - [x] Disparar job de self-evaluation via `IQueueService.dispatchEvaluation()`
-- [x] Modificar `src/domain/ports/IQueueService.ts` — Adicionar `dispatchEvaluation()`
-- [x] Modificar `src/infrastructure/queue/BullMQAdapter.ts` — Implementar `dispatchEvaluation()`
-  - [x] Criar queue `agent-evaluation`
-- [x] Modificar `src/config/container.ts`
-  - [x] Instanciar `AgentRunRepository`
-  - [x] Injetar no `AgentHarness`
-- [x] Criar `src/infrastructure/metrics/EvaluationMetrics.ts`
-  - [x] `agent_llm_tokens_total { tenantId, provider, model, direction }`
-  - [x] `agent_run_cost_usd { tenantId, provider, model }`
-  - [x] `agent_context_utilization { tenantId }`
+- [x] Atualizar `src/domain/ports/IAgentRunRepository.ts`
+  - [x] Adicionar filtros opcionais em `FindRunsOptions`: `status?: AgentRunStatus`, `from?: Date`, `to?: Date`
+  - [x] Definir interface `TenantCostSummary`
+  - [x] Definir interface `ToolAnalyticsSummary`
+  - [x] Definir interface `LLMAnalyticsSummary`
+  - [x] Adicionar método `aggregateCostByTenant(tenantId?: string, from?: Date, to?: Date): Promise<TenantCostSummary[]>`
+  - [x] Adicionar método `aggregateToolAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<ToolAnalyticsSummary[]>`
+  - [x] Adicionar método `aggregateLLMAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<LLMAnalyticsSummary[]>`
+- [x] Atualizar `src/repositories/AgentRunRepository.ts`
+  - [x] Adicionar índice composto `{ tenantId: 1, status: 1, startedAt: -1 }` em `createIndexes()`
+  - [x] Atualizar `findByTenant()` para aplicar filtros por `status`, `from` e `to`
+  - [x] Implementar `aggregateCostByTenant()` com MongoDB Aggregation Pipeline
+  - [x] Implementar `aggregateToolAnalytics()` com `$unwind: "$toolCalls"` e `$group`
+  - [x] Implementar `aggregateLLMAnalytics()` com `$unwind: "$llmCalls"` e `$group`
 
 ### Testes
-
-- [x] `OpenAIAdapter.test.ts` — Retorna `usage` quando presente, `undefined` quando ausente
-- [x] `GeminiAdapter.test.ts` — Retorna `usage` de `usageMetadata`
-- [x] `AnthropicAdapter.test.ts` — Retorna `usage` de `response.usage`
-- [x] `AgentRun.test.ts` — `recordLLMCall()`, `computeTotals()` soma tokens/cost
-- [x] `LLMPricingTable.test.ts` — Cálculo correto, modelo desconhecido → 0
-- [x] `AgentRunRepository.test.ts` — Save, findByRunId, findByTenant
-- [x] `AgentHarness.test.ts` — LLM calls registrados, run persistido, eval dispatched
+- [x] Atualizar `src/repositories/AgentRunRepository.test.ts`
+  - [x] Testar busca com filtros de status e intervalo de datas
+  - [x] Testar pipeline de agregação de custo por tenant
+  - [x] Testar pipeline de agregação de analytics de ferramentas
+  - [x] Testar pipeline de agregação de analytics de modelos LLM
 
 ### Verificação
-
-- [x] `npm test` — todos os testes passam (271/271)
-- [x] `npm run build` — build sem erros
-- [x] Verificar no MongoDB que `agent_runs` recebe documentos com token counts
+- [x] `npm test` passa sem regressões (326/326 aprovados)
+- [x] `npm run build` compila sem erros (TypeScript strict aprovado)
 
 ---
 
-## Sub-Fase 2B: Self-Evaluation Worker
+## Sub-Fase 3B: Analytics Service Layer
 
-**Branch:** `feat/phase2b-self-evaluation`
-**Depende de:** ✅ 2A concluída
+**Branch:** `feature/costs`  
+**Responsável:** `backend-specialist`  
+**Depende de:** ✅ 3A concluída
 
 ### Implementação
-
-- [x] Criar `src/domain/EvaluationResult.ts` — Modelo do resultado
-  - [x] `SelfEvalScores { confidence, hallucinationRisk, contextRelevance, completeness, toolSelectionQuality }`
-  - [x] `PassiveMetrics { durationMs, iterations, toolCallsTotal, toolCallsFailed, toolSuccessRate, ... }`
-  - [x] `EvaluationResult { runId, tenantId, passive, selfEval, compositeScore, evaluatedAt }`
-- [x] Criar `src/domain/ports/IEvaluationRepository.ts` — Interface de persistência
-  - [x] `save(result)`, `findByRunId(runId)`, `findByTenant(tenantId, options)`
-- [x] Criar `src/repositories/EvaluationRepository.ts` — Implementação MongoDB
-  - [x] Collection `evaluation_results`
-  - [x] Indexes: `{ runId: 1 }` (unique), `{ tenantId: 1, evaluatedAt: -1 }`, `{ agentVersion: 1 }`
-- [x] Criar `src/evaluation/SelfEvaluationPrompt.ts` — Prompt de auto-avaliação
-  - [x] Recebe userMessage, toolCalls, finalResponse, memoriesUsed
-  - [x] Retorna prompt instruindo LLM a devolver JSON com 5 scores (0-1)
-  - [x] Inclui few-shot examples para calibração
-- [x] Criar `src/evaluation/ScoreCalculator.ts` — Cálculo do composite score
-  - [x] Pesos: confidence (0.20), hallucinationRisk invertido (0.25), completeness (0.20), toolSelectionQuality (0.15), contextRelevance (0.10), performance (0.10)
-  - [x] Função `calculateCompositeScore(passive, selfEval): number`
-- [x] Criar `src/infrastructure/queue/EvaluationWorker.ts` — Worker BullMQ
-  - [x] Queue: `agent-evaluation`
-  - [x] Busca config do tenant → cria LLM provider
-  - [x] Chama LLM com prompt de self-evaluation
-  - [x] Parse JSON com retry (1x) se malformado
-  - [x] Calcula composite score
-  - [x] Persiste `EvaluationResult` no MongoDB
-- [x] Modificar `src/config/container.ts`
-  - [x] Instanciar `EvaluationRepository`
-  - [x] Instanciar `EvaluationWorker`
-  - [x] Registrar start do worker
-- [x] Modificar `src/index.ts` — Adicionar `evaluationWorker.stop()` no graceful shutdown
+- [ ] Criar `src/services/RunAnalyticsService.ts`
+  - [ ] Injetar `IAgentRunRepository`
+  - [ ] Método `getRunById(runId: string): Promise<AgentRun | null>`
+  - [ ] Método `listRuns(tenantId: string, options: FindRunsOptions): Promise<AgentRun[]>`
+  - [ ] Método `getCostAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<TenantCostSummary[]>`
+  - [ ] Método `getToolAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<ToolAnalyticsSummary[]>`
+  - [ ] Método `getLLMAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<LLMAnalyticsSummary[]>`
+  - [ ] Tratamento de edge cases (datas inválidas, paginação fora dos limites)
 
 ### Testes
-
-- [x] `SelfEvaluationPrompt.test.ts` — Prompt gerado corretamente, escapa caracteres especiais
-- [x] `ScoreCalculator.test.ts` — Pesos corretos, normalização, edge cases (todos 0, todos 1)
-- [x] `EvaluationRepository.test.ts` — Save, findByRunId, findByTenant com filtros
-- [x] `EvaluationWorker.test.ts` — Processa job, persiste resultado, retry JSON malformado, skip tenant inativo
+- [ ] Criar `src/services/RunAnalyticsService.test.ts`
+  - [ ] Testar delegação correta para o repositório
+  - [ ] Testar validação e normalização de parâmetros
+  - [ ] Testar cenários sem dados e com filtros parciais
 
 ### Verificação
-
-- [x] `npm test` — todos os testes passam (291/291)
-- [x] `npm run build` — build sem erros
-- [x] Verificar no MongoDB que `evaluation_results` recebe documentos com composite score
-- [x] Verificar que resposta ao usuário NÃO é atrasada pela avaliação
+- [ ] `npm test` passa com 100% de sucesso
+- [ ] Cobertura ≥ 90% no `RunAnalyticsService.ts`
 
 ---
 
-## Sub-Fase 2C: Aggregation & Version Comparison
+## Sub-Fase 3C: REST Controller, Router & Container Wiring
 
-**Branch:** `feat/phase2c-aggregation`
-**Depende de:** ✅ 2A + 2B concluídas
+**Branch:** `feature/costs`  
+**Responsável:** `backend-specialist`  
+**Depende de:** ✅ 3B concluída
 
 ### Implementação
-
-- [x] Criar `src/evaluation/types.ts` — Types de agregação
-  - [x] `VersionStats`, `ComparisonResult`, `RegressionReport`, `TenantEvalSummary`
-- [x] Criar `src/evaluation/AggregationService.ts` — Serviço de agregação
-  - [x] `getVersionStats(version)` — média de scores por versão
-  - [x] `compareVersions(versionA, versionB)` — deltas e regressões
-  - [x] `getTenantSummary(tenantId, from, to)` — resumo por tenant
-  - [x] `detectRegression(currentVersion, previousVersion)` — threshold > 10%
-- [x] Modificar `src/domain/ports/IEvaluationRepository.ts`
-  - [x] Adicionar `aggregateByVersion(version)`
-  - [x] Adicionar `aggregateByTenant(tenantId, from, to)`
-- [x] Modificar `src/repositories/EvaluationRepository.ts`
-  - [x] Implementar MongoDB aggregation pipelines
+- [ ] Criar `src/controllers/AgentRunController.ts`
+  - [ ] Injetar `RunAnalyticsService`
+  - [ ] Handler `getById(req, res)`
+  - [ ] Handler `list(req, res)`
+  - [ ] Handler `getCostAnalytics(req, res)`
+  - [ ] Handler `getToolAnalytics(req, res)`
+  - [ ] Handler `getLLMAnalytics(req, res)`
+  - [ ] Validação segura de query parameters e sanitização
+- [ ] Criar `src/api/agentRunRouter.ts`
+  - [ ] Configurar rotas Express:
+    - `GET /api/runs/:runId`
+    - `GET /api/runs`
+    - `GET /api/runs/analytics/cost`
+    - `GET /api/runs/analytics/tools`
+    - `GET /api/runs/analytics/llm`
+  - [ ] Aplicar middlewares: `authMiddleware`, `tenantRateLimiter`, `requireRole(Role.ADMIN)`, `auditLogger`
+- [ ] Modificar `src/config/container.ts`
+  - [ ] Instanciar `RunAnalyticsService` com `agentRunRepository`
+  - [ ] Instanciar `AgentRunController` com `runAnalyticsService`
+- [ ] Modificar `src/app.ts`
+  - [ ] Importar `agentRunRouter`
+  - [ ] Montar `app.use('/api', agentRunRouter)`
 
 ### Testes
-
-- [x] `AggregationService.test.ts` — Médias corretas, regressão detectada, sem dados → vazio
-- [x] `EvaluationRepository.test.ts` — Aggregation pipelines retornam formatos esperados
+- [ ] Criar `src/api/agentRunRouter.test.ts`
+  - [ ] Retornar 401 para requisições não autenticadas
+  - [ ] Retornar 403 para usuários sem role ADMIN
+  - [ ] Retornar 200 e dados para requisições válidas de cada endpoint
+  - [ ] Retornar 404 quando o `runId` não for encontrado
+  - [ ] Validar query parameters obrigatórios e limites de paginação
 
 ### Verificação
-
-- [x] `npm test` — todos os testes passam (302/302)
-- [x] `npm run build` — build sem erros
+- [ ] `npm test` passa sem erros
+- [ ] `npm run build` compila sem erros
+- [ ] Endpoints testados com sucesso via supertest
 
 ---
 
-## Sub-Fase 2D: Evaluation API & Observability
+## Sub-Fase 3D: Documentação, Roadmap & Phase 3 Sign-off
 
-**Branch:** `feat/phase2d-evaluation-api`
-**Depende de:** ✅ 2C concluída
+**Branch:** `feature/costs`  
+**Responsável:** `backend-specialist` / `project-planner`  
+**Depende de:** ✅ 3C concluída
 
 ### Implementação
+- [ ] Atualizar `docs/api.md` com os endpoints `/api/runs` e exemplos de requests/responses
+- [ ] Atualizar `docs/roadmap.md` marcando a Fase 3 como concluída `[x]` e apontando para `phase3-summary.md`
+- [ ] Criar `docs/phase3-summary.md` consolidando a entrega da Fase 3
+- [ ] Atualizar checklist final no `agent-runs-costs.md`
 
-- [x] Criar `src/api/evaluationRouter.ts` — Endpoints REST
-  - [x] `GET /api/evaluations/:runId` — resultado por runId
-  - [x] `GET /api/evaluations?tenantId=X` — lista por tenant (paginado)
-  - [x] `GET /api/evaluations/stats/:version` — stats agregados
-  - [x] `GET /api/evaluations/compare?versionA=X&versionB=Y` — comparação
-  - [x] `GET /api/evaluations/regression` — detecção de regressão
-  - [x] Todos com `authMiddleware` + `requireRole(ADMIN)`
-- [x] Modificar `src/app.ts` — Registrar `evaluationRouter`
-- [x] Modificar `src/infrastructure/metrics/EvaluationMetrics.ts` — Adicionar gauges
-  - [x] `agent_evaluation_composite_score { tenantId, version }`
-  - [x] `agent_evaluation_confidence_avg { tenantId, version }`
-  - [x] `agent_evaluation_hallucination_avg { tenantId, version }`
-  - [x] `agent_evaluation_runs_evaluated { tenantId, version }`
-- [x] Modificar `src/config/container.ts` — Instanciar controller e AggregationService
-
-### Testes
-
-- [x] `evaluationRouter.test.ts` — 401 sem auth, 403 sem ADMIN, 200 com dados, 404 não encontrado
-
-### Verificação
-
-- [x] `npm test` — todos os testes passam (321/321)
-- [x] `npm run build` — build sem erros
-- [x] `npm run test:coverage` — cobertura ≥ 80% nos arquivos novos (~90% global)
-- [x] Endpoints retornam dados corretos via Postman/curl
+### Verificação Final (Phase X)
+- [ ] `npm test` — 100% dos testes aprovados (todas as suítes)
+- [ ] `npm run build` — compilação TypeScript limpa (0 avisos/erros)
+- [ ] `npm run test:coverage` — cobertura global mantida e ≥ 80% nos módulos novos
+- [ ] Git branch `feature/costs` pronta para PR / merge
 
 ---
 
-## Definition of Done (Fase 2 Completa)
+## Definition of Done (Fase 3 Completa)
 
-- [x] Todas as 4 sub-fases concluídas (2A, 2B, 2C, 2D)
-- [x] Todos os testes unitários passam (`npm test`)
-- [x] Coverage ≥ 80% nos arquivos novos (`npm run test:coverage`)
-- [x] Build de produção sem erros (`npm run build`)
-- [x] Cada `AgentHarness.run()` persiste AgentRun com token counts no MongoDB
-- [x] Cost per run calculado para todos os 4 providers (OpenAI, Gemini, Anthropic, DeepSeek)
-- [x] Self-evaluation roda em background sem impactar latência
-- [x] EvaluationResult com composite score persistido para cada run
-- [x] API de comparação responde "versão X é melhor que Y?" com dados
-- [x] Regression detection identifica queda > 10% no composite score
-- [x] Métricas de avaliação expostas no Prometheus
-- [x] Atualizar `docs/roadmap.md` — marcar itens da Fase 2 como `[x]`
+- [ ] Todas as sub-fases (3A, 3B, 3C, 3D) marcadas como concluídas
+- [ ] `AgentRun` consultável individualmente com todos os seus detalhes (tools, LLMs, tokens, custo, status)
+- [ ] Relatórios analíticos de custo por tenant disponíveis via REST API
+- [ ] Análise de tempo e taxa de sucesso por MCP/Tool disponível via REST API
+- [ ] Análise de volume e custos por modelo LLM disponível via REST API
+- [ ] Todos os novos endpoints protegidos por autenticação, rate limiting e RBAC `ADMIN`
+- [ ] Suíte de testes automatizados com 100% de aprovação
