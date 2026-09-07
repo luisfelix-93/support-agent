@@ -1,4 +1,4 @@
 export interface IEncryptionService {
-    encrypt(text: string): string;
-    decrypt(cipherText: string): string;
+    encrypt(text: string, context?: string): string;
+    decrypt(cipherText: string, context?: string): string;
 }

@@ -61,4 +61,52 @@ describe('AESEncryptionService', () => {
         expect(service.encrypt('')).toBe('');
         expect(service.decrypt('')).toBe('');
     });
+
+    describe('HKDF Key Derivation & Context Isolation', () => {
+        it('deve derivar chaves de 32 bytes diferentes para contextos distintos', () => {
+            const service = new AESEncryptionService(testKey);
+            const mcpKey = service.deriveKey('mcp');
+            const slackKey = service.deriveKey('slack');
+
+            expect(mcpKey).toHaveLength(32);
+            expect(slackKey).toHaveLength(32);
+            expect(mcpKey).not.toEqual(slackKey);
+        });
+
+        it('deve criptografar e descriptografar corretamente usando contexto HKDF', () => {
+            const service = new AESEncryptionService(testKey);
+            const secret = 'mcp-api-key-secret-value';
+
+            const encrypted = service.encrypt(secret, 'mcp');
+            const decrypted = service.decrypt(encrypted, 'mcp');
+
+            expect(decrypted).toBe(secret);
+        });
+
+        it('deve falhar ao descriptografar com contexto divergente', () => {
+            const service = new AESEncryptionService(testKey);
+            const secret = 'mcp-api-key-secret-value';
+
+            const encrypted = service.encrypt(secret, 'mcp');
+
+            // Tentativa com outro contexto deve falhar (GCM auth tag mismatch)
+            expect(() => service.decrypt(encrypted, 'slack')).toThrow();
+            // Tentativa sem contexto (chave base) também deve falhar
+            expect(() => service.decrypt(encrypted)).toThrow();
+        });
+
+        it('deve permitir criar serviço pré-vinculado a um contexto via withContext', () => {
+            const service = new AESEncryptionService(testKey);
+            const mcpService = service.withContext('mcp');
+
+            const secret = 'pre-bound-context-secret';
+            const encrypted = mcpService.encrypt(secret);
+            const decrypted = mcpService.decrypt(encrypted);
+
+            expect(decrypted).toBe(secret);
+
+            // Descriptografar diretamente no serviço base sem contexto deve falhar
+            expect(() => service.decrypt(encrypted)).toThrow();
+        });
+    });
 });

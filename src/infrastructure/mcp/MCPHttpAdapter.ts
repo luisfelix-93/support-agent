@@ -2,6 +2,8 @@ import type { IMCPClient } from "../../domain/ports/IMCPClient.js";
 import type { ToolCall } from "../../domain/ToolCall.js";
 import type { MCPInitializeResult, MCPCapabilities } from "../../domain/MCPServerCapabilities.js";
 import { logger } from "../../config/logger.js";
+import { CircuitBreaker } from "../resilience/CircuitBreaker.js";
+import { RetryPolicy } from "../resilience/RetryPolicy.js";
 
 const log = logger.child({ module: 'MCPHttpAdapter' });
 
@@ -26,8 +28,8 @@ const CLIENT_INFO = {
  *   1. connect()       → Conecta ao stream SSE GET /sse?api_key=...
  *                      → Escuta o evento 'endpoint' enviado pelo servidor para obter a URL de POST das mensagens
  *                      → Executa o handshake de inicialização MCP (initialize + notification/initialized)
- *   2. listTools()     → Envia tools/list via POST e escuta a resposta pelo stream SSE
- *   3. executeTool()   → Envia tools/call via POST e escuta a resposta pelo stream SSE
+ *   2. listTools()     → Envia tools/list via POST e escuta a resposta pelo stream SSE (com CircuitBreaker + Retry)
+ *   3. executeTool()   → Envia tools/call via POST e escuta a resposta pelo stream SSE (com CircuitBreaker + Retry)
  *   4. close()         → Aborta a requisição SSE, fecha streams e limpa requests pendentes
  */
 export class MCPHttpAdapter implements IMCPClient {
@@ -43,8 +45,14 @@ export class MCPHttpAdapter implements IMCPClient {
     constructor(
         private readonly baseUrl: string,
         private readonly apiKey: string,
-        private readonly requestTimeoutMs: number = 25000
+        private readonly requestTimeoutMs: number = 25000,
+        private readonly circuitBreaker?: CircuitBreaker,
+        private readonly retryPolicy: RetryPolicy = new RetryPolicy()
     ){}
+
+    getCircuitBreaker(): CircuitBreaker | undefined {
+        return this.circuitBreaker;
+    }
 
     /**
      * Realiza a conexão SSE e o handshake MCP completo com o servidor.
@@ -190,7 +198,9 @@ export class MCPHttpAdapter implements IMCPClient {
             id: this.getNextId(),
             method: "tools/list"
         };
-        return this.sendJsonRpc(payload);
+
+        const action = () => this.retryPolicy.execute(() => this.sendJsonRpc(payload));
+        return this.circuitBreaker ? this.circuitBreaker.execute(action) : action();
     }
 
     /**
@@ -210,7 +220,9 @@ export class MCPHttpAdapter implements IMCPClient {
                 arguments: tool.parameters
             }
         };
-        return this.sendJsonRpc(payload);
+
+        const action = () => this.retryPolicy.execute(() => this.sendJsonRpc(payload));
+        return this.circuitBreaker ? this.circuitBreaker.execute(action) : action();
     }
 
     /**

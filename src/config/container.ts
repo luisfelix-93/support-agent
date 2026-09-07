@@ -31,6 +31,10 @@ import { LLMMemoryExtractor } from '../infrastructure/memory/LLMMemoryExtractor.
 import { OpenAIEmbeddingProvider } from '../infrastructure/llm/OpenAIEmbeddingProvider.js';
 import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
+import { AESEncryptionService } from '../infrastructure/security/AESEncryptionService.js';
+import { IdempotencyGuard } from '../infrastructure/resilience/IdempotencyGuard.js';
+
+import { HealthChecker } from '../infrastructure/health/HealthChecker.js';
 
 // ─── Database Connection ─────────────────────────────
 await MongoConnection.connect(
@@ -39,7 +43,7 @@ await MongoConnection.connect(
 );
 
 // ─── Redis Connection (ioredis) ──────────────────────
-const redisConnection = process.env.REDIS_URL
+export const redisConnection = process.env.REDIS_URL
     ? new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null })
     : new Redis({
         host: process.env.REDIS_HOST || 'localhost',
@@ -48,12 +52,15 @@ const redisConnection = process.env.REDIS_URL
         maxRetriesPerRequest: null,
     });
 
+export const healthChecker = new HealthChecker({ redisClient: redisConnection });
+
 // ─── Repositories ────────────────────────────────────
-const tenantRepository = new TenantRepository();
+const encryptionService = new AESEncryptionService();
+const tenantRepository = new TenantRepository(encryptionService);
 const chatRepository = new ChatRepository();
 const userRepository = new UserRepository();
 const spaceMappingRepository = new SpaceMappingRepository();
-export const chatConfigRepository = new ChatConfigRepository();
+export const chatConfigRepository = new ChatConfigRepository(encryptionService);
 export const memoryRepository = new MongoMemoryRepository();
 
 // ─── Infrastructure Adapters & Factories ─────────────
@@ -110,8 +117,11 @@ const associateTenantUseCase = new AssociateTenantToUserUseCase(userRepository, 
 export const registerChatConfigUseCase = new RegisterChatConfigUseCase(chatConfigRepository);
 export const getChatConfigUseCase = new GetChatConfigUseCase(chatConfigRepository);
 
+// ─── Resilience & Idempotency ────────────────────────
+export const idempotencyGuard = new IdempotencyGuard(redisConnection);
+
 // ─── Controllers ────────────────────────────────────
-export const webhookController = new ChatWebhookController(queueAdapter);
+export const webhookController = new ChatWebhookController(queueAdapter, idempotencyGuard);
 export const chatConfigController = new ChatConfigController(
     registerChatConfigUseCase,
     getChatConfigUseCase
@@ -152,5 +162,6 @@ export const onboardingController = new OnboardingController(
 export const slackWebhookController = new SlackWebhookController(
     queueAdapter,
     process.env.SLACK_SIGNING_SECRET,
-    chatConfigRepository
+    chatConfigRepository,
+    idempotencyGuard
 );

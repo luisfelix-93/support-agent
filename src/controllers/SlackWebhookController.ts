@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import type { Request, Response } from 'express';
 import type { IQueueService } from '../domain/ports/IQueueService.js';
 import type { IChatConfigRepository } from '../domain/ports/IChatConfigRepository.js';
+import type { IdempotencyGuard } from '../infrastructure/resilience/IdempotencyGuard.js';
 import { logger } from '../config/logger.js';
 
 const log = logger.child({ module: 'SlackWebhookController' });
@@ -14,6 +15,7 @@ const log = logger.child({ module: 'SlackWebhookController' });
  *  2. Validar a assinatura HMAC-SHA256 enviada pelo Slack em cada request (buscando signingSecret do banco se disponível).
  *  3. Despachar mensagens de usuário reais para a fila.
  *  4. Ignorar mensagens de bots para evitar loops.
+ *  5. Deduplicar eventos via IdempotencyGuard baseado no event_id.
  *
  * Referência: https://api.slack.com/authentication/verifying-requests-from-slack
  */
@@ -21,7 +23,8 @@ export class SlackWebhookController {
     constructor(
         private readonly queueService: IQueueService,
         private readonly defaultSigningSecret?: string,
-        private readonly chatConfigRepository?: IChatConfigRepository
+        private readonly chatConfigRepository?: IChatConfigRepository,
+        private readonly idempotencyGuard?: IdempotencyGuard
     ) {}
 
     async handle(req: Request, res: Response): Promise<Response> {
@@ -61,6 +64,16 @@ export class SlackWebhookController {
 
                 // Processa apenas eventos do tipo "message" com texto
                 if (event.type === 'message' && event.text) {
+                    // Deduplicação pelo event_id do Slack
+                    const eventId = payload.event_id;
+                    if (eventId && this.idempotencyGuard) {
+                        const isDuplicate = await this.idempotencyGuard.isDuplicate(eventId);
+                        if (isDuplicate) {
+                            log.info({ eventId }, 'Evento duplicado do Slack ignorado silenciosamente.');
+                            return res.status(200).send();
+                        }
+                    }
+
                     const channel: string = event.channel;
                     const thread_ts: string = event.thread_ts ?? event.ts;
                     const spaceId = channel;

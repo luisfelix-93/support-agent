@@ -239,4 +239,103 @@ describe('AgentHarness', () => {
         expect(result.response).toBe('Desculpe, ocorreu uma falha ao consultar a ferramenta.');
         expect(result.toolCalls[0].error).toContain('MCP server error');
     });
+
+    it('deve efetuar fallback sem ferramentas quando o CircuitBreaker do MCP estiver previamente aberto', async () => {
+        const { llmProvider, mcpClient } = makeMocks();
+        (mcpClient as any).getCircuitBreaker = () => ({
+            isOpen: () => true
+        });
+
+        vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+            type: 'text',
+            content: 'Serviço externo indisponível, mas posso responder com conhecimento local.'
+        });
+
+        const harness = new AgentHarness(contextAssembler);
+        const context = new ChatContext('thread-1', 'ws-1');
+
+        const result = await harness.run({
+            tenantId: 'tenant-1',
+            workspaceId: 'ws-1',
+            threadId: 'thread-1',
+            userMessage: 'Preciso de ajuda',
+            context,
+            llmProvider,
+            mcpClient,
+            tools: [{ name: 'any_tool' }]
+        });
+
+        expect(result.status).toBe('completed');
+        expect(result.response).toContain('Serviço externo indisponível');
+        // Tools não devem ter sido repassadas ao LLM
+        expect(llmProvider.generateResponse).toHaveBeenCalledWith(expect.anything(), []);
+        expect(mcpClient.executeTool).not.toHaveBeenCalled();
+    });
+
+    it('deve interromper chamadas de ferramentas e gerar fallback se CircuitBreakerOpenError for lançado durante a execução', async () => {
+        const { CircuitBreakerOpenError } = await import('../infrastructure/resilience/CircuitBreaker.js');
+        const { llmProvider, mcpClient } = makeMocks();
+
+        vi.mocked(llmProvider.generateResponse)
+            .mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: { name: 'fragile_tool', parameters: {} }
+            })
+            .mockResolvedValueOnce({
+                type: 'text',
+                content: 'Circuito abriu, então respondi com fallback.'
+            });
+
+        vi.mocked(mcpClient.executeTool).mockRejectedValueOnce(
+            new CircuitBreakerOpenError('mcp-circuit', Date.now() + 5000)
+        );
+
+        const harness = new AgentHarness(contextAssembler);
+        const context = new ChatContext('thread-1', 'ws-1');
+
+        const result = await harness.run({
+            tenantId: 'tenant-1',
+            workspaceId: 'ws-1',
+            threadId: 'thread-1',
+            userMessage: 'Testar CB aberto no meio',
+            context,
+            llmProvider,
+            mcpClient,
+            tools: [{ name: 'fragile_tool' }]
+        });
+
+        expect(result.status).toBe('completed');
+        expect(result.response).toBe('Circuito abriu, então respondi com fallback.');
+        expect(result.toolCalls[0].error).toContain('Circuito está ABERTO');
+    });
+
+    it('deve abortar e retornar falha quando o timeout global for atingido', async () => {
+        const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+        const { llmProvider, mcpClient } = makeMocks();
+
+        // Configura timeout global minúsculo (10ms)
+        const policy = new ExecutionPolicy({ maxRunTimeMs: 10, llmTimeoutMs: 50 });
+
+        vi.mocked(llmProvider.generateResponse).mockImplementation(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            return { type: 'text', content: 'Demorou demais' };
+        });
+
+        const harness = new AgentHarness(contextAssembler, undefined, policy);
+        const context = new ChatContext('thread-1', 'ws-1');
+
+        const result = await harness.run({
+            tenantId: 'tenant-1',
+            workspaceId: 'ws-1',
+            threadId: 'thread-1',
+            userMessage: 'Teste timeout',
+            context,
+            llmProvider,
+            mcpClient
+        });
+
+        expect(result.status).toBe('failed');
+        expect(result.response).toContain('Tempo limite');
+    });
 });
+

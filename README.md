@@ -25,7 +25,7 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
   - [Coleta de Logs (Pino & Loki)](#coleta-de-logs)
   - [Métricas Prometheus](#métricas-prometheus)
   - [Tracing Distribuído (OpenTelemetry & Grafana Tempo)](#tracing-distribuído-opentelemetry--grafana-tempo)
-- [Autenticação e Autorização (JWT)](#autenticação-e-autorização-jwt)
+- [Autenticação, Autorização e Segurança (Fase 1)](#autenticação-autorização-e-segurança-fase-1)
 - [Onboarding](#onboarding)
 - [Gestão de Configurações de Chat (Multi-Tenant Slack)](#gestão-de-configurações-de-chat-multi-tenant-slack)
 - [Multi-Tenant](#multi-tenant)
@@ -38,6 +38,8 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
 - [Pré-requisitos](#pré-requisitos)
 - [Instalação e Execução](#instalação-e-execução)
 - [Configuração e Injeção de Dependências](#configuração-e-injeção-de-dependências)
+- [Resiliência e Confiabilidade (Reliability Core)](#resiliência-e-confiabilidade-reliability-core)
+- [Saúde Operacional e Ciclo de Vida (Operational Readiness)](#saúde-operacional-e-ciclo-de-vida-operational-readiness)
 - [Status do Projeto](#status-do-projeto)
 
 ---
@@ -555,39 +557,45 @@ A aplicação utiliza o **OpenTelemetry Node SDK** para rastreamento distribuíd
 
 ---
 
-## Autenticação e Autorização (JWT)
+## Autenticação, Autorização e Segurança (Fase 1)
 
-O sistema utiliza **JWT (JSON Web Tokens)** assinados com HS256 via biblioteca [`jose`](https://github.com/panva/jose) (ESM-native, compatível com `"type": "module"`).
+O sistema utiliza **JWT (JSON Web Tokens)** assinados com HS256 via biblioteca [`jose`](https://github.com/panva/jose) (ESM-native), **hashing de senhas seguro via `crypto.scrypt`**, **RBAC (Role-Based Access Control)** e **isolamento multi-tenant estrito**.
 
-### Fluxo de Autenticação
+### Modelo de Papéis (RBAC)
+
+Definido no enum `Role`:
+- `ADMIN`: Acesso total a cadastros de tenants, espaços e credenciais de bots.
+- `OPERATOR`: Permissão para consultar configurações e operar workspaces atribuídos.
+- `VIEWER`: Acesso somente leitura a dashboards e metadados.
+
+### Fluxo de Autenticação & Hashing Seguro
 
 ```
 POST /api/auth/login
-  → valida email + senha (SHA-256)
-  → emite JWT com payload { sub, email, workspaceIds }
+  → valida email + senha (crypto.scrypt com salt aleatório de 16 bytes e timingSafeEqual)
+  → re-hash automático transparente de senhas legadas (SHA-256) para scrypt
+  → emite JWT com payload { sub, email, role, workspaceIds }
   → token expira conforme JWT_EXPIRES_IN (padrão: 8h)
 ```
 
-### Middleware
+### Middlewares de Segurança
 
-O `authMiddleware` extrai o Bearer token do header `Authorization`, verifica a assinatura com `jose` e injeta `req.user` na request:
+- **`authMiddleware`**: Extrai e valida o Bearer token JWT injetando `req.user` (`sub`, `email`, `role`, `workspaceIds`). Retorna `401 Unauthorized` se inválido/ausente.
+- **`requireRole(Role.ADMIN)`**: Garante que o usuário possua a role necessária para endpoints administrativos, retornando `403 Forbidden` caso contrário.
+- **`tenantGuard('workspaceId')`**: Valida se o usuário pertence ao workspace solicitado na rota, impedindo ataques de acesso cruzado entre organizações (cross-tenant).
+- **`auditLogger(action)`**: Registra operações administrativas no log estruturado com dados de contexto do usuário.
+- **`tenantRateLimiter`**: Controla cota de 200 requisições a cada 15 minutos por tenant (ou fallback por IP).
 
-```typescript
-// req.user após validação
-{
-  sub: string;         // user id
-  email: string;
-  workspaceIds: string[];
-}
-```
+### Criptografia de Segredos em Repouso
 
-Rotas protegidas retornam `401` se o token estiver ausente, inválido ou expirado.
+Credenciais sensíveis de integrações (como a `apiKey` de servidores MCP e `botToken` do Slack) são armazenadas no MongoDB de forma criptografada usando **AES-256-GCM com derivação de chave via HKDF** (`AESEncryptionService`), evitando exposição de segredos em texto puro.
 
 ### Variáveis de Ambiente
 
 ```env
 JWT_SECRET=sua_chave_secreta_aqui   # mínimo 32 caracteres recomendado
 JWT_EXPIRES_IN=8h                   # aceita: 8h | 1d | 7d | etc.
+ENCRYPTION_KEY=sua_chave_hex_aqui   # 32 bytes (64 caracteres hex ou 32 ASCII)
 ```
 
 ---
@@ -1190,48 +1198,96 @@ A arquitetura foi adaptada para rodar de forma stateless via **Vercel Serverless
 
 ---
 
+## Resiliência e Confiabilidade (Reliability Core)
+
+O Support Agent implementa múltiplos mecanismos para garantir que falhas em dependências externas (como MCP, LLMs ou redes) não comprometam a estabilidade do sistema:
+
+### 1. Circuit Breaker (`CircuitBreaker.ts`)
+- Protege chamadas para ferramentas MCP e integrações externas.
+- Estados: `CLOSED` (operação normal), `OPEN` (bloqueia chamadas após 5 falhas consecutivas e aciona fallback) e `HALF_OPEN` (testa recuperação após 30 segundos).
+- Emite métricas Prometheus (`circuit_breaker_state`, `circuit_breaker_failures_total`).
+
+### 2. Retry Policy com Exponential Backoff & Jitter (`RetryPolicy.ts`)
+- Executa retentativas automáticas exclusivamente para falhas transitórias (HTTP 502, 503, 504, erros de rede `ECONNRESET`, `ETIMEDOUT`).
+- Aplica atraso exponencial com variação aleatória (*jitter*) para evitar contenção e avalanches (*thundering herd*).
+- Não retenta requisições com erros 4xx de cliente.
+
+### 3. Idempotência de Webhooks (`IdempotencyGuard.ts`)
+- Deduplica eventos de webhooks do Slack e Google Chat via Redis (`SET NX EX`) com TTL automático.
+- Geração de `jobId` determinístico na fila do BullMQ combinando hash dos dados da mensagem com bucket de 5 segundos.
+
+### 4. Timeouts Globais e Fallback no Runtime (`AgentHarness.ts`)
+- Timeout por run do agente (`maxRunTimeMs: 120s`) usando `AbortController`.
+- Timeout por chamada LLM (`llmTimeoutMs: 60s`).
+- Em caso de abertura do Circuit Breaker ou falha persistente nas tools, o harness recorre a um fallback inteligente respondendo diretamente via LLM com aviso amigável.
+
+---
+
+## Saúde Operacional e Ciclo de Vida (Operational Readiness)
+
+### Probes de Saúde (Liveness & Readiness)
+- **`GET /api/health`**: Liveness probe leve e rápido. Retorna `200 OK` informando que o processo Node.js está em execução.
+- **`GET /api/health/ready`**: Readiness probe para orquestradores (Kubernetes/Docker). Testa ativamente os pings de MongoDB e Redis:
+  - HTTP `200 OK` quando ambas as dependências estiverem disponíveis (`{ "status": "ready", "checks": { "mongodb": "ok", "redis": "ok" } }`).
+  - HTTP `503 Service Unavailable` caso qualquer serviço crítico esteja inacessível (`{ "status": "degraded", ... }`).
+
+### Graceful Shutdown
+Tratamento gracioso para `SIGTERM` e `SIGINT` em `src/index.ts`:
+1. Encerramento dos servidores HTTP (bloqueia novas requisições).
+2. Parada e drenagem ordenada dos workers BullMQ (conclui jobs em andamento sem perda de estado).
+3. Flush e encerramento do tracing OpenTelemetry.
+4. Fechamento seguro da conexão com o Redis.
+5. Fechamento do pool de conexões do MongoDB.
+6. Safety timeout de 30 segundos com encerramento forçado para evitar processos travados.
+
+### Hardening do Docker
+O [Dockerfile](Dockerfile) segue padrões recomendados de segurança e observabilidade:
+- Execução com usuário não-privilegiado `node` (`USER node`).
+- `STOPSIGNAL SIGTERM` para integração direta com orquestradores.
+- Instrução `HEALTHCHECK` periódica consultando o endpoint `/api/health`.
+
+---
+
 ## Status do Projeto
 
-> 🚧 **Em desenvolvimento ativo**
+> 🚀 **Fase 1 (Production Hardening) Concluída com Sucesso!**  
+> Consulte o relatório detalhado em [docs/phase1-production-hardening-summary.md](docs/phase1-production-hardening-summary.md) e o [Roadmap](docs/roadmap.md).
 
-| Componente | Status |
+| Componente / Funcionalidade | Status |
 |---|---|
 | Entidades de domínio & Value Objects | ✅ Implementado |
-| Ports / Interfaces (Hexagonal) | ✅ Implementado |
+| Hashing de Senhas scrypt & Timing-Safe (`Password.ts`) | ✅ Implementado (Fase 1A) |
+| Papéis & RBAC (`Role.ts` / `requireRole.ts`) | ✅ Implementado (Fase 1A) |
+| Auditoria de Operações Administrativas (`auditLogger.ts`) | ✅ Implementado (Fase 1A) |
+| Isolamento de Tenant (`tenantGuard.ts`) | ✅ Implementado (Fase 1B) |
+| Criptografia de Segredos com HKDF + AES-256-GCM | ✅ Implementado (Fase 1B) |
+| Circuit Breaker com Métricas Prometheus (`CircuitBreaker.ts`) | ✅ Implementado (Fase 1C) |
+| Retry Policy com Exponential Backoff & Jitter (`RetryPolicy.ts`) | ✅ Implementado (Fase 1C) |
+| Idempotência de Webhooks & Job IDs Determinísticos | ✅ Implementado (Fase 1C) |
+| Timeouts Globais & Fallback Gracioso no Harness | ✅ Implementado (Fase 1C) |
+| Health Checks Liveness & Readiness (`HealthChecker.ts`) | ✅ Implementado (Fase 1D) |
+| Graceful Shutdown em 7 Etapas com Timeout 30s | ✅ Implementado (Fase 1D) |
+| Rate Limiting por Tenant (`tenantRateLimiter`) | ✅ Implementado (Fase 1D) |
+| Docker Hardening (Non-root `node`, STOPSIGNAL, HEALTHCHECK) | ✅ Implementado (Fase 1D) |
 | Agent Harness Runtime (`IAgentHarness`) | ✅ Implementado |
 | ContextAssembler (Token Budgeting BPE/ChatML) | ✅ Implementado |
-| TiktokenAdapter (`cl100k_base`) | ✅ Implementado |
 | Short-Term Memory com Redis (`memory:short:*`) | ✅ Implementado |
 | Long-Term Memory no MongoDB (`MongoMemoryRepository`) | ✅ Implementado |
 | Busca Semântica Vetorial por Cosseno | ✅ Implementado |
 | OpenAIEmbeddingProvider (`text-embedding-3-small` / 1536d) | ✅ Implementado |
-| Extração Estruturada de Memória (`LLMMemoryExtractor`) | ✅ Implementado |
 | Promoção Assíncrona de Memória (`MemoryPromotionWorker` BullMQ) | ✅ Implementado |
-| OpenAI Adapter | ✅ Implementado |
-| Anthropic Adapter | ✅ Implementado |
-| DeepSeek (via OpenAI) | ✅ Implementado |
-| Google LLM Adapter | ✅ Implementado |
+| Provedores LLM (OpenAI, Anthropic, DeepSeek, Google) | ✅ Implementado |
 | MCP HTTP Adapter (JSON-RPC 2.0) | ✅ Implementado |
-| ChatProvider Adapter (Google Chat) | ✅ Implementado |
-| ChatProvider Adapter (Slack) | ✅ Implementado |
-| ChatProviderFactory (Slack multi-tenant dinâmico) | ✅ Implementado |
-| AESEncryptionService (AES-256-GCM em repouso) | ✅ Implementado |
-| ChatConfigRepository (`chat_configs`) | ✅ Implementado |
-| QueueService Adapter (BullMQ) | ✅ Implementado |
-| MongoDB Connection & Repositories | ✅ Implementado |
-| Multi-tenant no Use Case & Harness | ✅ Implementado |
-| Express App & Routers | ✅ Implementado |
-| Composition Root (`container.ts` com Feature Flags) | ✅ Implementado |
+| Chat Adapters (Google Chat & Slack multi-tenant dinâmico) | ✅ Implementado |
 | Tracing OpenTelemetry & Grafana Tempo (spans semânticos) | ✅ Implementado |
 | Métricas Prometheus completas (`/metrics`) | ✅ Implementado |
-| Teste de Integração E2E (Ciclo Completo de Memória) | ✅ Implementado |
-| Testes unitários (161 testes passing) | ✅ Implementado |
-| Pipeline CI/CD (GitHub Actions) | ✅ Implementado |
-| Docker Image Push (Docker Hub) | ✅ Implementado |
+| **Suíte de Testes Automatizados (245 testes passing / 87% coverage)** | ✅ Implementado |
+| Pipeline CI/CD & Docker Hub Build | ✅ Implementado |
 
 ---
 
 ## Licença
 
 ISC
+
 

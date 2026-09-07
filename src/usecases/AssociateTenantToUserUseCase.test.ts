@@ -4,6 +4,7 @@ import type { IUserRepository } from '../domain/ports/IUserRepository.js';
 import type { ITenantRepository } from '../domain/ports/ITenantRepository.js';
 import { User } from '../domain/User.js';
 import { Password } from '../domain/Password.js';
+import { Role } from '../domain/Role.js';
 import { Tenant } from '../domain/Tenant.js';
 
 function makeUserRepo(overrides: Partial<IUserRepository> = {}): IUserRepository {
@@ -30,6 +31,7 @@ const fakeUser = new User(
     'joao@example.com',
     Password.restore('hashed-password'),
     [],
+    Role.OPERATOR,
     new Date(),
     new Date()
 );

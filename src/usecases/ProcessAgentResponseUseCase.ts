@@ -5,6 +5,7 @@ import { IChatRepository } from "../domain/ports/IChatRepository.js";
 import { LLMFactory } from "../infrastructure/llm/LLMFactory.js";
 import { IChatProvider } from "../domain/ports/IChatProvider.js";
 import { MCPHttpAdapter } from "../infrastructure/mcp/MCPHttpAdapter.js";
+import { CircuitBreaker } from "../infrastructure/resilience/CircuitBreaker.js";
 import { ISpaceMappingRepository } from "../domain/ports/ISpaceMappingRepository.js";
 import { IAgentHarness } from "../domain/ports/IAgentHarness.js";
 import { logger } from "../config/logger.js";
@@ -13,6 +14,7 @@ const log = logger.child({ module: 'ProcessAgentResponseUseCase' });
 
 export class ProcessAgentResponseUse {
     private readonly mcpClients = new Map<string, MCPHttpAdapter>();
+    private readonly circuitBreakers = new Map<string, CircuitBreaker>();
 
     constructor(
         private readonly spaceMappingRepository: ISpaceMappingRepository,
@@ -21,7 +23,13 @@ export class ProcessAgentResponseUse {
         private readonly harness: IAgentHarness
     ){}
 
-    async execute(spaceId: string, threadId: string, userText: string, chatProvider: IChatProvider): Promise<void> {
+    async execute(
+        spaceId: string,
+        threadId: string,
+        userText: string,
+        chatProvider: IChatProvider,
+        expectedWorkspaceId?: string
+    ): Promise<void> {
         let mcpClient: MCPHttpAdapter | null = null;
         try {
             // 0. Descobre a qual Tenant esse espaço de chat pertence
@@ -34,9 +42,29 @@ export class ProcessAgentResponseUse {
 
             const workspaceId = mapping.workspaceId;
 
+            // Guard cross-tenant: valida workspaceId esperado contra o workspaceId do mapping
+            if (expectedWorkspaceId && mapping.workspaceId !== expectedWorkspaceId) {
+                log.warn(
+                    { spaceId, mappingWorkspaceId: mapping.workspaceId, expectedWorkspaceId },
+                    'Tentativa de acesso cross-tenant detectada: divergência entre workspace esperado e mapeado.'
+                );
+                await chatProvider.sendMessage(threadId, "Desculpe, não consigo te atender neste momento.");
+                return;
+            }
+
             // 1. Busca os dados via repositórios (isolando a persistencia do Controller e UseCase)
             const tenant = await this.tenantRepository.findByWorkspaceId(workspaceId);
             if (!tenant || !tenant.isActive) {
+                await chatProvider.sendMessage(threadId, "Desculpe, não consigo te atender neste momento.");
+                return;
+            }
+
+            // Guard de consistência: garante que a entidade do tenant corresponde exatamente ao workspace do mapping
+            if (tenant.workspaceId !== workspaceId) {
+                log.warn(
+                    { mappingWorkspaceId: workspaceId, tenantWorkspaceId: tenant.workspaceId },
+                    'Divergência de tenant detectada entre mapping e entidade de tenant.'
+                );
                 await chatProvider.sendMessage(threadId, "Desculpe, não consigo te atender neste momento.");
                 return;
             }
@@ -53,7 +81,17 @@ export class ProcessAgentResponseUse {
             const mcpConfigKey = JSON.stringify(tenant.mcpConfig);
             let cachedClient = this.mcpClients.get(mcpConfigKey);
             if (!cachedClient) {
-                cachedClient = new MCPHttpAdapter(tenant.mcpConfig.url, tenant.mcpConfig.apiKey);
+                let circuitBreaker = this.circuitBreakers.get(tenant.workspaceId);
+                if (!circuitBreaker) {
+                    circuitBreaker = new CircuitBreaker({ name: `mcp-${tenant.workspaceId}` });
+                    this.circuitBreakers.set(tenant.workspaceId, circuitBreaker);
+                }
+                cachedClient = new MCPHttpAdapter(
+                    tenant.mcpConfig.url,
+                    tenant.mcpConfig.apiKey,
+                    25000,
+                    circuitBreaker
+                );
                 this.mcpClients.set(mcpConfigKey, cachedClient);
             }
             mcpClient = cachedClient;

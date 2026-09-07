@@ -17,6 +17,7 @@ import {
     agentToolCallsTotal
 } from "../infrastructure/metrics/AgentMetrics.js";
 import { withSpan } from "../infrastructure/tracing/TracerProvider.js";
+import { CircuitBreakerOpenError } from "../infrastructure/resilience/CircuitBreaker.js";
 
 const baseLog = logger.child({ module: 'AgentHarness' });
 
@@ -57,6 +58,43 @@ export class AgentHarness implements IAgentHarness {
 
                 let finalResponseText = '';
                 let status: 'completed' | 'failed' | 'max_iterations' = 'completed';
+
+                let timeoutTriggered = false;
+                const abortController = new AbortController();
+                const globalTimeoutTimer = setTimeout(() => {
+                    timeoutTriggered = true;
+                    abortController.abort();
+                    log.warn({ maxRunTimeMs: this.executionPolicy.maxRunTimeMs }, 'Timeout global atingido no AgentHarness.');
+                }, this.executionPolicy.maxRunTimeMs);
+
+                const generateLlmWithTimeout = async (ctx: any, tools?: any[]) => {
+                    let timer: NodeJS.Timeout | undefined;
+                    const timeoutPromise = new Promise<never>((_, reject) => {
+                        timer = setTimeout(() => {
+                            reject(new Error(`Timeout de ${this.executionPolicy.llmTimeoutMs}ms no LLM`));
+                        }, this.executionPolicy.llmTimeoutMs);
+                    });
+
+                    try {
+                        return await Promise.race([
+                            input.llmProvider.generateResponse(ctx, tools),
+                            timeoutPromise,
+                        ]);
+                    } finally {
+                        if (timer) clearTimeout(timer);
+                    }
+                };
+
+                const isCircuitBreakerOpen = (client: any): boolean => {
+                    try {
+                        if (typeof client.getCircuitBreaker === 'function') {
+                            return client.getCircuitBreaker()?.isOpen() ?? false;
+                        }
+                    } catch {
+                        return false;
+                    }
+                    return false;
+                };
 
                 try {
                     // 1. Recuperação de Memórias de Longo Prazo e Semântica (Fase 4 & 6)
@@ -111,6 +149,21 @@ export class AgentHarness implements IAgentHarness {
                         }
                     );
 
+                    // Fallback imediato se o Circuit Breaker do MCP já estiver aberto antes da chamada
+                    const cbInitiallyOpen = isCircuitBreakerOpen(input.mcpClient);
+                    const initialTools = cbInitiallyOpen ? [] : input.tools;
+
+                    if (cbInitiallyOpen) {
+                        log.warn('Circuit Breaker do MCP está aberto. Ignorando ferramentas e respondendo com LLM puro.');
+                        assembledContext.addMessage(
+                            new Message(
+                                crypto.randomUUID(),
+                                'system',
+                                'Aviso do Sistema: O serviço de ferramentas externas está temporariamente indisponível (circuito aberto). Por favor, responda com o seu conhecimento prévio informando que ações externas estão indisponíveis.'
+                            )
+                        );
+                    }
+
                     // 3. Loop iterativo LLM ↔ MCP
                     let currentDecision = await withSpan(
                         'agent.llm_call',
@@ -119,13 +172,14 @@ export class AgentHarness implements IAgentHarness {
                                 'agent.iteration': 0,
                             },
                         },
-                        async () => input.llmProvider.generateResponse(assembledContext, input.tools)
+                        async () => generateLlmWithTimeout(assembledContext, initialTools)
                     );
                     let iteration = 0;
 
                     while (
                         currentDecision.type === 'tool_call' &&
-                        this.executionPolicy.shouldContinue(iteration)
+                        this.executionPolicy.shouldContinue(iteration) &&
+                        !timeoutTriggered
                     ) {
                         iteration++;
                         run.iterations = iteration;
@@ -137,6 +191,7 @@ export class AgentHarness implements IAgentHarness {
                         const toolStartTime = Date.now();
                         let toolResult: any;
                         let toolError: string | undefined;
+                        let circuitBreakerBroke = false;
 
                         try {
                             toolResult = await withSpan(
@@ -153,6 +208,10 @@ export class AgentHarness implements IAgentHarness {
                             toolError = err?.message ?? (typeof err === 'string' ? err : JSON.stringify(err));
                             log.error({ err, tool: toolCall.name }, 'Erro ao executar ferramenta via MCP.');
                             toolResult = { error: `Falha na execução da ferramenta: ${toolError}` };
+
+                            if (err instanceof CircuitBreakerOpenError || err?.name === 'CircuitBreakerOpenError') {
+                                circuitBreakerBroke = true;
+                            }
                         }
 
                         const toolDurationMs = Date.now() - toolStartTime;
@@ -165,10 +224,35 @@ export class AgentHarness implements IAgentHarness {
                         };
                         run.recordToolCall(record);
 
+                        // Se o circuito abriu durante a chamada, interrompe ferramentas e faz fallback
+                        if (circuitBreakerBroke) {
+                            log.warn('Circuit Breaker abriu durante execução de tool. Efetuando fallback sem ferramentas.');
+                            assembledContext.addMessage(
+                                new Message(
+                                    crypto.randomUUID(),
+                                    'system',
+                                    'Aviso do Sistema: O serviço de ferramentas externas ficou indisponível (circuito aberto). Conclua a resposta com as informações disponíveis.'
+                                )
+                            );
+                            const fallbackDecision = await withSpan(
+                                'agent.llm_call:circuit_breaker_fallback',
+                                async () => generateLlmWithTimeout(assembledContext, [])
+                            );
+                            finalResponseText = fallbackDecision.type === 'text'
+                                ? fallbackDecision.content
+                                : 'O serviço externo está temporariamente indisponível.';
+                            status = 'completed';
+                            break;
+                        }
+
                         // Adiciona o resultado da ferramenta ao contexto para a próxima iteração
                         assembledContext.addMessage(
                             new Message(crypto.randomUUID(), 'system', JSON.stringify(toolResult))
                         );
+
+                        if (timeoutTriggered) {
+                            break;
+                        }
 
                         currentDecision = await withSpan(
                             'agent.llm_call',
@@ -177,12 +261,18 @@ export class AgentHarness implements IAgentHarness {
                                     'agent.iteration': iteration,
                                 },
                             },
-                            async () => input.llmProvider.generateResponse(assembledContext, input.tools)
+                            async () => generateLlmWithTimeout(assembledContext, input.tools)
                         );
                     }
 
-                    // 4. Resolução da resposta final ou fallback de iterações
-                    if (currentDecision.type === 'text') {
+                    // 4. Resolução da resposta final, timeout global ou fallback de iterações
+                    if (timeoutTriggered) {
+                        log.warn('Execução do AgentHarness abortada por atingir timeout global.');
+                        status = 'failed';
+                        finalResponseText = finalResponseText || 'Tempo limite de execução atingido. A operação foi interrompida.';
+                    } else if (finalResponseText) {
+                        // já definido pelo fallback de circuit breaker
+                    } else if (currentDecision.type === 'text') {
                         finalResponseText = currentDecision.content;
                         status = 'completed';
                     } else if (iteration >= this.executionPolicy.maxIterations) {
@@ -199,7 +289,7 @@ export class AgentHarness implements IAgentHarness {
 
                         const fallback = await withSpan(
                             'agent.llm_call:fallback',
-                            async () => input.llmProvider.generateResponse(assembledContext, [])
+                            async () => generateLlmWithTimeout(assembledContext, [])
                         );
                         finalResponseText = fallback.type === 'text'
                             ? fallback.content
@@ -282,6 +372,8 @@ export class AgentHarness implements IAgentHarness {
                         durationMs,
                         error: errorMessage
                     };
+                } finally {
+                    clearTimeout(globalTimeoutTimer);
                 }
             }
         );

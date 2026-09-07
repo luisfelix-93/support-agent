@@ -4,6 +4,7 @@ import { MongoConnection } from '../infrastructure/database/MongoConnection.js';
 import { IUserRepository } from '../domain/ports/IUserRepository.js';
 import { User } from '../domain/User.js';
 import { Password } from '../domain/Password.js';
+import { Role } from '../domain/Role.js';
 
 export class UserRepository implements IUserRepository {
     private get collection(): Collection {
@@ -32,6 +33,7 @@ export class UserRepository implements IUserRepository {
                     email: user.email,
                     password: user.password.getValue(),
                     workspaceId: user.workspaceId,
+                    role: user.role,
                     updatedAt: user.updatedAt,
                 },
                 $setOnInsert: {
@@ -59,6 +61,7 @@ export class UserRepository implements IUserRepository {
             doc.email,
             Password.restore(doc.password),
             Array.isArray(doc.workspaceId) ? doc.workspaceId : [],
+            (doc.role as Role) ?? Role.OPERATOR,
             new Date(doc.createdAt),
             new Date(doc.updatedAt)
         );

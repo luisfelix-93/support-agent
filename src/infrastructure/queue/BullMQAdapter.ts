@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Queue } from 'bullmq';
 import type { IQueueService } from '../../domain/ports/IQueueService.js';
 import type { MessageRole } from '../../domain/Message.js';
@@ -51,13 +52,23 @@ export class BullMQAdapter implements IQueueService {
         log.info({ workspaceId, threadId, source }, 'Enfileirando mensagem para processamento.');
         try {
             const traceContext = injectTraceContext();
-            await this.messageQueue.add('process-message', {
-                workspaceId,
-                threadId,
-                content,
-                source,
-                traceContext,
-            });
+            const bucket = Math.floor(Date.now() / 5000);
+            const jobId = crypto
+                .createHash('sha256')
+                .update(`${workspaceId}:${threadId}:${content}:${bucket}`)
+                .digest('hex');
+
+            await this.messageQueue.add(
+                'process-message',
+                {
+                    workspaceId,
+                    threadId,
+                    content,
+                    source,
+                    traceContext,
+                },
+                { jobId }
+            );
         } catch (error) {
             log.error({ err: error, workspaceId, threadId, source }, 'Erro ao enfileirar mensagem.');
             throw error;

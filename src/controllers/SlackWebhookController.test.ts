@@ -72,7 +72,8 @@ describe('SlackWebhookController', () => {
     beforeEach(() => {
         queueService = {
             dispatchMessageProcessing: vi.fn().mockResolvedValue(undefined),
-        } as IQueueService;
+            dispatchMemoryPromotion: vi.fn().mockResolvedValue(undefined),
+        };
         controller = new SlackWebhookController(queueService, SIGNING_SECRET);
     });
 
@@ -191,6 +192,42 @@ describe('SlackWebhookController', () => {
                 text,
                 'slack'
             );
+        });
+
+        it('deve ignorar silenciosamente eventos duplicados pelo event_id (idempotência)', async () => {
+            const idempotencyMock: any = {
+                isDuplicate: vi.fn().mockResolvedValue(true),
+            };
+            const idempotentController = new SlackWebhookController(
+                queueService,
+                SIGNING_SECRET,
+                undefined,
+                idempotencyMock
+            );
+
+            const channel = 'C0123456';
+            const ts = '1720000000.000001';
+            const text = 'Mensagem duplicada';
+            const body = {
+                type: 'event_callback',
+                event_id: 'Ev12345678',
+                event: { type: 'message', channel, ts, text },
+            };
+            const rawBody = JSON.stringify(body);
+            const timestamp = nowTimestamp();
+            const sig = makeSlackSignature(rawBody, timestamp);
+
+            const req = makeRequest(body, rawBody, {
+                'x-slack-signature': sig,
+                'x-slack-request-timestamp': timestamp,
+            });
+            const res = makeResponse();
+
+            await idempotentController.handle(req, res);
+
+            expect(idempotencyMock.isDuplicate).toHaveBeenCalledWith('Ev12345678');
+            expect(queueService.dispatchMessageProcessing).not.toHaveBeenCalled();
+            expect(res.status).toHaveBeenCalledWith(200);
         });
     });
 

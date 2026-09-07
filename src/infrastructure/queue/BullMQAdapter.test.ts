@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BullMQAdapter } from './BullMQAdapter.js';
 import { Queue } from 'bullmq';
+import type { MessageRole } from '../../domain/Message.js';
 
 vi.mock('bullmq', () => {
     return {
@@ -35,6 +36,9 @@ describe('BullMQAdapter', () => {
                 threadId: 'thread-456',
                 content: 'conteúdo de teste',
                 source: 'slack',
+            }),
+            expect.objectContaining({
+                jobId: expect.any(String),
             })
         );
     });
@@ -43,7 +47,7 @@ describe('BullMQAdapter', () => {
         const mockRedisConnection = { host: 'localhost', port: 6379 };
         const adapter = new BullMQAdapter(mockRedisConnection, 'test-msg-queue', 'test-mem-queue');
 
-        const messages = [
+        const messages: Array<{ role: MessageRole; content: string }> = [
             { role: 'user', content: 'Qual o host do PostgreSQL?' },
             { role: 'assistant', content: 'O host é db.internal.' }
         ];
