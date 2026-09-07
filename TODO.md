@@ -76,41 +76,41 @@
 **Depende de:** ✅ 3B concluída
 
 ### Implementação
-- [ ] Criar `src/controllers/AgentRunController.ts`
-  - [ ] Injetar `RunAnalyticsService`
-  - [ ] Handler `getById(req, res)`
-  - [ ] Handler `list(req, res)`
-  - [ ] Handler `getCostAnalytics(req, res)`
-  - [ ] Handler `getToolAnalytics(req, res)`
-  - [ ] Handler `getLLMAnalytics(req, res)`
-  - [ ] Validação segura de query parameters e sanitização
-- [ ] Criar `src/api/agentRunRouter.ts`
-  - [ ] Configurar rotas Express:
+- [x] Criar `src/controllers/AgentRunController.ts`
+  - [x] Injetar `RunAnalyticsService`
+  - [x] Handler `getById(req, res)`
+  - [x] Handler `list(req, res)`
+  - [x] Handler `getCostAnalytics(req, res)`
+  - [x] Handler `getToolAnalytics(req, res)`
+  - [x] Handler `getLLMAnalytics(req, res)`
+  - [x] Validação segura de query parameters e sanitização
+- [x] Criar `src/api/agentRunRouter.ts`
+  - [x] Configurar rotas Express:
     - `GET /api/runs/:runId`
     - `GET /api/runs`
     - `GET /api/runs/analytics/cost`
     - `GET /api/runs/analytics/tools`
     - `GET /api/runs/analytics/llm`
-  - [ ] Aplicar middlewares: `authMiddleware`, `tenantRateLimiter`, `requireRole(Role.ADMIN)`, `auditLogger`
-- [ ] Modificar `src/config/container.ts`
-  - [ ] Instanciar `RunAnalyticsService` com `agentRunRepository`
-  - [ ] Instanciar `AgentRunController` com `runAnalyticsService`
-- [ ] Modificar `src/app.ts`
-  - [ ] Importar `agentRunRouter`
-  - [ ] Montar `app.use('/api', agentRunRouter)`
+  - [x] Aplicar middlewares: `authMiddleware`, `tenantRateLimiter`, `requireRole(Role.ADMIN)`, `auditLogger`
+- [x] Modificar `src/config/container.ts`
+  - [x] Instanciar `RunAnalyticsService` com `agentRunRepository`
+  - [x] Instanciar `AgentRunController` com `runAnalyticsService`
+- [x] Modificar `src/app.ts`
+  - [x] Importar `agentRunRouter`
+  - [x] Montar `app.use('/api', agentRunRouter)`
 
 ### Testes
-- [ ] Criar `src/api/agentRunRouter.test.ts`
-  - [ ] Retornar 401 para requisições não autenticadas
-  - [ ] Retornar 403 para usuários sem role ADMIN
-  - [ ] Retornar 200 e dados para requisições válidas de cada endpoint
-  - [ ] Retornar 404 quando o `runId` não for encontrado
-  - [ ] Validar query parameters obrigatórios e limites de paginação
+- [x] Criar `src/api/agentRunRouter.test.ts` e `src/controllers/AgentRunController.test.ts`
+  - [x] Retornar 401 para requisições não autenticadas
+  - [x] Retornar 403 para usuários sem role ADMIN
+  - [x] Retornar 200 e dados para requisições válidas de cada endpoint
+  - [x] Retornar 404 quando o `runId` não for encontrado
+  - [x] Validar query parameters obrigatórios e limites de paginação
 
 ### Verificação
-- [ ] `npm test` passa sem erros
-- [ ] `npm run build` compila sem erros
-- [ ] Endpoints testados com sucesso via supertest
+- [x] `npm test` passa sem erros (370/370 aprovados)
+- [x] `npm run build` compila sem erros (TypeScript strict aprovado)
+- [x] Endpoints testados com sucesso via supertest / fetch integration
 
 ---
 
@@ -121,25 +121,26 @@
 **Depende de:** ✅ 3C concluída
 
 ### Implementação
-- [ ] Atualizar `docs/api.md` com os endpoints `/api/runs` e exemplos de requests/responses
-- [ ] Atualizar `docs/roadmap.md` marcando a Fase 3 como concluída `[x]` e apontando para `phase3-summary.md`
-- [ ] Criar `docs/phase3-summary.md` consolidando a entrega da Fase 3
-- [ ] Atualizar checklist final no `agent-runs-costs.md`
+- [x] Atualizar `docs/api.md` com os endpoints `/api/runs` e exemplos de requests/responses
+- [x] Atualizar `docs/roadmap.md` marcando a Fase 3 como concluída `[x]` e apontando para `phase3-summary.md`
+- [x] Criar `docs/phase3-summary.md` consolidando a entrega da Fase 3
+- [x] Atualizar checklist final no `agent-runs-costs.md`
+- [x] Atualizar `README.md` com as novas capacidades da Fase 3
 
 ### Verificação Final (Phase X)
-- [ ] `npm test` — 100% dos testes aprovados (todas as suítes)
-- [ ] `npm run build` — compilação TypeScript limpa (0 avisos/erros)
-- [ ] `npm run test:coverage` — cobertura global mantida e ≥ 80% nos módulos novos
-- [ ] Git branch `feature/costs` pronta para PR / merge
+- [x] `npm test` — 100% dos testes aprovados (58 arquivos, 370 testes)
+- [x] `npm run build` — compilação TypeScript limpa (0 avisos/erros)
+- [x] `npm run test:coverage` — cobertura global mantida e ≥ 90% nos módulos novos
+- [x] Git branch `feature/costs` pronta para PR / merge
 
 ---
 
 ## Definition of Done (Fase 3 Completa)
 
-- [ ] Todas as sub-fases (3A, 3B, 3C, 3D) marcadas como concluídas
-- [ ] `AgentRun` consultável individualmente com todos os seus detalhes (tools, LLMs, tokens, custo, status)
-- [ ] Relatórios analíticos de custo por tenant disponíveis via REST API
-- [ ] Análise de tempo e taxa de sucesso por MCP/Tool disponível via REST API
-- [ ] Análise de volume e custos por modelo LLM disponível via REST API
-- [ ] Todos os novos endpoints protegidos por autenticação, rate limiting e RBAC `ADMIN`
-- [ ] Suíte de testes automatizados com 100% de aprovação
+- [x] Todas as sub-fases (3A, 3B, 3C, 3D) marcadas como concluídas
+- [x] `AgentRun` consultável individualmente com todos os seus detalhes (tools, LLMs, tokens, custo, status)
+- [x] Relatórios analíticos de custo por tenant disponíveis via REST API
+- [x] Análise de tempo e taxa de sucesso por MCP/Tool disponível via REST API
+- [x] Análise de volume e custos por modelo LLM disponível via REST API
+- [x] Todos os novos endpoints protegidos por autenticação, rate limiting e RBAC `ADMIN`
+- [x] Suíte de testes automatizados com 100% de aprovação (370/370 testes)

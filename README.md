@@ -17,6 +17,11 @@ Agente de suporte inteligente baseado em LLMs (Large Language Models) com integr
   - [Worker de Auto-Avaliação e Pontuação Composta](#worker-de-auto-avaliação-e-pontuação-composta)
   - [Agregação, Comparação e Detecção de Regressão](#agregação-comparação-e-detecção-de-regressão)
   - [Endpoints REST de Avaliação](#endpoints-rest-de-avaliação)
+- [Camada de Agent Runs & Analytics (Fase 3)](#camada-de-agent-runs--analytics-fase-3)
+  - [Consulta Individual e Listagem Paginada](#consulta-individual-e-listagem-paginada)
+  - [Análise Financeira e Consumo por Tenant](#análise-financeira-e-consumo-por-tenant)
+  - [Analytics de Desempenho de Ferramentas / MCPs](#analytics-de-desempenho-de-ferramentas--mcps)
+  - [Métricas de Consumo e Custo por Provedor/Modelo LLM](#métricas-de-consumo-e-custo-por-provedormodelo-llm)
 - [Estrutura de Diretórios](#estrutura-de-diretórios)
 - [Camadas](#camadas)
   - [Domain](#domain)
@@ -537,6 +542,11 @@ A aplicação expõe uma API REST robusta sob o prefixo `/api`, organizada por d
 | **Evaluations** | `GET` | `/api/evaluations/compare` | `ADMIN` + `rateLimiter` + `auditLogger` | Comparativo analítico entre versões (A vs B) |
 | **Evaluations** | `GET` | `/api/evaluations/regression` | `ADMIN` + `rateLimiter` + `auditLogger` | Detecção automatizada de regressão de qualidade |
 | **Evaluations** | `GET` | `/api/evaluations/summary/:tenantId` | `ADMIN` + `rateLimiter` + `auditLogger` | Visão executiva de qualidade do tenant |
+| **Agent Runs** | `GET` | `/api/runs/:runId` | `ADMIN` + `rateLimiter` + `auditLogger` | Detalhes completos de execução (status, durações, tools, LLMs) |
+| **Agent Runs** | `GET` | `/api/runs?tenantId=X` | `ADMIN` + `rateLimiter` + `auditLogger` | Listagem paginada e filtrada de execuções |
+| **Agent Runs** | `GET` | `/api/runs/analytics/cost` | `ADMIN` + `rateLimiter` + `auditLogger` | Agregação financeira de custos e tokens por tenant |
+| **Agent Runs** | `GET` | `/api/runs/analytics/tools` | `ADMIN` + `rateLimiter` + `auditLogger` | Estatísticas e taxa de sucesso por ferramenta/MCP |
+| **Agent Runs** | `GET` | `/api/runs/analytics/llm` | `ADMIN` + `rateLimiter` + `auditLogger` | Estatísticas consolidadas por provedor e modelo LLM |
 | **Metrics** | `GET` | `/metrics` | Opcional (`METRICS_TOKEN`) | Métricas em formato Prometheus (porta 9090 ou 3000) |
 
 ---
@@ -566,6 +576,34 @@ A **Camada de Avaliação e Telemetria** (Fase 2 do Roadmap) transforma o Suppor
 - **Pipelines Otimizadas**: Agregações com `$facet`, `$group` e `$match` para calcular médias de score, latência e custo por versão e tenant.
 - **Comparação de Versões (`compareVersions`)**: Informa se a `versionB` é superior à `versionA` com deltas de qualidade, latência e custo.
 - **Detecção de Regressão (`detectRegression`)**: Alerta imediatamente se uma nova versão apresentar queda superior a 10% no composite score ou aumento de 15% em alucinações em relação ao baseline.
+
+---
+
+## Camada de Agent Runs & Analytics (Fase 3)
+
+A **Camada de Agent Runs, Cost & Analytics** (Fase 3 do Roadmap) transforma cada execução do agente em uma unidade observável, persistente e auditável, permitindo responder com precisão matemática a perguntas de custos operacionais e desempenho técnico.
+
+### 1. Consulta Individual e Listagem Paginada
+- **`GET /api/runs/:runId`**: Recupera todos os dados de uma execução (`status`, `durationMs`, `iterations`, `userMessage`, `finalResponse`, `toolCalls`, `llmCalls`, tokens e `costUsd`).
+- **`GET /api/runs?tenantId=X`**: Lista histórica de execuções paginada e filtrada por `status` e intervalo de datas (`from` e `to`).
+
+### 2. Análise Financeira e Consumo por Tenant
+- **`GET /api/runs/analytics/cost`**: Consolida o total de runs executados, custo total e médio em USD, tokens totais/entrada/saída e latência média por tenant.
+- Permite monitoramento granular de consumo multi-tenant e identificação imediata de contas com maior uso de recursos.
+
+### 3. Analytics de Desempenho de Ferramentas / MCPs
+- **`GET /api/runs/analytics/tools`**: Pipeline que desdobra as ferramentas invocadas (`$unwind: "$toolCalls"`), contabilizando:
+  - Total de chamadas por tool/MCP.
+  - Chamadas com sucesso vs falhas.
+  - Taxa de sucesso (`successRate`, de 0 a 1.0).
+  - Duração média em milissegundos (`avgDurationMs`).
+
+### 4. Métricas de Consumo e Custo por Provedor/Modelo LLM
+- **`GET /api/runs/analytics/llm`**: Agrupamento por `provider` e `model`, informando:
+  - Volume de invocações.
+  - Total de tokens de prompt e completion.
+  - Custo financeiro consolidado em USD.
+  - Latência média por requisição (`avgLatencyMs`).
 
 ---
 
@@ -1354,8 +1392,9 @@ O [Dockerfile](Dockerfile) segue padrões recomendados de segurança e observabi
 
 ## Status do Projeto
 
-> 🚀 **Fase 2 (Agent Evaluation, Telemetry & Cost Analytics) Concluída com Sucesso!**  
-> Consulte o relatório detalhado em [docs/phase2-summary.md](docs/phase2-summary.md), a especificação completa da API em [docs/api.md](docs/api.md) e o [Roadmap](docs/roadmap.md).  
+> 🚀 **Fase 3 (Agent Runs, Cost & Analytics) Concluída com Sucesso!**  
+> Consulte o relatório detalhado em [docs/phase3-summary.md](docs/phase3-summary.md), a especificação completa da API em [docs/api.md](docs/api.md) e o [Roadmap](docs/roadmap.md).  
+> Para a Fase 2 (Agent Evaluation), consulte [docs/phase2-summary.md](docs/phase2-summary.md).  
 > Para a Fase 1 (Production Hardening), consulte [docs/phase1-production-hardening-summary.md](docs/phase1-production-hardening-summary.md).
 
 | Componente / Funcionalidade | Status |
@@ -1391,7 +1430,11 @@ O [Dockerfile](Dockerfile) segue padrões recomendados de segurança e observabi
 | **Agregação, Comparação e Detecção de Regressão (`AggregationService.ts`)** | ✅ Implementado (Fase 2C) |
 | **API REST de Avaliações com RBAC (`evaluationRouter.ts` / `EvaluationController.ts`)** | ✅ Implementado (Fase 2D) |
 | **Métricas Prometheus de Avaliação (`EvaluationMetrics.ts`)** | ✅ Implementado (Fase 2D) |
-| **Suíte de Testes Automatizados (321 testes passing / ~90% coverage)** | ✅ Implementado |
+| **Pipelines de Agregação Analítica no MongoDB (`AgentRunRepository.ts`)** | ✅ Implementado (Fase 3A) |
+| **Serviço Analítico de Domínio (`RunAnalyticsService.ts`)** | ✅ Implementado (Fase 3B) |
+| **API REST Administrativa de Runs e Custos (`agentRunRouter.ts` / `AgentRunController.ts`)** | ✅ Implementado (Fase 3C) |
+| **Relatório de Conclusão da Fase 3 e Documentação (`phase3-summary.md` / `api.md`)** | ✅ Implementado (Fase 3D) |
+| **Suíte de Testes Automatizados (370 testes passing / 100% sucesso em 58 arquivos)** | ✅ Implementado |
 | Pipeline CI/CD & Docker Hub Build | ✅ Implementado |
 
 ---
