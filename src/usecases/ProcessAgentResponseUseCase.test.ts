@@ -186,4 +186,43 @@ describe('ProcessAgentResponseUseCase', () => {
             'Ocorreu um erro ao processar sua solicitação.'
         );
     });
+
+    describe('Cross-Tenant Guard', () => {
+        it('deve abortar e avisar o usuário se expectedWorkspaceId for divergente do mapping', async () => {
+            await useCase.execute(
+                'spaces/AAAA1111',
+                'thread-1',
+                'Olá!',
+                chatProvider,
+                'workspace-divergente'
+            );
+
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-1',
+                'Desculpe, não consigo te atender neste momento.'
+            );
+            expect(chatRepo.save).not.toHaveBeenCalled();
+            expect(LLMFactory.create).not.toHaveBeenCalled();
+        });
+
+        it('deve abortar se o tenant retornado pelo repositório tiver workspaceId diferente do mapping', async () => {
+            const mismatchedTenant = new Tenant(
+                'workspace-different-from-mapping',
+                { provider: 'openai', apiKey: 'sk-test' },
+                { url: 'https://mcp.example.com', apiKey: 'mcp-key' },
+                true
+            );
+            tenantRepo = makeTenantRepo({ findByWorkspaceId: vi.fn().mockResolvedValue(mismatchedTenant) });
+            useCase = new ProcessAgentResponseUse(spaceMappingRepo, tenantRepo, chatRepo, harness);
+
+            await useCase.execute('spaces/AAAA1111', 'thread-1', 'Olá!', chatProvider);
+
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-1',
+                'Desculpe, não consigo te atender neste momento.'
+            );
+            expect(chatRepo.save).not.toHaveBeenCalled();
+            expect(LLMFactory.create).not.toHaveBeenCalled();
+        });
+    });
 });

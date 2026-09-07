@@ -21,7 +21,13 @@ export class ProcessAgentResponseUse {
         private readonly harness: IAgentHarness
     ){}
 
-    async execute(spaceId: string, threadId: string, userText: string, chatProvider: IChatProvider): Promise<void> {
+    async execute(
+        spaceId: string,
+        threadId: string,
+        userText: string,
+        chatProvider: IChatProvider,
+        expectedWorkspaceId?: string
+    ): Promise<void> {
         let mcpClient: MCPHttpAdapter | null = null;
         try {
             // 0. Descobre a qual Tenant esse espaço de chat pertence
@@ -34,9 +40,29 @@ export class ProcessAgentResponseUse {
 
             const workspaceId = mapping.workspaceId;
 
+            // Guard cross-tenant: valida workspaceId esperado contra o workspaceId do mapping
+            if (expectedWorkspaceId && mapping.workspaceId !== expectedWorkspaceId) {
+                log.warn(
+                    { spaceId, mappingWorkspaceId: mapping.workspaceId, expectedWorkspaceId },
+                    'Tentativa de acesso cross-tenant detectada: divergência entre workspace esperado e mapeado.'
+                );
+                await chatProvider.sendMessage(threadId, "Desculpe, não consigo te atender neste momento.");
+                return;
+            }
+
             // 1. Busca os dados via repositórios (isolando a persistencia do Controller e UseCase)
             const tenant = await this.tenantRepository.findByWorkspaceId(workspaceId);
             if (!tenant || !tenant.isActive) {
+                await chatProvider.sendMessage(threadId, "Desculpe, não consigo te atender neste momento.");
+                return;
+            }
+
+            // Guard de consistência: garante que a entidade do tenant corresponde exatamente ao workspace do mapping
+            if (tenant.workspaceId !== workspaceId) {
+                log.warn(
+                    { mappingWorkspaceId: workspaceId, tenantWorkspaceId: tenant.workspaceId },
+                    'Divergência de tenant detectada entre mapping e entidade de tenant.'
+                );
                 await chatProvider.sendMessage(threadId, "Desculpe, não consigo te atender neste momento.");
                 return;
             }

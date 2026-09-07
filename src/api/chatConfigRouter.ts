@@ -3,6 +3,7 @@ import { chatConfigController } from '../config/container.js';
 import { authMiddleware } from './middlewares/authMiddleware.js';
 import { requireRole } from './middlewares/requireRole.js';
 import { auditLogger } from './middlewares/auditLogger.js';
+import { tenantGuard } from './middlewares/tenantGuard.js';
 import { Role } from '../domain/Role.js';
 
 const router = Router();
@@ -24,6 +25,7 @@ router.post('/chat-configs',
  */
 router.get('/chat-configs/:workspaceId',
     authMiddleware,
+    tenantGuard('workspaceId'),
     auditLogger('get-chat-config'),
     (req, res) => chatConfigController.getByWorkspaceId(req, res)
 );

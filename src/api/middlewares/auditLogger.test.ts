@@ -1,3 +1,4 @@
+/// <reference path="../types/express.d.ts" />
 import { describe, it, expect, vi } from 'vitest';
 import type { Request, Response, NextFunction } from 'express';
 import { auditLogger } from './auditLogger.js';

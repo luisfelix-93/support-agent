@@ -31,6 +31,7 @@ import { LLMMemoryExtractor } from '../infrastructure/memory/LLMMemoryExtractor.
 import { OpenAIEmbeddingProvider } from '../infrastructure/llm/OpenAIEmbeddingProvider.js';
 import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
+import { AESEncryptionService } from '../infrastructure/security/AESEncryptionService.js';
 
 // ─── Database Connection ─────────────────────────────
 await MongoConnection.connect(
@@ -49,11 +50,12 @@ const redisConnection = process.env.REDIS_URL
     });
 
 // ─── Repositories ────────────────────────────────────
-const tenantRepository = new TenantRepository();
+const encryptionService = new AESEncryptionService();
+const tenantRepository = new TenantRepository(encryptionService);
 const chatRepository = new ChatRepository();
 const userRepository = new UserRepository();
 const spaceMappingRepository = new SpaceMappingRepository();
-export const chatConfigRepository = new ChatConfigRepository();
+export const chatConfigRepository = new ChatConfigRepository(encryptionService);
 export const memoryRepository = new MongoMemoryRepository();
 
 // ─── Infrastructure Adapters & Factories ─────────────

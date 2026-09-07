@@ -60,35 +60,35 @@
 
 ### Implementação
 
-- [ ] Criar `src/api/middlewares/tenantGuard.ts` — Guard de isolamento de tenant
-  - [ ] Extrai workspaceId de params ou body
-  - [ ] Valida contra `req.user.workspaceIds`
-  - [ ] Retorna 403 se user não pertence ao workspace
-- [ ] Modificar `src/infrastructure/security/AESEncryptionService.ts`
-  - [ ] Extrair interface genérica para encrypt/decrypt
-  - [ ] Adicionar HKDF key derivation com contexto separado para MCP
-- [ ] Modificar `src/repositories/TenantRepository.ts`
-  - [ ] Injetar `IEncryptionService` no construtor
-  - [ ] `save()`: criptografar `mcpConfig.apiKey`
-  - [ ] `findByWorkspaceId()`: descriptografar `mcpConfig.apiKey`
-  - [ ] `findByWorkspaceIdSafe()`: retornar com apiKey mascarada
-- [ ] Modificar `src/usecases/ProcessAgentResponseUseCase.ts`
-  - [ ] Guard cross-tenant: validar workspaceId do mapping
-- [ ] Modificar `src/api/chatConfigRouter.ts`
-  - [ ] `GET /chat-configs/:workspaceId` → adicionar `tenantGuard('workspaceId')`
-- [ ] Modificar `src/config/container.ts`
-  - [ ] Injetar `AESEncryptionService` no `TenantRepository`
+- [x] Criar `src/api/middlewares/tenantGuard.ts` — Guard de isolamento de tenant
+  - [x] Extrai workspaceId de params ou body
+  - [x] Valida contra `req.user.workspaceIds`
+  - [x] Retorna 403 se user não pertence ao workspace
+- [x] Modificar `src/infrastructure/security/AESEncryptionService.ts`
+  - [x] Extrair interface genérica para encrypt/decrypt
+  - [x] Adicionar HKDF key derivation com contexto separado para MCP
+- [x] Modificar `src/repositories/TenantRepository.ts`
+  - [x] Injetar `IEncryptionService` no construtor
+  - [x] `save()`: criptografar `mcpConfig.apiKey`
+  - [x] `findByWorkspaceId()`: descriptografar `mcpConfig.apiKey`
+  - [x] `findByWorkspaceIdSafe()`: retornar com apiKey mascarada
+- [x] Modificar `src/usecases/ProcessAgentResponseUseCase.ts`
+  - [x] Guard cross-tenant: validar workspaceId do mapping
+- [x] Modificar `src/api/chatConfigRouter.ts`
+  - [x] `GET /chat-configs/:workspaceId` → adicionar `tenantGuard('workspaceId')`
+- [x] Modificar `src/config/container.ts`
+  - [x] Injetar `AESEncryptionService` no `TenantRepository`
 
 ### Testes
 
-- [ ] `src/api/middlewares/tenantGuard.test.ts` — permite own workspace, rejeita cross-tenant
-- [ ] `src/repositories/TenantRepository.test.ts` — apiKey criptografada/descriptografada/mascarada
-- [ ] Integração: tenant A não acessa dados de tenant B
+- [x] `src/api/middlewares/tenantGuard.test.ts` — permite own workspace, rejeita cross-tenant
+- [x] `src/repositories/TenantRepository.test.ts` — apiKey criptografada/descriptografada/mascarada
+- [x] Integração: tenant A não acessa dados de tenant B (`src/api/chatConfigRouter.test.ts`)
 
 ### Verificação
 
-- [ ] `npm test` — todos os testes passam
-- [ ] `npm run build` — build sem erros
+- [x] `npm test` — todos os testes passam (206/206 ✅)
+- [x] `npm run build` — build sem erros (tsc ✅)
 - [ ] Manual: verificar no MongoDB que `mcpConfig.apiKey` está criptografada
 - [ ] Manual: GET chat-config com user de outro tenant → 403
 
