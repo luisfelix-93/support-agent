@@ -4,7 +4,8 @@ export class ChatContext {
     constructor(
         public readonly threadID: string,
         public readonly workspaceId: string,
-        public readonly messages: Message[] = []
+        public readonly messages: Message[] = [],
+        public estimatedTokens?: number
     ){}
 
     addMessage(message: Message): void {

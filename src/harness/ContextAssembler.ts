@@ -61,6 +61,7 @@ export class ContextAssembler implements IContextAssembler {
 
         assembledMessages.push(...selectedFromHistory);
 
-        return new ChatContext(context.threadID, context.workspaceId, assembledMessages);
+        const totalTokens = maxTokens - availableTokens;
+        return new ChatContext(context.threadID, context.workspaceId, assembledMessages, totalTokens);
     }
 }

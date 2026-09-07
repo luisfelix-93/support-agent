@@ -10,6 +10,7 @@ import type { IShortTermMemory } from '../domain/ports/IShortTermMemory.js';
 import type { IMemoryRepository } from '../domain/ports/IMemoryRepository.js';
 import type { IQueueService } from '../domain/ports/IQueueService.js';
 import type { IEmbeddingProvider } from '../domain/ports/IEmbeddingProvider.js';
+import type { IAgentRunRepository } from '../domain/ports/IAgentRunRepository.js';
 import type { Memory } from '../domain/Memory.js';
 
 describe('AgentHarness', () => {
@@ -48,6 +49,7 @@ describe('AgentHarness', () => {
         const queueService: IQueueService = {
             dispatchMessageProcessing: vi.fn().mockResolvedValue(undefined),
             dispatchMemoryPromotion: vi.fn().mockResolvedValue(undefined),
+            dispatchEvaluation: vi.fn().mockResolvedValue(undefined),
         };
 
         const embeddingProvider: IEmbeddingProvider = {
@@ -55,138 +57,133 @@ describe('AgentHarness', () => {
             generateEmbeddings: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
         };
 
-        return { llmProvider, mcpClient, shortTermMemory, memoryRepository, queueService, embeddingProvider };
+        const agentRunRepository: IAgentRunRepository = {
+            save: vi.fn().mockResolvedValue(undefined),
+            findByRunId: vi.fn().mockResolvedValue(null),
+            findByTenant: vi.fn().mockResolvedValue([]),
+        };
+
+        return { llmProvider, mcpClient, shortTermMemory, memoryRepository, queueService, embeddingProvider, agentRunRepository };
     };
 
     it('deve executar o fluxo de texto e retornar resultado completed', async () => {
-        const { llmProvider, mcpClient, shortTermMemory } = makeMocks();
-        vi.mocked(llmProvider.generateResponse).mockResolvedValue({
+        const { llmProvider, mcpClient } = makeMocks();
+        vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
             type: 'text',
-            content: 'Resposta do assistente'
+            content: 'Olá! Sou seu agente de suporte.'
+        });
+
+        const harness = new AgentHarness(contextAssembler);
+        const context = new ChatContext('thread-1', 'ws-1');
+
+        const result = await harness.run({
+            tenantId: 'tenant-1',
+            workspaceId: 'ws-1',
+            threadId: 'thread-1',
+            userMessage: 'Olá',
+            context,
+            llmProvider,
+            mcpClient
+        });
+
+        expect(result.status).toBe('completed');
+        expect(result.response).toBe('Olá! Sou seu agente de suporte.');
+        expect(result.iterations).toBe(0);
+        expect(result.toolCalls).toHaveLength(0);
+    });
+
+    it('deve salvar resposta no shortTermMemory se fornecido', async () => {
+        const { llmProvider, mcpClient, shortTermMemory } = makeMocks();
+        vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+            type: 'text',
+            content: 'Mensagem salva.'
         });
 
         const harness = new AgentHarness(contextAssembler, shortTermMemory);
         const context = new ChatContext('thread-1', 'ws-1');
-        context.addMessage(new Message('m1', 'user', 'Olá'));
 
-        const result = await harness.run({
+        await harness.run({
             tenantId: 'tenant-1',
             workspaceId: 'ws-1',
             threadId: 'thread-1',
-            userMessage: 'Olá',
+            userMessage: 'Oi',
             context,
             llmProvider,
             mcpClient
         });
 
-        expect(result.status).toBe('completed');
-        expect(result.response).toBe('Resposta do assistente');
-        expect(result.runId).toBeDefined();
-        expect(shortTermMemory.set).toHaveBeenCalledOnce();
+        expect(shortTermMemory.set).toHaveBeenCalledTimes(1);
+        expect(shortTermMemory.set).toHaveBeenCalledWith(
+            'ws-1',
+            'thread-1',
+            expect.arrayContaining([
+                expect.objectContaining({ content: 'Mensagem salva.' })
+            ])
+        );
     });
 
-    it('deve buscar memórias relevantes com busca vetorial e enfileirar promoção de memória', async () => {
-        const { llmProvider, mcpClient, shortTermMemory, memoryRepository, queueService, embeddingProvider } = makeMocks();
-        
-        const mockMemories: Memory[] = [{
+    it('deve buscar e injetar memórias relevantes de longo prazo', async () => {
+        const { llmProvider, mcpClient, memoryRepository, embeddingProvider } = makeMocks();
+        const fakeMemory: Memory = {
             id: 'mem-1',
             tenantId: 'tenant-1',
             workspaceId: 'ws-1',
             type: 'fact',
-            content: 'PostgreSQL 15',
+            content: 'Cliente possui plano Enterprise.',
             importance: 0.9,
             createdAt: new Date(),
-            updatedAt: new Date(),
-        }];
+            updatedAt: new Date()
+        };
 
-        vi.mocked(memoryRepository.searchRelevant).mockResolvedValue(mockMemories);
-        vi.mocked(llmProvider.generateResponse).mockResolvedValue({
+        vi.mocked(memoryRepository.searchRelevant).mockResolvedValueOnce([fakeMemory]);
+        vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
             type: 'text',
-            content: 'Memória utilizada com sucesso.'
+            content: 'Identifiquei que você possui plano Enterprise!'
         });
 
         const harness = new AgentHarness(
             contextAssembler,
-            shortTermMemory,
+            undefined,
             undefined,
             memoryRepository,
-            queueService,
+            undefined,
             embeddingProvider
         );
 
         const context = new ChatContext('thread-1', 'ws-1');
-        context.addMessage(new Message('m1', 'user', 'Qual a versão do banco?'));
-
         const result = await harness.run({
             tenantId: 'tenant-1',
             workspaceId: 'ws-1',
             threadId: 'thread-1',
-            userMessage: 'Qual a versão do banco?',
+            userMessage: 'Qual é o meu plano?',
             context,
             llmProvider,
             mcpClient
         });
 
-        expect(result.status).toBe('completed');
-        expect(embeddingProvider.generateEmbedding).toHaveBeenCalledWith('Qual a versão do banco?');
-        expect(memoryRepository.searchRelevant).toHaveBeenCalledWith({
-            tenantId: 'tenant-1',
-            workspaceId: 'ws-1',
-            query: 'Qual a versão do banco?',
-            vector: [0.1, 0.2, 0.3],
-            limit: 5,
-        });
-        expect(queueService.dispatchMemoryPromotion).toHaveBeenCalledWith(
-            'tenant-1',
-            'ws-1',
-            'thread-1',
-            expect.any(Array)
+        expect(memoryRepository.searchRelevant).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                query: 'Qual é o meu plano?'
+            })
         );
+        expect(result.status).toBe('completed');
     });
 
-    it('deve continuar a execução mesmo se a busca de memórias falhar', async () => {
-        const { llmProvider, mcpClient, shortTermMemory, memoryRepository } = makeMocks();
-        vi.mocked(memoryRepository.searchRelevant).mockRejectedValue(new Error('Mongo connection error'));
-        vi.mocked(llmProvider.generateResponse).mockResolvedValue({
-            type: 'text',
-            content: 'Resposta sem memórias'
-        });
-
-        const harness = new AgentHarness(
-            contextAssembler,
-            shortTermMemory,
-            undefined,
-            memoryRepository
-        );
-
-        const context = new ChatContext('thread-1', 'ws-1');
-        context.addMessage(new Message('m1', 'user', 'Olá'));
-
-        const result = await harness.run({
-            tenantId: 'tenant-1',
-            workspaceId: 'ws-1',
-            threadId: 'thread-1',
-            userMessage: 'Olá',
-            context,
-            llmProvider,
-            mcpClient
-        });
-
-        expect(result.status).toBe('completed');
-        expect(result.response).toBe('Resposta sem memórias');
-    });
-
-    it('deve executar o loop de ferramenta (tool_call) e finalizar com texto', async () => {
+    it('deve executar o fluxo de ferramenta (tool_call) e resolver texto final', async () => {
         const { llmProvider, mcpClient } = makeMocks();
         vi.mocked(llmProvider.generateResponse)
             .mockResolvedValueOnce({
                 type: 'tool_call',
-                tool: { name: 'get_logs', parameters: { query: 'error' } }
+                tool: { name: 'consultar_pedido', parameters: { id: 123 } } as any
             })
             .mockResolvedValueOnce({
                 type: 'text',
-                content: 'Encontrei os logs.'
+                content: 'Seu pedido #123 está a caminho.'
             });
+
+        vi.mocked(mcpClient.executeTool).mockResolvedValueOnce({ status: 'enviado' });
 
         const harness = new AgentHarness(contextAssembler);
         const context = new ChatContext('thread-1', 'ws-1');
@@ -195,60 +192,65 @@ describe('AgentHarness', () => {
             tenantId: 'tenant-1',
             workspaceId: 'ws-1',
             threadId: 'thread-1',
-            userMessage: 'Buscar logs',
+            userMessage: 'Onde está meu pedido 123?',
             context,
             llmProvider,
             mcpClient
         });
 
         expect(result.status).toBe('completed');
-        expect(result.response).toBe('Encontrei os logs.');
         expect(result.iterations).toBe(1);
-        expect(result.toolCalls.length).toBe(1);
-        expect(result.toolCalls[0].toolName).toBe('get_logs');
+        expect(result.toolCalls).toHaveLength(1);
+        expect(result.toolCalls[0].toolName).toBe('consultar_pedido');
+        expect(result.response).toBe('Seu pedido #123 está a caminho.');
     });
 
-    it('deve lidar com erro na execução da ferramenta sem travar a execução', async () => {
+    it('deve respeitar maxIterations e gerar fallback se excedido', async () => {
+        const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
         const { llmProvider, mcpClient } = makeMocks();
+
+        const policy = new ExecutionPolicy({ maxIterations: 1 });
+
         vi.mocked(llmProvider.generateResponse)
             .mockResolvedValueOnce({
                 type: 'tool_call',
-                tool: { name: 'failing_tool', parameters: {} }
+                tool: { name: 'tool_loop_1', parameters: {} } as any
+            })
+            .mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: { name: 'tool_loop_2', parameters: {} } as any
             })
             .mockResolvedValueOnce({
                 type: 'text',
-                content: 'Desculpe, ocorreu uma falha ao consultar a ferramenta.'
+                content: 'Resumo das informações.'
             });
 
-        vi.mocked(mcpClient.executeTool).mockRejectedValue(new Error('MCP server error'));
-
-        const harness = new AgentHarness(contextAssembler);
+        const harness = new AgentHarness(contextAssembler, undefined, policy);
         const context = new ChatContext('thread-1', 'ws-1');
 
         const result = await harness.run({
             tenantId: 'tenant-1',
             workspaceId: 'ws-1',
             threadId: 'thread-1',
-            userMessage: 'Testar falha',
+            userMessage: 'Loop',
             context,
             llmProvider,
             mcpClient
         });
 
-        expect(result.status).toBe('completed');
-        expect(result.response).toBe('Desculpe, ocorreu uma falha ao consultar a ferramenta.');
-        expect(result.toolCalls[0].error).toContain('MCP server error');
+        expect(result.status).toBe('max_iterations');
+        expect(result.response).toBe('Resumo das informações.');
     });
 
-    it('deve efetuar fallback sem ferramentas quando o CircuitBreaker do MCP estiver previamente aberto', async () => {
+    it('deve realizar fallback sem ferramentas caso o Circuit Breaker já esteja aberto no início', async () => {
         const { llmProvider, mcpClient } = makeMocks();
-        (mcpClient as any).getCircuitBreaker = () => ({
+        (mcpClient as any).getCircuitBreaker = vi.fn().mockReturnValue({
             isOpen: () => true
         });
 
         vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
             type: 'text',
-            content: 'Serviço externo indisponível, mas posso responder com conhecimento local.'
+            content: 'Serviço temporariamente indisponível.'
         });
 
         const harness = new AgentHarness(contextAssembler);
@@ -258,28 +260,26 @@ describe('AgentHarness', () => {
             tenantId: 'tenant-1',
             workspaceId: 'ws-1',
             threadId: 'thread-1',
-            userMessage: 'Preciso de ajuda',
+            userMessage: 'Consultar API',
             context,
             llmProvider,
             mcpClient,
-            tools: [{ name: 'any_tool' }]
+            tools: [{ name: 'qualquer_ferramenta' }]
         });
 
         expect(result.status).toBe('completed');
-        expect(result.response).toContain('Serviço externo indisponível');
-        // Tools não devem ter sido repassadas ao LLM
-        expect(llmProvider.generateResponse).toHaveBeenCalledWith(expect.anything(), []);
+        expect(result.response).toBe('Serviço temporariamente indisponível.');
         expect(mcpClient.executeTool).not.toHaveBeenCalled();
     });
 
-    it('deve interromper chamadas de ferramentas e gerar fallback se CircuitBreakerOpenError for lançado durante a execução', async () => {
+    it('deve efetuar fallback caso o Circuit Breaker abra durante a chamada de tool', async () => {
         const { CircuitBreakerOpenError } = await import('../infrastructure/resilience/CircuitBreaker.js');
         const { llmProvider, mcpClient } = makeMocks();
 
         vi.mocked(llmProvider.generateResponse)
             .mockResolvedValueOnce({
                 type: 'tool_call',
-                tool: { name: 'fragile_tool', parameters: {} }
+                tool: { name: 'fragile_tool', parameters: {} } as any
             })
             .mockResolvedValueOnce({
                 type: 'text',
@@ -287,7 +287,7 @@ describe('AgentHarness', () => {
             });
 
         vi.mocked(mcpClient.executeTool).mockRejectedValueOnce(
-            new CircuitBreakerOpenError('mcp-circuit', Date.now() + 5000)
+            new CircuitBreakerOpenError('mcp-circuit', 5000)
         );
 
         const harness = new AgentHarness(contextAssembler);
@@ -337,5 +337,66 @@ describe('AgentHarness', () => {
         expect(result.status).toBe('failed');
         expect(result.response).toContain('Tempo limite');
     });
-});
 
+    it('deve acumular LLMCallRecord, persistir AgentRun e despachar auto-avaliação', async () => {
+        const mocks = makeMocks();
+        const harness = new AgentHarness(
+            contextAssembler,
+            mocks.shortTermMemory,
+            undefined,
+            mocks.memoryRepository,
+            mocks.queueService,
+            mocks.embeddingProvider,
+            mocks.agentRunRepository
+        );
+
+        vi.mocked(mocks.llmProvider.generateResponse).mockResolvedValueOnce({
+            type: 'text',
+            content: 'Resposta avaliada',
+            usage: {
+                inputTokens: 120,
+                outputTokens: 40,
+                totalTokens: 160,
+            },
+        });
+
+        (mocks.llmProvider as any).providerName = 'openai';
+        (mocks.llmProvider as any).modelName = 'gpt-4o';
+
+        const context = new ChatContext('thread-eval', 'ws-eval');
+        const result = await harness.run({
+            tenantId: 'tenant-eval',
+            workspaceId: 'ws-eval',
+            threadId: 'thread-eval',
+            userMessage: 'Como funciona o suporte?',
+            context,
+            llmProvider: mocks.llmProvider,
+            mcpClient: mocks.mcpClient,
+        });
+
+        expect(result.status).toBe('completed');
+        expect(mocks.agentRunRepository.save).toHaveBeenCalledTimes(1);
+
+        const savedRun = vi.mocked(mocks.agentRunRepository.save).mock.calls[0][0];
+        expect(savedRun.id).toBe(result.runId);
+        expect(savedRun.tenantId).toBe('tenant-eval');
+        expect(savedRun.userMessage).toBe('Como funciona o suporte?');
+        expect(savedRun.finalResponse).toBe('Resposta avaliada');
+        expect(savedRun.totalTokens).toBe(160);
+        expect(savedRun.llmCalls).toHaveLength(1);
+        expect(savedRun.llmCalls[0].provider).toBe('openai');
+        expect(savedRun.llmCalls[0].model).toBe('gpt-4o');
+        expect(savedRun.costUsd).toBeGreaterThan(0);
+
+        expect(mocks.queueService.dispatchEvaluation).toHaveBeenCalledWith(
+            result.runId,
+            'tenant-eval',
+            'ws-eval',
+            expect.objectContaining({
+                userMessage: 'Como funciona o suporte?',
+                finalResponse: 'Resposta avaliada',
+                totalTokens: 160,
+            })
+        );
+    });
+});

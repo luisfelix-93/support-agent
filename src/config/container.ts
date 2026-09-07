@@ -15,6 +15,7 @@ import { UserRepository } from '../repositories/UserRepository.js';
 import { SpaceMappingRepository } from '../repositories/SpaceMappingRepository.js';
 import { ChatConfigRepository } from '../repositories/ChatConfigRepository.js';
 import { MongoMemoryRepository } from '../repositories/MongoMemoryRepository.js';
+import { AgentRunRepository } from '../repositories/AgentRunRepository.js';
 import { RegisterUserUseCase } from '../usecases/RegisterUserUseCase.js';
 import { LoginUserUseCase } from '../usecases/LoginUserUseCase.js';
 import { RegisterTenantUseCase } from '../usecases/RegisterTenantUseCase.js';
@@ -62,6 +63,7 @@ const userRepository = new UserRepository();
 const spaceMappingRepository = new SpaceMappingRepository();
 export const chatConfigRepository = new ChatConfigRepository(encryptionService);
 export const memoryRepository = new MongoMemoryRepository();
+export const agentRunRepository = new AgentRunRepository();
 
 // ─── Infrastructure Adapters & Factories ─────────────
 const queueAdapter = new BullMQAdapter(redisConnection);
@@ -97,7 +99,8 @@ const agentHarness = new AgentHarness(
     undefined,
     activeMemoryRepository,
     queueAdapter,
-    embeddingProvider
+    embeddingProvider,
+    agentRunRepository
 );
 
 // ─── Use Cases ───────────────────────────────────────
