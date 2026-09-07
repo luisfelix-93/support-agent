@@ -80,48 +80,48 @@
 
 ### Implementação
 
-- [ ] Criar `src/domain/EvaluationResult.ts` — Modelo do resultado
-  - [ ] `SelfEvalScores { confidence, hallucinationRisk, contextRelevance, completeness, toolSelectionQuality }`
-  - [ ] `PassiveMetrics { durationMs, iterations, toolCallsTotal, toolCallsFailed, toolSuccessRate, ... }`
-  - [ ] `EvaluationResult { runId, tenantId, passive, selfEval, compositeScore, evaluatedAt }`
-- [ ] Criar `src/domain/ports/IEvaluationRepository.ts` — Interface de persistência
-  - [ ] `save(result)`, `findByRunId(runId)`, `findByTenant(tenantId, options)`
-- [ ] Criar `src/repositories/EvaluationRepository.ts` — Implementação MongoDB
-  - [ ] Collection `evaluation_results`
-  - [ ] Indexes: `{ runId: 1 }` (unique), `{ tenantId: 1, evaluatedAt: -1 }`, `{ agentVersion: 1 }`
-- [ ] Criar `src/evaluation/SelfEvaluationPrompt.ts` — Prompt de auto-avaliação
-  - [ ] Recebe userMessage, toolCalls, finalResponse, memoriesUsed
-  - [ ] Retorna prompt instruindo LLM a devolver JSON com 5 scores (0-1)
-  - [ ] Inclui few-shot examples para calibração
-- [ ] Criar `src/evaluation/ScoreCalculator.ts` — Cálculo do composite score
-  - [ ] Pesos: confidence (0.20), hallucinationRisk invertido (0.25), completeness (0.20), toolSelectionQuality (0.15), contextRelevance (0.10), performance (0.10)
-  - [ ] Função `calculateCompositeScore(passive, selfEval): number`
-- [ ] Criar `src/infrastructure/queue/EvaluationWorker.ts` — Worker BullMQ
-  - [ ] Queue: `agent-evaluation`
-  - [ ] Busca config do tenant → cria LLM provider
-  - [ ] Chama LLM com prompt de self-evaluation
-  - [ ] Parse JSON com retry (1x) se malformado
-  - [ ] Calcula composite score
-  - [ ] Persiste `EvaluationResult` no MongoDB
-- [ ] Modificar `src/config/container.ts`
-  - [ ] Instanciar `EvaluationRepository`
-  - [ ] Instanciar `EvaluationWorker`
-  - [ ] Registrar start do worker
-- [ ] Modificar `src/index.ts` — Adicionar `evaluationWorker.stop()` no graceful shutdown
+- [x] Criar `src/domain/EvaluationResult.ts` — Modelo do resultado
+  - [x] `SelfEvalScores { confidence, hallucinationRisk, contextRelevance, completeness, toolSelectionQuality }`
+  - [x] `PassiveMetrics { durationMs, iterations, toolCallsTotal, toolCallsFailed, toolSuccessRate, ... }`
+  - [x] `EvaluationResult { runId, tenantId, passive, selfEval, compositeScore, evaluatedAt }`
+- [x] Criar `src/domain/ports/IEvaluationRepository.ts` — Interface de persistência
+  - [x] `save(result)`, `findByRunId(runId)`, `findByTenant(tenantId, options)`
+- [x] Criar `src/repositories/EvaluationRepository.ts` — Implementação MongoDB
+  - [x] Collection `evaluation_results`
+  - [x] Indexes: `{ runId: 1 }` (unique), `{ tenantId: 1, evaluatedAt: -1 }`, `{ agentVersion: 1 }`
+- [x] Criar `src/evaluation/SelfEvaluationPrompt.ts` — Prompt de auto-avaliação
+  - [x] Recebe userMessage, toolCalls, finalResponse, memoriesUsed
+  - [x] Retorna prompt instruindo LLM a devolver JSON com 5 scores (0-1)
+  - [x] Inclui few-shot examples para calibração
+- [x] Criar `src/evaluation/ScoreCalculator.ts` — Cálculo do composite score
+  - [x] Pesos: confidence (0.20), hallucinationRisk invertido (0.25), completeness (0.20), toolSelectionQuality (0.15), contextRelevance (0.10), performance (0.10)
+  - [x] Função `calculateCompositeScore(passive, selfEval): number`
+- [x] Criar `src/infrastructure/queue/EvaluationWorker.ts` — Worker BullMQ
+  - [x] Queue: `agent-evaluation`
+  - [x] Busca config do tenant → cria LLM provider
+  - [x] Chama LLM com prompt de self-evaluation
+  - [x] Parse JSON com retry (1x) se malformado
+  - [x] Calcula composite score
+  - [x] Persiste `EvaluationResult` no MongoDB
+- [x] Modificar `src/config/container.ts`
+  - [x] Instanciar `EvaluationRepository`
+  - [x] Instanciar `EvaluationWorker`
+  - [x] Registrar start do worker
+- [x] Modificar `src/index.ts` — Adicionar `evaluationWorker.stop()` no graceful shutdown
 
 ### Testes
 
-- [ ] `SelfEvaluationPrompt.test.ts` — Prompt gerado corretamente, escapa caracteres especiais
-- [ ] `ScoreCalculator.test.ts` — Pesos corretos, normalização, edge cases (todos 0, todos 1)
-- [ ] `EvaluationRepository.test.ts` — Save, findByRunId, findByTenant com filtros
-- [ ] `EvaluationWorker.test.ts` — Processa job, persiste resultado, retry JSON malformado, skip tenant inativo
+- [x] `SelfEvaluationPrompt.test.ts` — Prompt gerado corretamente, escapa caracteres especiais
+- [x] `ScoreCalculator.test.ts` — Pesos corretos, normalização, edge cases (todos 0, todos 1)
+- [x] `EvaluationRepository.test.ts` — Save, findByRunId, findByTenant com filtros
+- [x] `EvaluationWorker.test.ts` — Processa job, persiste resultado, retry JSON malformado, skip tenant inativo
 
 ### Verificação
 
-- [ ] `npm test` — todos os testes passam
-- [ ] `npm run build` — build sem erros
-- [ ] Verificar no MongoDB que `evaluation_results` recebe documentos com composite score
-- [ ] Verificar que resposta ao usuário NÃO é atrasada pela avaliação
+- [x] `npm test` — todos os testes passam (291/291)
+- [x] `npm run build` — build sem erros
+- [x] Verificar no MongoDB que `evaluation_results` recebe documentos com composite score
+- [x] Verificar que resposta ao usuário NÃO é atrasada pela avaliação
 
 ---
 

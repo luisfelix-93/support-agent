@@ -409,10 +409,13 @@ export class AgentHarness implements IAgentHarness {
                                 iterations: run.iterations,
                                 toolCalls: run.toolCalls,
                                 llmCalls: run.llmCalls,
+                                totalInputTokens: run.totalInputTokens,
+                                totalOutputTokens: run.totalOutputTokens,
                                 totalTokens: run.totalTokens,
                                 costUsd: run.costUsd,
                                 durationMs,
                                 memoriesInjected: run.memoriesInjected,
+                                contextUtilization: run.contextUtilization,
                                 agentVersion: run.agentVersion,
                             }
                         ).catch(err => {

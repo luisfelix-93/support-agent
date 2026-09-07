@@ -9,10 +9,13 @@ export interface EvaluationPayload {
     iterations: number;
     toolCalls: ToolCallRecord[];
     llmCalls?: LLMCallRecord[];
+    totalInputTokens?: number;
+    totalOutputTokens?: number;
     totalTokens: number;
     costUsd: number;
     durationMs: number;
     memoriesInjected: number;
+    contextUtilization?: number;
     agentVersion: string;
 }
 

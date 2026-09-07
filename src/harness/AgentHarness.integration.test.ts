@@ -4,8 +4,11 @@ import { ContextAssembler } from './ContextAssembler.js';
 import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
 import { MongoMemoryRepository } from '../repositories/MongoMemoryRepository.js';
 import { AgentRunRepository } from '../repositories/AgentRunRepository.js';
+import { EvaluationRepository } from '../repositories/EvaluationRepository.js';
 import { LLMMemoryExtractor } from '../infrastructure/memory/LLMMemoryExtractor.js';
 import { MemoryPromotionWorker } from '../infrastructure/queue/MemoryPromotionWorker.js';
+import { EvaluationWorker } from '../infrastructure/queue/EvaluationWorker.js';
+import { LLMFactory } from '../infrastructure/llm/LLMFactory.js';
 import { ChatContext } from '../domain/ChatContext.js';
 import { Message } from '../domain/Message.js';
 import { ToolCall } from '../domain/ToolCall.js';
@@ -34,6 +37,7 @@ vi.mock('bullmq', () => {
 describe('AgentHarness Integration: Full Long-Term Memory & Evaluation Lifecycle', () => {
     let memoryDb: Map<string, any>;
     let runDb: Map<string, any>;
+    let evalDb: Map<string, any>;
     let memoryRepository: MongoMemoryRepository;
     let agentRunRepository: AgentRunRepository;
     let tokenCounter: TiktokenAdapter;
@@ -48,10 +52,11 @@ describe('AgentHarness Integration: Full Long-Term Memory & Evaluation Lifecycle
         vi.clearAllMocks();
         memoryDb = new Map();
         runDb = new Map();
+        evalDb = new Map();
         dispatchedMemoryJobs = [];
         dispatchedEvalJobs = [];
 
-        // Mock MongoDB suportando coleções distintas: 'memories' e 'agent_runs'
+        // Mock MongoDB suportando coleções distintas: 'memories', 'agent_runs' e 'evaluation_results'
         vi.spyOn(MongoConnection, 'getDb').mockReturnValue({
             collection: (name: string) => {
                 if (name === 'agent_runs') {
@@ -73,6 +78,30 @@ describe('AgentHarness Integration: Full Long-Term Memory & Evaluation Lifecycle
                         updateOne: vi.fn(async (filter, update) => {
                             const id = filter.runId || filter._id;
                             runDb.set(id, { runId: id, ...update.$set });
+                        }),
+                        createIndex: vi.fn().mockResolvedValue('index-created'),
+                    };
+                }
+
+                if (name === 'evaluation_results') {
+                    return {
+                        findOne: vi.fn(async (filter) => {
+                            for (const doc of evalDb.values()) {
+                                if (filter.runId && doc.runId === filter.runId) return doc;
+                            }
+                            return null;
+                        }),
+                        find: vi.fn((filter) => ({
+                            sort: vi.fn().mockReturnThis(),
+                            skip: vi.fn().mockReturnThis(),
+                            limit: vi.fn().mockReturnThis(),
+                            toArray: vi.fn(async () =>
+                                Array.from(evalDb.values()).filter(d => !filter.tenantId || d.tenantId === filter.tenantId)
+                            ),
+                        })),
+                        updateOne: vi.fn(async (filter, update) => {
+                            const id = filter.runId || filter._id;
+                            evalDb.set(id, { runId: id, ...update.$set });
                         }),
                         createIndex: vi.fn().mockResolvedValue('index-created'),
                     };
@@ -309,6 +338,48 @@ describe('AgentHarness Integration: Full Long-Term Memory & Evaluation Lifecycle
         const savedMemory = Array.from(memoryDb.values())[0];
         expect(savedMemory.content).toContain('sa-east-1');
         expect(savedMemory.embedding).toEqual([0.9, 0.1, 0.0]);
+
+        // ─── Execução do EvaluationWorker em background ─────────────────
+        const evaluationRepository = new EvaluationRepository();
+        const evalWorker = new EvaluationWorker(
+            {},
+            tenantRepository,
+            evaluationRepository,
+            'agent-evaluation'
+        );
+
+        vi.spyOn(LLMFactory, 'create').mockReturnValue({
+            providerName: 'google',
+            modelName: 'gemini-2.0-flash',
+            generateResponse: vi.fn().mockResolvedValue({
+                type: 'text',
+                content: JSON.stringify({
+                    confidence: 0.98,
+                    hallucinationRisk: 0.02,
+                    contextRelevance: 0.95,
+                    completeness: 1.0,
+                    toolSelectionQuality: 1.0,
+                    reasoning: 'Resposta precisa e factualmente fundamentada.',
+                }),
+            }),
+        });
+
+        evalWorker.start();
+        const evalProcessor = vi.mocked(Worker).mock.calls[1][1] as any;
+
+        await evalProcessor({
+            id: 'job-eval-1',
+            data: dispatchedEvalJobs[0],
+        });
+
+        expect(evalDb.size).toBe(1);
+        const savedEval = evalDb.get(result1.runId);
+        expect(savedEval).toBeDefined();
+        expect(savedEval.runId).toBe(result1.runId);
+        expect(savedEval.tenantId).toBe('tenant-enterprise');
+        expect(savedEval.selfEval.confidence).toBe(0.98);
+        expect(savedEval.selfEval.hallucinationRisk).toBe(0.02);
+        expect(savedEval.compositeScore).toBeGreaterThan(0.9);
 
         // ─── Execução 2: Nova sessão de chat perguntando sobre a região ──
         let assembledContextCaptures: any;

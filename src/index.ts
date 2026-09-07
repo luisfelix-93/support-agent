@@ -3,7 +3,7 @@ import './config/tracing.js';
 import type { Server } from 'node:http';
 import express from 'express';
 import app from './app.js';
-import { queueWorker, memoryPromotionWorker, redisConnection } from './config/container.js';
+import { queueWorker, memoryPromotionWorker, evaluationWorker, redisConnection } from './config/container.js';
 import { MongoConnection } from './infrastructure/database/MongoConnection.js';
 import { logger } from './config/logger.js';
 import { metricsHandler } from './config/metrics.js';
@@ -56,7 +56,7 @@ const shutdown = async (signal: string) => {
         log.info('Servidores HTTP finalizados.');
 
         log.info('2/5 Parando e drenando workers BullMQ...');
-        await Promise.all([queueWorker.stop(), memoryPromotionWorker.stop()]);
+        await Promise.all([queueWorker.stop(), memoryPromotionWorker.stop(), evaluationWorker.stop()]);
         log.info('Workers BullMQ finalizados.');
 
         log.info('3/5 Finalizando tracing do OpenTelemetry...');

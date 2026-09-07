@@ -1,6 +1,7 @@
 import { BullMQAdapter } from '../infrastructure/queue/BullMQAdapter.js';
 import { BullMQWorker } from '../infrastructure/queue/BullMQWorker.js';
 import { MemoryPromotionWorker } from '../infrastructure/queue/MemoryPromotionWorker.js';
+import { EvaluationWorker } from '../infrastructure/queue/EvaluationWorker.js';
 import { GoogleChatAdapter } from '../infrastructure/chat/GoogleChatAdapter.js';
 import { SlackChatAdapter } from '../infrastructure/chat/SlackChatAdapter.js';
 import { ChatProviderFactory } from '../infrastructure/chat/ChatProviderFactory.js';
@@ -16,6 +17,7 @@ import { SpaceMappingRepository } from '../repositories/SpaceMappingRepository.j
 import { ChatConfigRepository } from '../repositories/ChatConfigRepository.js';
 import { MongoMemoryRepository } from '../repositories/MongoMemoryRepository.js';
 import { AgentRunRepository } from '../repositories/AgentRunRepository.js';
+import { EvaluationRepository } from '../repositories/EvaluationRepository.js';
 import { RegisterUserUseCase } from '../usecases/RegisterUserUseCase.js';
 import { LoginUserUseCase } from '../usecases/LoginUserUseCase.js';
 import { RegisterTenantUseCase } from '../usecases/RegisterTenantUseCase.js';
@@ -64,6 +66,7 @@ const spaceMappingRepository = new SpaceMappingRepository();
 export const chatConfigRepository = new ChatConfigRepository(encryptionService);
 export const memoryRepository = new MongoMemoryRepository();
 export const agentRunRepository = new AgentRunRepository();
+export const evaluationRepository = new EvaluationRepository();
 
 // ─── Infrastructure Adapters & Factories ─────────────
 const queueAdapter = new BullMQAdapter(redisConnection);
@@ -150,9 +153,17 @@ export const memoryPromotionWorker = new MemoryPromotionWorker(
     'memory-promotion'
 );
 
+export const evaluationWorker = new EvaluationWorker(
+    redisConnection,
+    tenantRepository,
+    evaluationRepository,
+    'agent-evaluation'
+);
+
 if (process.env.START_WORKER !== 'false') {
     queueWorker.start();
     memoryPromotionWorker.start();
+    evaluationWorker.start();
 }
 
 export const authController = new AuthController(loginUserUseCase);
