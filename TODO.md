@@ -48,24 +48,24 @@
 **Depende de:** ✅ 3A concluída
 
 ### Implementação
-- [ ] Criar `src/services/RunAnalyticsService.ts`
-  - [ ] Injetar `IAgentRunRepository`
-  - [ ] Método `getRunById(runId: string): Promise<AgentRun | null>`
-  - [ ] Método `listRuns(tenantId: string, options: FindRunsOptions): Promise<AgentRun[]>`
-  - [ ] Método `getCostAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<TenantCostSummary[]>`
-  - [ ] Método `getToolAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<ToolAnalyticsSummary[]>`
-  - [ ] Método `getLLMAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<LLMAnalyticsSummary[]>`
-  - [ ] Tratamento de edge cases (datas inválidas, paginação fora dos limites)
+- [x] Criar `src/services/RunAnalyticsService.ts`
+  - [x] Injetar `IAgentRunRepository`
+  - [x] Método `getRunById(runId: string): Promise<AgentRun | null>`
+  - [x] Método `listRuns(tenantId: string, options: FindRunsOptions): Promise<AgentRun[]>`
+  - [x] Método `getCostAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<TenantCostSummary[]>`
+  - [x] Método `getToolAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<ToolAnalyticsSummary[]>`
+  - [x] Método `getLLMAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<LLMAnalyticsSummary[]>`
+  - [x] Tratamento de edge cases (datas inválidas, paginação fora dos limites)
 
 ### Testes
-- [ ] Criar `src/services/RunAnalyticsService.test.ts`
-  - [ ] Testar delegação correta para o repositório
-  - [ ] Testar validação e normalização de parâmetros
-  - [ ] Testar cenários sem dados e com filtros parciais
+- [x] Criar `src/services/RunAnalyticsService.test.ts`
+  - [x] Testar delegação correta para o repositório
+  - [x] Testar validação e normalização de parâmetros
+  - [x] Testar cenários sem dados e com filtros parciais
 
 ### Verificação
-- [ ] `npm test` passa com 100% de sucesso
-- [ ] Cobertura ≥ 90% no `RunAnalyticsService.ts`
+- [x] `npm test` passa com 100% de sucesso (345/345 aprovados)
+- [x] Cobertura ≥ 90% no `RunAnalyticsService.ts` (100% lines, 95.34% branches)
 
 ---
 
