@@ -12,6 +12,10 @@ export default defineConfig({
                 'src/usecases/**',
                 'src/infrastructure/**',
                 'src/domain/**',
+                'src/services/**',
+                'src/repositories/**',
+                'src/controllers/**',
+                'src/evaluation/**',
             ],
             exclude: [
                 'src/**/*.test.ts',
