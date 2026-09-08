@@ -123,6 +123,5 @@ Para aprofundar-se nos detalhes de arquitetura, funcionalidades completas e road
 | 🏛️ **[architecture.md](architecture.md)** | Arquitetura hexagonal, camadas, diagrama de runtime do Agent Harness, subsistema de memória e observabilidade. |
 | ⚙️ **[features.md](features.md)** | Inventário exaustivo de recursos: Multi-LLM, ferramentas MCP, telemetria de custos, auto-avaliação e RBAC. |
 | 🗺️ **[roadmap.md](roadmap.md)** | Roadmap estratégico: Fases 1 a 3 concluídas e detalhamento das Fases 4 a 7 (workflows de suporte, memória 2.0 e autonomia). |
-| 💬 **[slack-chat-config.md](slack-chat-config.md)** | Manual detalhado de configuração de bots para Slack e Google Chat multi-tenant. |
-| 🔭 **[grafana-tempo-tracing.md](grafana-tempo-tracing.md)** | Topologia e configuração de tracing distribuído de ponta a ponta com OpenTelemetry e Grafana Tempo. |
-| 🧠 **[harness-long-term-memory.md](harness-long-term-memory.md)** | Especificação técnica e ciclo de desenvolvimento da camada de memória de longo prazo. |
+
+
