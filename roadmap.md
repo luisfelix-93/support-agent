@@ -43,13 +43,13 @@ O Support Agent já possui uma fundação técnica robusta e validada em produç
                     └─────────┬─────────┘
                               ▼
                     ┌───────────────────┐
-                    │ 4. SUPPORT        │  🔄 Próximo Foco
+                    │ 4. SUPPORT        │  ✅ Concluída
                     │ WORKFLOWS         │  (Investigação
                     │ Produto           │   especializada)
                     └─────────┬─────────┘
                               ▼
                     ┌───────────────────┐
-                    │ 5. MEMORY 2.0     │  🔄 Planejada
+                    │ 5. MEMORY 2.0     │  🔄 Próximo Foco
                     │ Contexto híbrido  │
                     │ e ciclo de vida   │
                     └─────────┬─────────┘
@@ -142,33 +142,28 @@ Transformação de cada ciclo do agente em uma unidade observável, mensurável 
 
 ---
 
-# Fases Futuras
-
 ## Fase 4 — Support Workflows (Investigação Especializada)
-**Prioridade: 🔴 P1 — Principal Foco Atual**
+**Prioridade: 🔴 P1** | **Status: ✅ Concluída**
 
-Evoluir o Support Agent de um bot de perguntas e respostas para um **investigador autônomo de incidentes de TI**:
+Evolução do Support Agent de um bot de perguntas e respostas para um **investigador autônomo de incidentes de TI**, combinando um **Core SRE Investigation Engine** com **Playbooks Modulares Conectáveis**:
 
-### Workflows Especializados Previstos:
-1. **Investigação de Erro em API**:
-   - Identificar serviço reportado.
-   - Consultar logs de erro via MCP.
-   - Correlacionar métricas e picos de falhas (HTTP 5xx).
-   - Apontar timestamp de início e levantar hipótese de causa raiz.
-2. **Investigação de Alta Latência**:
-   - Consultar métricas de latência p95/p99 no Prometheus.
-   - Analisar traces distribuídos no Tempo para identificar gargalos em spans.
-   - Checar histórico de deploys recentes.
-3. **Investigação de Problemas em Kubernetes**:
-   - Inspecionar pods, eventos e status de deployments.
-   - Checar logs de pods reiniciados (CrashLoopBackOff).
-   - Avaliar consumo de CPU/Memória vs limits.
-4. **Investigação de Banco de Dados**:
-   - Analisar métricas de conexões ativas e pool de conexões.
-   - Identificar queries lentas e locks de tabelas.
-5. **Geração de Resumo Executivo de Sessão (Session Summary)**:
-   - Resumo estruturado ao final da investigação (problema, evidências, conclusão, recomendação e `runId`).
-   - Disparo do resumo via Slack, Google Chat ou Email.
+- **Core de Investigação SRE**:
+  - [x] Motor de triagem universal de sintomas operacionais (`InvestigationEngine`).
+  - [x] Protocolo de investigação SRE (*Triagem ➔ Hipótese ➔ Coleta de Evidências ➔ Correlação Cruzada ➔ Causa Raiz / RCA ➔ Session Summary*).
+  - [x] Não-invasividade: perguntas comuns de suporte são atendidas sem overhead de protocolos de incidente (`NonIncidentConversation`).
+- **Playbooks de Domínio Entregues**:
+  - [x] **Investigação de Erro em API (`ApiErrorPlaybook`)**: Identificação de serviços, consulta de logs no Grafana Loki, correlação com taxas de erro HTTP 5xx no Prometheus e apontamento de timestamps de início.
+  - [x] **Investigação de Alta Latência (`LatencyTracePlaybook`)**: Percentis de latência p95/p99 no Prometheus, análise de traces distribuídos no Grafana Tempo para isolamento de spans gargalos e correlação com deploys.
+  - [x] **Investigação de Kubernetes (`KubernetesPlaybook`)**: Diagnóstico de pods em `CrashLoopBackOff`, eventos de `OOMKilled` (Exit Code 137), histórico de restarts e limites de CPU/Memória.
+  - [x] **Investigação de Banco de Dados (`DatabasePlaybook`)**: Mapeamento de esgotamento de pool de conexões (HikariCP), consultas ativas lentas (*slow queries*) e contenção por *locks*.
+  - [x] **Investigação Cruzada (Cross-Domain)**: Orquestração cooperativa entre múltiplos playbooks (ex: erro 500 decorrente de timeout de conexão no banco de dados).
+- **Evidências & Relatórios Executivos**:
+  - [x] Caderno de Evidências (`EvidenceLedger`) para agregação de logs, métricas, traces, eventos e estado do cluster.
+  - [x] Resumo Executivo de Sessão (`SessionSummary`): Resumo estruturado ao final da investigação (problema, evidências, causa raiz fundamentada, recomendações e `runId`).
+
+---
+
+# Fases Futuras
 
 ---
 

@@ -21,6 +21,7 @@ export class AgentRun {
     public agentVersion: string = process.env.AGENT_VERSION || '1.0.0';
     public finalResponse?: string;
     public userMessage?: string;
+    public playbookIds?: string[];
 
     constructor(
         public readonly id: string,
