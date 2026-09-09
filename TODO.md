@@ -55,35 +55,35 @@
 **Depende de:** ✅ 4A concluída  
 
 ### Implementação
-- [ ] Atualizar `src/domain/ports/IAgentHarness.ts`
-  - [ ] Estender `AgentRunInput` com campos opcionais:
-    - [ ] `systemInstructions?: string`
-    - [ ] `playbookIds?: string[]`
-    - [ ] `evidenceLedger?: EvidenceLedger`
-- [ ] Criar `src/harness/InvestigationEngine.ts`
-  - [ ] Injetar `PlaybookRegistry`
-  - [ ] Método `evaluate(userMessage: string, context?: ChatContext): InvestigationPlan | null`
-  - [ ] Protocolo de investigação SRE: *Triagem ➔ Hipótese ➔ Coleta ➔ Correlação ➔ RCA ➔ Resumo*
-  - [ ] Método para síntese e extração do `SessionSummary` a partir da resposta final do LLM
-- [ ] Atualizar `src/harness/AgentHarness.ts`
-  - [ ] Repassar `input.systemInstructions` para o `ContextAssembler.assemble(...)`
-  - [ ] Registrar `playbookIds` e metadados investigativos na entidade `AgentRun`
-- [ ] Atualizar `src/usecases/ProcessAgentResponseUseCase.ts`
-  - [ ] Conectar `InvestigationEngine`: se um incidente operacional for detectado, ativar os playbooks pertinentes
-  - [ ] Garantir que mensagens conversacionais simples (sem incidente) continuem sem overhead
+- [x] Atualizar `src/domain/ports/IAgentHarness.ts`
+  - [x] Estender `AgentRunInput` com campos opcionais:
+    - [x] `systemInstructions?: string`
+    - [x] `playbookIds?: string[]`
+    - [x] `evidenceLedger?: EvidenceLedger`
+- [x] Criar `src/harness/InvestigationEngine.ts`
+  - [x] Injetar `PlaybookRegistry`
+  - [x] Método `evaluate(userMessage: string, context?: ChatContext): InvestigationPlan | null`
+  - [x] Protocolo de investigação SRE: *Triagem ➔ Hipótese ➔ Coleta ➔ Correlação ➔ RCA ➔ Resumo*
+  - [x] Método para síntese e extração do `SessionSummary` a partir da resposta final do LLM
+- [x] Atualizar `src/harness/AgentHarness.ts`
+  - [x] Repassar `input.systemInstructions` para o `ContextAssembler.assemble(...)`
+  - [x] Registrar `playbookIds` e metadados investigativos na entidade `AgentRun`
+- [x] Atualizar `src/usecases/ProcessAgentResponseUseCase.ts`
+  - [x] Conectar `InvestigationEngine`: se um incidente operacional for detectado, ativar os playbooks pertinentes
+  - [x] Garantir que mensagens conversacionais simples (sem incidente) continuem sem overhead
 
 ### Testes
-- [ ] Criar `src/harness/InvestigationEngine.test.ts`
-  - [ ] Testar identificação de sintomas operacionais vs mensagens informativas
-  - [ ] Testar montagem consolidada do prompt investigativo
-  - [ ] Testar extração do `SessionSummary` estruturado
-- [ ] Atualizar `src/harness/AgentHarness.test.ts`
-  - [ ] Testar injeção de `systemInstructions` no contexto
-  - [ ] Testar persistência dos `playbookIds` no `AgentRun`
+- [x] Criar `src/harness/InvestigationEngine.test.ts`
+  - [x] Testar identificação de sintomas operacionais vs mensagens informativas
+  - [x] Testar montagem consolidada do prompt investigativo
+  - [x] Testar extração do `SessionSummary` estruturado
+- [x] Atualizar `src/harness/AgentHarness.test.ts`
+  - [x] Testar injeção de `systemInstructions` no contexto
+  - [x] Testar persistência dos `playbookIds` no `AgentRun`
 
 ### Verificação
-- [ ] `npm test` passa com 100% de sucesso
-- [ ] Cobertura de testes unitários nos novos módulos de runtime
+- [x] `npm test` passa com 100% de sucesso (62/62 arquivos, 390/390 testes aprovados)
+- [x] Cobertura de testes unitários nos novos módulos de runtime e compilação limpa (`npm run build`)
 
 ---
 

@@ -8,6 +8,7 @@ import { MCPHttpAdapter } from "../infrastructure/mcp/MCPHttpAdapter.js";
 import { CircuitBreaker } from "../infrastructure/resilience/CircuitBreaker.js";
 import { ISpaceMappingRepository } from "../domain/ports/ISpaceMappingRepository.js";
 import { IAgentHarness } from "../domain/ports/IAgentHarness.js";
+import type { InvestigationEngine } from "../harness/InvestigationEngine.js";
 import { logger } from "../config/logger.js";
 
 const log = logger.child({ module: 'ProcessAgentResponseUseCase' });
@@ -20,7 +21,8 @@ export class ProcessAgentResponseUse {
         private readonly spaceMappingRepository: ISpaceMappingRepository,
         private readonly tenantRepository: ITenantRepository,
         private readonly chatRepository: IChatRepository,
-        private readonly harness: IAgentHarness
+        private readonly harness: IAgentHarness,
+        private readonly investigationEngine?: InvestigationEngine
     ){}
 
     async execute(
@@ -109,7 +111,9 @@ export class ProcessAgentResponseUse {
                 log.error({ err: toolsError }, 'Erro ao obter ferramentas do MCP.');
             }
 
-            // 4. Delegação da execução ao Agent Harness Runtime
+            // 4. Avaliação de Playbooks e delegação da execução ao Agent Harness Runtime
+            const investigationPlan = this.investigationEngine?.evaluate(userText, context);
+
             const harnessResult = await this.harness.run({
                 tenantId: tenant.workspaceId,
                 workspaceId,
@@ -118,7 +122,9 @@ export class ProcessAgentResponseUse {
                 context,
                 llmProvider,
                 mcpClient,
-                tools: mcpTools
+                tools: mcpTools,
+                systemInstructions: investigationPlan?.systemInstructions,
+                playbookIds: investigationPlan?.playbookIds,
             });
 
             const responseText = harnessResult.response;

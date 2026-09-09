@@ -38,6 +38,8 @@ import { LLMMemoryExtractor } from '../infrastructure/memory/LLMMemoryExtractor.
 import { OpenAIEmbeddingProvider } from '../infrastructure/llm/OpenAIEmbeddingProvider.js';
 import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
+import { PlaybookRegistry } from '../domain/workflows/PlaybookRegistry.js';
+import { InvestigationEngine } from '../harness/InvestigationEngine.js';
 import { AESEncryptionService } from '../infrastructure/security/AESEncryptionService.js';
 import { IdempotencyGuard } from '../infrastructure/resilience/IdempotencyGuard.js';
 
@@ -110,12 +112,17 @@ const agentHarness = new AgentHarness(
     agentRunRepository
 );
 
+// ─── Playbooks & Investigation Engine ───────────────
+export const playbookRegistry = new PlaybookRegistry();
+export const investigationEngine = new InvestigationEngine(playbookRegistry);
+
 // ─── Use Cases ───────────────────────────────────────
 const processAgentUseCase = new ProcessAgentResponseUse(
     spaceMappingRepository,
     tenantRepository,
     chatRepository,
-    agentHarness
+    agentHarness,
+    investigationEngine
 );
 
 const registerUserUseCase = new RegisterUserUseCase(userRepository);

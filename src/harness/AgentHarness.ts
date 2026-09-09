@@ -65,6 +65,9 @@ export class AgentHarness implements IAgentHarness {
                     input.threadId
                 );
                 run.userMessage = input.userMessage;
+                if (input.playbookIds && input.playbookIds.length > 0) {
+                    run.playbookIds = [...input.playbookIds];
+                }
 
                 let finalResponseText = '';
                 let status: 'completed' | 'failed' | 'max_iterations' = 'completed';
@@ -188,6 +191,7 @@ export class AgentHarness implements IAgentHarness {
                             return this.contextAssembler.assemble(input.context, {
                                 maxTokens: this.executionPolicy.maxContextTokens,
                                 memories: relevantMemories,
+                                systemInstructions: input.systemInstructions,
                             });
                         }
                     );
@@ -436,7 +440,8 @@ export class AgentHarness implements IAgentHarness {
                         iterations: run.iterations,
                         toolCalls: run.toolCalls,
                         status,
-                        durationMs
+                        durationMs,
+                        playbookIds: input.playbookIds,
                     };
                 } catch (error: any) {
                     const durationMs = Date.now() - startTime;

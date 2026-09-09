@@ -61,6 +61,9 @@ describe('AgentHarness', () => {
             save: vi.fn().mockResolvedValue(undefined),
             findByRunId: vi.fn().mockResolvedValue(null),
             findByTenant: vi.fn().mockResolvedValue([]),
+            aggregateCostByTenant: vi.fn().mockResolvedValue([]),
+            aggregateToolAnalytics: vi.fn().mockResolvedValue([]),
+            aggregateLLMAnalytics: vi.fn().mockResolvedValue([]),
         };
 
         return { llmProvider, mcpClient, shortTermMemory, memoryRepository, queueService, embeddingProvider, agentRunRepository };
@@ -398,5 +401,51 @@ describe('AgentHarness', () => {
                 totalTokens: 160,
             })
         );
+    });
+
+    it('deve repassar systemInstructions ao ContextAssembler e salvar playbookIds no AgentRun', async () => {
+        const mocks = makeMocks();
+        const spyAssemble = vi.spyOn(contextAssembler, 'assemble');
+
+        vi.mocked(mocks.llmProvider.generateResponse).mockResolvedValueOnce({
+            type: 'text',
+            content: 'Investigação de playbook concluída.',
+        });
+
+        const harness = new AgentHarness(
+            contextAssembler,
+            mocks.shortTermMemory,
+            undefined,
+            mocks.memoryRepository,
+            mocks.queueService,
+            mocks.embeddingProvider,
+            mocks.agentRunRepository
+        );
+
+        const context = new ChatContext('thread-pb', 'ws-pb');
+        const result = await harness.run({
+            tenantId: 'tenant-pb',
+            workspaceId: 'ws-pb',
+            threadId: 'thread-pb',
+            userMessage: 'Erro 500 no checkout',
+            context,
+            llmProvider: mocks.llmProvider,
+            mcpClient: mocks.mcpClient,
+            systemInstructions: 'DIRETRIZ DE INVESTIGAÇÃO DE ERRO 500',
+            playbookIds: ['api-error', 'latency'],
+        });
+
+        expect(result.status).toBe('completed');
+        expect(result.playbookIds).toEqual(['api-error', 'latency']);
+        expect(spyAssemble).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                systemInstructions: 'DIRETRIZ DE INVESTIGAÇÃO DE ERRO 500',
+            })
+        );
+
+        expect(mocks.agentRunRepository.save).toHaveBeenCalledTimes(1);
+        const savedRun = vi.mocked(mocks.agentRunRepository.save).mock.calls[0][0];
+        expect(savedRun.playbookIds).toEqual(['api-error', 'latency']);
     });
 });

@@ -225,4 +225,47 @@ describe('ProcessAgentResponseUseCase', () => {
             expect(LLMFactory.create).not.toHaveBeenCalled();
         });
     });
+
+    describe('InvestigationEngine Integration', () => {
+        it('deve repassar systemInstructions e playbookIds do InvestigationEngine para o harness quando ativado', async () => {
+            const mockEngine: any = {
+                evaluate: vi.fn().mockReturnValue({
+                    playbookIds: ['api-error'],
+                    systemInstructions: 'DIRETRIZ DE ERRO 500',
+                    recommendedTools: ['query_logs'],
+                    isIncident: true,
+                }),
+            };
+
+            const customHarness = {
+                run: vi.fn().mockResolvedValue({
+                    runId: 'run-custom',
+                    response: 'Diagnóstico concluído.',
+                    iterations: 1,
+                    toolCalls: [],
+                    status: 'completed',
+                    durationMs: 100,
+                }),
+            };
+
+            const useCaseWithEngine = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockEngine
+            );
+
+            await useCaseWithEngine.execute('spaces/AAAA1111', 'thread-1', 'Erro 500 na API', chatProvider);
+
+            expect(mockEngine.evaluate).toHaveBeenCalledWith('Erro 500 na API', expect.any(ChatContext));
+            expect(customHarness.run).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    systemInstructions: 'DIRETRIZ DE ERRO 500',
+                    playbookIds: ['api-error'],
+                })
+            );
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-1', 'Diagnóstico concluído.');
+        });
+    });
 });
