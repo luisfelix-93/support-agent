@@ -42,6 +42,8 @@ import { PlaybookRegistry } from '../domain/workflows/PlaybookRegistry.js';
 import { InvestigationEngine } from '../harness/InvestigationEngine.js';
 import { ApiErrorPlaybook } from '../domain/workflows/playbooks/ApiErrorPlaybook.js';
 import { LatencyTracePlaybook } from '../domain/workflows/playbooks/LatencyTracePlaybook.js';
+import { KubernetesPlaybook } from '../domain/workflows/playbooks/KubernetesPlaybook.js';
+import { DatabasePlaybook } from '../domain/workflows/playbooks/DatabasePlaybook.js';
 import { AESEncryptionService } from '../infrastructure/security/AESEncryptionService.js';
 import { IdempotencyGuard } from '../infrastructure/resilience/IdempotencyGuard.js';
 
@@ -118,6 +120,8 @@ const agentHarness = new AgentHarness(
 export const playbookRegistry = new PlaybookRegistry();
 playbookRegistry.register(new ApiErrorPlaybook());
 playbookRegistry.register(new LatencyTracePlaybook());
+playbookRegistry.register(new KubernetesPlaybook());
+playbookRegistry.register(new DatabasePlaybook());
 export const investigationEngine = new InvestigationEngine(playbookRegistry);
 
 // ─── Use Cases ───────────────────────────────────────

@@ -17,6 +17,9 @@ O sistema é centrado no domínio e orquestrado pela **Camada Agent Harness**, c
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           Agent Harness Layer                               │
+│     InvestigationEngine ──► PlaybookRegistry (Pluggable Playbooks)          │
+│                 │                                                           │
+│                 ▼                                                           │
 │           AgentHarness  ──► ContextAssembler ──► ExecutionPolicy            │
 │                 │                │                                          │
 │                 │                ▼                                          │
@@ -93,6 +96,16 @@ O coração do software. Não possui dependências externas ou de frameworks.
   - `ChatConfig`: Credenciais de provedores de chat (Slack e Google Chat) com segredos criptografados.
   - `User` & `Password`: Gestão de usuários com hashing forte (Argon2id/bcrypt) e associação multi-tenant.
   - `ToolCall` & `Message`: Estruturas puras de conversação e requisições de ferramentas.
+- **Módulo de Workflows & Playbooks (`src/domain/workflows`)**:
+  - `IInvestigationPlaybook`: Contrato base de um playbook de investigação (identificador, domínio, heurísticas `matches`, prompt especializado e ferramentas recomendadas).
+  - `EvidenceLedger`: Agregação estruturada de evidências técnicas coletadas (logs, métricas, traces, eventos de pod e conexões de banco).
+  - `SessionSummary`: Value object / entidade que encapsula o Resumo Executivo da investigação, formatando o diagnóstico em Markdown corporativo para canais de chat.
+  - `PlaybookRegistry`: Catálogo extensível com busca e seleção de múltiplos playbooks aplicáveis ao contexto.
+  - **Playbooks de Domínio (`src/domain/workflows/playbooks/`)**:
+    - `ApiErrorPlaybook`: Especialista em erros HTTP 5xx e falhas em APIs (Loki + Prometheus).
+    - `LatencyTracePlaybook`: Especialista em tempo de resposta e degradação de performance (Tempo + p95/p99).
+    - `KubernetesPlaybook`: Especialista em pods reiniciando, OOMKilled e eventos do cluster.
+    - `DatabasePlaybook`: Especialista em esgotamento de pool de conexões, queries lentas e locks.
 
 ### 2.2. Ports (`src/domain/ports`)
 Contratos de interface que definem tudo o que o domínio necessita do mundo exterior:
@@ -112,6 +125,11 @@ Runtime desacoplado encarregado de executar o ciclo de vida do agente:
   6. Finaliza a execução, persiste o `AgentRun` no MongoDB e agenda os jobs assíncronos de promoção de memória e auto-avaliação no BullMQ.
 - **`ContextAssembler`**: Injeta `systemInstructions`, memórias semânticas e trunca o histórico mais antigo quando necessário.
 - **`ExecutionPolicy`**: Guardrail que limita o loop a no máximo 5 iterações e impõe timeouts defensivos.
+- **`InvestigationEngine`**:
+  - Avalia a mensagem inicial do usuário e o histórico de contexto.
+  - Consulta o `PlaybookRegistry` e seleciona os playbooks adequados (retorna `null` em modo conversacional comum).
+  - Injeta o protocolo universal SRE (*Triagem ➔ Hipótese ➔ Coleta de Evidências ➔ Correlação Cruzada ➔ Causa Raiz / RCA ➔ Session Summary*).
+  - Extrai e valida o `SessionSummary` estruturado na finalização do atendimento.
 
 ### 2.4. Use Cases (`src/usecases`)
 Orquestram os fluxos de aplicação sem acoplar a regras específicas de canais:

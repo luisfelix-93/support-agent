@@ -130,27 +130,27 @@
 **Depende de:** ✅ 4C concluída  
 
 ### Implementação
-- [ ] Criar `src/domain/workflows/playbooks/KubernetesPlaybook.ts`
-  - [ ] Heurísticas de detecção (pod reiniciando, CrashLoopBackOff, OOMKilled, deployment quebrado)
-  - [ ] Protocolo investigativo: inspeção de status de pods, eventos de cluster e limites de recursos
-- [ ] Criar `src/domain/workflows/playbooks/DatabasePlaybook.ts`
-  - [ ] Heurísticas de detecção (pool de conexões esgotado, slow query, table lock, deadlock)
-  - [ ] Protocolo investigativo: métricas de pool vs conexões ativas e detecção de queries em execução anômala
-- [ ] Registrar os playbooks de infraestrutura no `PlaybookRegistry`
+- [x] Criar `src/domain/workflows/playbooks/KubernetesPlaybook.ts`
+  - [x] Heurísticas de detecção (pod reiniciando, CrashLoopBackOff, OOMKilled, deployment quebrado)
+  - [x] Protocolo investigativo: inspeção de status de pods, eventos de cluster e limites de recursos
+- [x] Criar `src/domain/workflows/playbooks/DatabasePlaybook.ts`
+  - [x] Heurísticas de detecção (pool de conexões esgotado, slow query, table lock, deadlock)
+  - [x] Protocolo investigativo: métricas de pool vs conexões ativas e detecção de queries em execução anômala
+- [x] Registrar os playbooks de infraestrutura no `PlaybookRegistry`
 
 ### Testes
-- [ ] Criar `src/domain/workflows/playbooks/KubernetesPlaybook.test.ts`
-  - [ ] Testar gatilhos de ativação para pods e cluster
-- [ ] Criar `src/domain/workflows/playbooks/DatabasePlaybook.test.ts`
-  - [ ] Testar gatilhos de ativação para banco e pools
-- [ ] Criar `src/harness/KubernetesInvestigation.integration.test.ts`
-  - [ ] Simular diagnóstico de pod reiniciando por OOMKilled
-- [ ] Criar `src/harness/DatabaseInvestigation.integration.test.ts`
-  - [ ] Simular diagnóstico de pool de conexões saturado e slow queries
+- [x] Criar `src/domain/workflows/playbooks/KubernetesPlaybook.test.ts`
+  - [x] Testar gatilhos de ativação para pods e cluster
+- [x] Criar `src/domain/workflows/playbooks/DatabasePlaybook.test.ts`
+  - [x] Testar gatilhos de ativação para banco e pools
+- [x] Criar `src/harness/KubernetesInvestigation.integration.test.ts`
+  - [x] Simular diagnóstico de pod reiniciando por OOMKilled
+- [x] Criar `src/harness/DatabaseInvestigation.integration.test.ts`
+  - [x] Simular diagnóstico de pool de conexões saturado e slow queries
 
 ### Verificação
-- [ ] `npm test` passa sem erros
-- [ ] Testes de integração de infraestrutura validados
+- [x] `npm test` passa sem erros
+- [x] Testes de integração de infraestrutura validados
 
 ---
 
@@ -161,29 +161,29 @@
 **Depende de:** ✅ 4D concluída  
 
 ### Implementação
-- [ ] Criar teste de integração ponta a ponta `src/harness/CrossDomainInvestigation.integration.test.ts`
-  - [ ] Simular cenário real cross-domain: erro 500 na API desencadeado por pool de conexões saturado no banco
-  - [ ] Validar que múltiplos playbooks colaboram gerando um `SessionSummary` unificado
-- [ ] Criar teste de Não-Regressão `src/harness/NonIncidentConversation.test.ts`
-  - [ ] Garantir que perguntas gerais ou comandos sem incidentes não ativam playbooks indevidamente
-- [ ] Atualizar documentações:
-  - [ ] Atualizar `roadmap.md` marcando a Fase 4 como concluída `[x]`
-  - [ ] Atualizar `architecture.md` com a camada de Workflows & Playbooks Modulares
-  - [ ] Criar `docs/phase4-summary.md` com os resultados consolidados da Fase 4
+- [x] Criar teste de integração ponta a ponta `src/harness/CrossDomainInvestigation.integration.test.ts`
+  - [x] Simular cenário real cross-domain: erro 500 na API desencadeado por pool de conexões saturado no banco
+  - [x] Validar que múltiplos playbooks colaboram gerando um `SessionSummary` unificado
+- [x] Criar teste de Não-Regressão `src/harness/NonIncidentConversation.test.ts`
+  - [x] Garantir que perguntas gerais ou comandos sem incidentes não ativam playbooks indevidamente
+- [x] Atualizar documentações:
+  - [x] Atualizar `roadmap.md` marcando a Fase 4 como concluída `[x]`
+  - [x] Atualizar `architecture.md` com a camada de Workflows & Playbooks Modulares
+  - [x] Criar `docs/phase4-summary.md` com os resultados consolidados da Fase 4
 
 ### Verificação Final
-- [ ] `npm test` — 100% dos testes aprovados (65+ arquivos de teste, zero falhas)
-- [ ] `npm run build` — compilação limpa em TypeScript strict (0 erros)
-- [ ] `npm run test:coverage` — cobertura mantida alta nos módulos de domínio e harness
+- [x] `npm test` — 100% dos testes aprovados (72 arquivos de teste, zero falhas)
+- [x] `npm run build` — compilação limpa em TypeScript strict (0 erros)
+- [x] `npm run test:coverage` — cobertura mantida alta nos módulos de domínio e harness
 
 ---
 
 ## Definition of Done (Fase 4 Completa)
 
-- [ ] Todas as sub-fases (4A, 4B, 4C, 4D, 4E) marcadas como concluídas
-- [ ] Core de investigação SRE plenamente operacional no runtime do agente
-- [ ] Catálogo de 4 playbooks funcionais: API Errors, Latency & Traces, Kubernetes, Database
-- [ ] Suporte comprovado a investigações isoladas e investigações cruzadas (cross-domain)
-- [ ] Resumo Executivo (`Session Summary`) gerado de forma padronizada com `runId` e evidências correlacionadas
-- [ ] Conversas informativas preservadas sem sobrecarga ou ativações indevidas
-- [ ] Suíte de testes automatizados com 100% de aprovação sem nenhuma regressão
+- [x] Todas as sub-fases (4A, 4B, 4C, 4D, 4E) marcadas como concluídas
+- [x] Core de investigação SRE plenamente operacional no runtime do agente
+- [x] Catálogo de 4 playbooks funcionais: API Errors, Latency & Traces, Kubernetes, Database
+- [x] Suporte comprovado a investigações isoladas e investigações cruzadas (cross-domain)
+- [x] Resumo Executivo (`Session Summary`) gerado de forma padronizada com `runId` e evidências correlacionadas
+- [x] Conversas informativas preservadas sem sobrecarga ou ativações indevidas
+- [x] Suíte de testes automatizados com 100% de aprovação sem nenhuma regressão

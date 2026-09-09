@@ -160,3 +160,27 @@ O sistema avalia a qualidade de suas próprias respostas sem necessidade de inte
 - **Health Checks (`/health`)**:
   - Liveness probe: status do processo Node.js.
   - Readiness probe: verificação ativa de conectividade com MongoDB, Redis e workers.
+
+---
+
+## 10. Support Workflows & Investigação Especializada de Incidentes (Fase 4)
+
+O Support Agent evoluiu de um bot conversacional reativo para uma **plataforma autônoma de investigação de incidentes de TI**, integrando um **Core SRE Investigation Engine** e um catálogo de **Playbooks Modulares Conectáveis (Pluggable Playbooks)**:
+
+- **Investigation Engine (Core SRE)**:
+  - Triagem inteligente de sintomas na mensagem do usuário.
+  - Orquestração do ciclo universal de troubleshooting: *Triagem ➔ Hipótese ➔ Coleta de Evidências ➔ Correlação Cruzada ➔ Causa Raiz (RCA) ➔ Session Summary*.
+  - Ativação transparente: conversas e dúvidas rotineiras de suporte continuam sendo respondidas de forma limpa e direta sem sobrecarga de protocolos de incidente.
+- **Catálogo de Playbooks Especializados**:
+  - **API & Service Errors (`ApiErrorPlaybook`)**: Especialista em erros HTTP 5xx, falhas e exceções em endpoints. Consulta logs no Grafana Loki (`loki_query_logs`) e correlaciona com taxas de requisição de falha no Prometheus (`prometheus_query`).
+  - **Latency & Distributed Tracing (`LatencyTracePlaybook`)**: Diagnóstico de degradação de tempo de resposta e percentis anômalos (p95/p99). Inspeciona traces distribuídos no Grafana Tempo (`tempo_query_trace`) para isolar o span gargalo (banco, chamada RPC ou serviço externo).
+  - **Kubernetes & Infrastructure (`KubernetesPlaybook`)**: Diagnóstico de pods em `CrashLoopBackOff`, eventos de `OOMKilled` (Exit Code 137), contagem de restarts e limites de CPU/Memória vs consumo real.
+  - **Database & Connection Pool (`DatabasePlaybook`)**: Diagnóstico de exaustão de pool de conexões (HikariCP, etc.), detecção de queries em execução anômala (*slow queries*) e contenção por *table locks* ou *deadlocks*.
+- **Investigação Cruzada (Cross-Domain)**:
+  - Múltiplos playbooks podem ser ativados cooperativamente na mesma sessão (ex: erro 500 na API decorrente de esgotamento de conexões no PostgreSQL).
+- **Caderno de Evidências (`EvidenceLedger`)**:
+  - Estrutura de domínio para consolidação e formatação de evidências de telemetria coletadas pelo agente ao longo do ciclo iterativo.
+- **Resumo Executivo de Sessão (`SessionSummary`)**:
+  - Formatação corporativa padronizada ao final de cada diagnóstico, contendo: `runId`, serviço afetado, janela temporal do incidente, evidências consolidadas (logs, métricas, traces, infra, db), hipótese fundamentada de causa raiz (RCA) e ações recomendadas de mitigação e correção estrutural.
+- **Autonomia Controlada (Read-Only)**:
+  - O agente coleta evidências, correlaciona dados e recomenda ações de remediação, sem executar comandos destrutivos ou mutações de infraestrutura sem supervisão humana.
