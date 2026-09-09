@@ -40,6 +40,8 @@ import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
 import { PlaybookRegistry } from '../domain/workflows/PlaybookRegistry.js';
 import { InvestigationEngine } from '../harness/InvestigationEngine.js';
+import { ApiErrorPlaybook } from '../domain/workflows/playbooks/ApiErrorPlaybook.js';
+import { LatencyTracePlaybook } from '../domain/workflows/playbooks/LatencyTracePlaybook.js';
 import { AESEncryptionService } from '../infrastructure/security/AESEncryptionService.js';
 import { IdempotencyGuard } from '../infrastructure/resilience/IdempotencyGuard.js';
 
@@ -114,6 +116,8 @@ const agentHarness = new AgentHarness(
 
 // ─── Playbooks & Investigation Engine ───────────────
 export const playbookRegistry = new PlaybookRegistry();
+playbookRegistry.register(new ApiErrorPlaybook());
+playbookRegistry.register(new LatencyTracePlaybook());
 export const investigationEngine = new InvestigationEngine(playbookRegistry);
 
 // ─── Use Cases ───────────────────────────────────────

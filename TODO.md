@@ -94,32 +94,32 @@
 **Depende de:** ✅ 4B concluída  
 
 ### Implementação
-- [ ] Criar `src/domain/workflows/playbooks/ApiErrorPlaybook.ts`
-  - [ ] Heurísticas de detecção (HTTP 5xx, erro em API, exception, endpoint falhando)
-  - [ ] Protocolo investigativo: consulta de logs no Loki + correlação com métricas de 5xx no Prometheus
-  - [ ] Identificação da janela temporal do incidente e hipótese de causa raiz
-- [ ] Criar `src/domain/workflows/playbooks/LatencyTracePlaybook.ts`
-  - [ ] Heurísticas de detecção (lentidão, timeout, p95/p99 elevado)
-  - [ ] Protocolo investigativo: consulta de traces no Grafana Tempo + localização do span gargalo
-  - [ ] Correlação com deploys recentes
-- [ ] Registrar os novos playbooks no container de injeção de dependências / `PlaybookRegistry`
+- [x] Criar `src/domain/workflows/playbooks/ApiErrorPlaybook.ts`
+  - [x] Heurísticas de detecção (HTTP 5xx, erro em API, exception, endpoint falhando)
+  - [x] Protocolo investigativo: consulta de logs no Loki + correlação com métricas de 5xx no Prometheus
+  - [x] Identificação da janela temporal do incidente e hipótese de causa raiz
+- [x] Criar `src/domain/workflows/playbooks/LatencyTracePlaybook.ts`
+  - [x] Heurísticas de detecção (lentidão, timeout, p95/p99 elevado)
+  - [x] Protocolo investigativo: consulta de traces no Grafana Tempo + localização do span gargalo
+  - [x] Correlação com deploys recentes
+- [x] Registrar os novos playbooks no container de injeção de dependências / `PlaybookRegistry`
 
 ### Testes
-- [ ] Criar `src/domain/workflows/playbooks/ApiErrorPlaybook.test.ts`
-  - [ ] Testar gatilhos de ativação para mensagens de erro em API
-  - [ ] Validar instruções e ferramentas recomendadas
-- [ ] Criar `src/domain/workflows/playbooks/LatencyTracePlaybook.test.ts`
-  - [ ] Testar gatilhos de ativação para problemas de latência e timeout
-  - [ ] Validar instruções e ferramentas recomendadas
-- [ ] Criar `src/harness/ApiErrorInvestigation.integration.test.ts`
-  - [ ] Simular incidente real de erro 500 com ferramentas MCP simuladas (Loki + Prometheus)
-  - [ ] Verificar geração correta da hipótese de RCA e do Session Summary
-- [ ] Criar `src/harness/LatencyInvestigation.integration.test.ts`
-  - [ ] Simular diagnóstico de alta latência identificando span no Tempo
+- [x] Criar `src/domain/workflows/playbooks/ApiErrorPlaybook.test.ts`
+  - [x] Testar gatilhos de ativação para mensagens de erro em API
+  - [x] Validar instruções e ferramentas recomendadas
+- [x] Criar `src/domain/workflows/playbooks/LatencyTracePlaybook.test.ts`
+  - [x] Testar gatilhos de ativação para problemas de latência e timeout
+  - [x] Validar instruções e ferramentas recomendadas
+- [x] Criar `src/harness/ApiErrorInvestigation.integration.test.ts`
+  - [x] Simular incidente real de erro 500 com ferramentas MCP simuladas (Loki + Prometheus)
+  - [x] Verificar geração correta da hipótese de RCA e do Session Summary
+- [x] Criar `src/harness/LatencyInvestigation.integration.test.ts`
+  - [x] Simular diagnóstico de alta latência identificando span no Tempo
 
 ### Verificação
-- [ ] `npm test` passa sem falhas
-- [ ] Validação do fluxo de correlação de logs e métricas
+- [x] `npm test` passa sem falhas (66/66 arquivos, 402/402 testes aprovados)
+- [x] Validação do fluxo de correlação de logs e métricas comprovada em testes de integração
 
 ---
 
