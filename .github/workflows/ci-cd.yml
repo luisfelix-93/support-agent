@@ -8,10 +8,10 @@ on:
 
 jobs:
   # ─────────────────────────────────────────────
-  # Job 1: Testes Unitários
+  # Job 1: Testes Unitários e de Integração (Fail-Fast)
   # ─────────────────────────────────────────────
   test:
-    name: Unit Tests
+    name: Test Suite (Unit & Integration)
     runs-on: ubuntu-latest
 
     steps:
@@ -28,7 +28,10 @@ jobs:
         run: npm ci
 
       - name: Executar testes unitários
-        run: npm test
+        run: npm run test:unit
+
+      - name: Executar testes de integração
+        run: npm run test:integration
 
   # ─────────────────────────────────────────────
   # Job 2: Build & Push da imagem Docker para o Docker Hub
