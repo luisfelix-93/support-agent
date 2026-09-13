@@ -44,34 +44,34 @@
 
 **Branch:** `feature/phase-6-multi-mcp-platform`  
 **Responsável:** `database-architect` / `backend-specialist`  
-**Depende de:** Sub-Fase 6A concluída  
-**Status:** ⏳ Pendente  
+**Depende de:** ✅ Sub-Fase 6A concluída  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Atualizar entidade `Tenant` em `src/domain/Tenant.ts`:
-  - [ ] Definir interface `MCPServerConfig` (`id`, `name`, `url`, `apiKey?`, `domains?`, `timeoutMs?`, `enabled?`)
-  - [ ] Adicionar campo opcional `mcpServers?: MCPServerConfig[]` mantendo `mcpConfig?: MCPConfig` para retrocompatibilidade
-- [ ] Atualizar `src/repositories/TenantRepository.ts`:
-  - [ ] Criptografia AES-256-GCM para as API Keys de todos os servidores da lista `mcpServers` ao persistir no MongoDB
-  - [ ] Descriptografia segura de cada `apiKey` ao carregar o tenant do banco
-  - [ ] Mascaramento de segurança em consultas administrativas (`maskApiKey`)
-  - [ ] Suporte bidirecional a tenants legados com apenas `mcpConfig`
-- [ ] Atualizar `src/usecases/RegisterTenantUseCase.ts`:
-  - [ ] Aceitar lista de servidores MCP no input (`mcpServers`)
-  - [ ] Validação de integridade (IDs de servidores únicos, URLs válidas)
-- [ ] Atualizar `src/controllers/OnboardingController.ts` para receber e validar payload multi-MCP
+- [x] Atualizar entidade `Tenant` em `src/domain/Tenant.ts`:
+  - [x] Definir interface `MCPServerConfig` (`id`, `name`, `url`, `apiKey?`, `domains?`, `timeoutMs?`, `enabled?`)
+  - [x] Adicionar campo opcional `mcpServers?: MCPServerConfig[]` mantendo `mcpConfig?: MCPConfig` para retrocompatibilidade
+- [x] Atualizar `src/repositories/TenantRepository.ts`:
+  - [x] Criptografia AES-256-GCM para as API Keys de todos os servidores da lista `mcpServers` ao persistir no MongoDB
+  - [x] Descriptografia segura de cada `apiKey` ao carregar o tenant do banco
+  - [x] Mascaramento de segurança em consultas administrativas (`maskApiKey`)
+  - [x] Suporte bidirecional a tenants legados com apenas `mcpConfig`
+- [x] Atualizar `src/usecases/RegisterTenantUseCase.ts`:
+  - [x] Aceitar lista de servidores MCP no input (`mcpServers`)
+  - [x] Validação de integridade (IDs de servidores únicos, URLs válidas)
+- [x] Atualizar `src/controllers/OnboardingController.ts` para receber e validar payload multi-MCP
 
 ### Testes
-- [ ] Atualizar `src/repositories/TenantRepository.test.ts`:
-  - [ ] Testar salvamento e criptografia de múltiplos servidores MCP
-  - [ ] Testar carregamento com descriptografia correta
-  - [ ] Testar retrocompatibilidade com documentos legados (single `mcpConfig`)
-- [ ] Atualizar `src/usecases/RegisterTenantUseCase.test.ts`
-- [ ] Atualizar `src/controllers/OnboardingController.test.ts`
+- [x] Atualizar `src/repositories/TenantRepository.test.ts`:
+  - [x] Testar salvamento e criptografia de múltiplos servidores MCP
+  - [x] Testar carregamento com descriptografia correta
+  - [x] Testar retrocompatibilidade com documentos legados (single `mcpConfig`)
+- [x] Atualizar `src/usecases/RegisterTenantUseCase.test.ts` (9 testes)
+- [x] Criar `src/controllers/OnboardingController.test.ts` (11 testes)
 
 ### Verificação
-- [ ] `npm test` passa com 100% de sucesso
-- [ ] `npm run build` compila sem erros
+- [x] `npm test` passa com 100% de sucesso (80/80 arquivos, 509/509 testes aprovados)
+- [x] `npm run build` compila sem erros (TypeScript strict 0 erros)
 
 ---
 
