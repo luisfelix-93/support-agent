@@ -1,6 +1,11 @@
 import type { ToolCall } from "../ToolCall.js";
 import type { MCPInitializeResult } from "../MCPServerCapabilities.js";
 
+export interface ToolFilterOptions {
+    domains?: string[];
+    playbookIds?: string[];
+}
+
 export interface IMCPClient {
     /**
      * Realiza o handshake MCP completo (initialize + initialized notification).
@@ -14,8 +19,8 @@ export interface IMCPClient {
      */
     isConnected(): boolean;
 
-    // Lista dinamicamente as ferramentas suportadas pelo tenant
-    listTools(): Promise<any>;
+    // Lista dinamicamente as ferramentas suportadas pelo tenant ou servidores registrados
+    listTools(options?: ToolFilterOptions): Promise<any>;
 
     // Executa uma ferramenta específica no servidor MCP e devolve o resultado cru
     executeTool(tool: ToolCall): Promise<any>;
