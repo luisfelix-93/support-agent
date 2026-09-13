@@ -8,7 +8,7 @@ import type {
     MemoryType,
     MemoryStatus
 } from "../domain/Memory.js";
-import type { IMemoryRepository } from "../domain/ports/IMemoryRepository.js";
+import type { IMemoryRepository, MemoryFilterOptions } from "../domain/ports/IMemoryRepository.js";
 import { reciprocalRankFusion } from "../domain/algorithms/ReciprocalRankFusion.js";
 import { logger } from "../config/logger.js";
 import {
@@ -171,6 +171,49 @@ export class MongoMemoryRepository implements IMemoryRepository {
     async delete(id: string, tenantId: string): Promise<boolean> {
         const result = await this.collection.deleteOne({ _id: id, tenantId });
         return result.deletedCount > 0;
+    }
+
+    async find(filter: MemoryFilterOptions): Promise<{ total: number; memories: Memory[] }> {
+        const query: any = { tenantId: filter.tenantId };
+        if (filter.workspaceId) query.workspaceId = filter.workspaceId;
+        if (filter.status) query.status = filter.status;
+        if (filter.type) query.type = filter.type;
+        if (filter.tag) query.tags = filter.tag.toLowerCase();
+
+        const limit = Math.min(100, Math.max(1, filter.limit ?? 20));
+        const offset = Math.max(0, filter.offset ?? 0);
+
+        const [total, docs] = await Promise.all([
+            this.collection.countDocuments(query),
+            this.collection
+                .find(query)
+                .sort({ createdAt: -1 })
+                .skip(offset)
+                .limit(limit)
+                .toArray(),
+        ]);
+
+        return {
+            total,
+            memories: docs.map(doc => this.toDomain(doc)),
+        };
+    }
+
+    async update(id: string, tenantId: string, updateData: Partial<Memory>): Promise<Memory | null> {
+        const existing = await this.findById(id, tenantId);
+        if (!existing) return null;
+
+        const updated: Memory = {
+            ...existing,
+            ...updateData,
+            id: existing.id,
+            tenantId: existing.tenantId,
+            status: updateData.status ?? 'updated',
+            updatedAt: new Date(),
+        };
+
+        await this.save(updated);
+        return updated;
     }
 
     async ensureIndexes(): Promise<void> {

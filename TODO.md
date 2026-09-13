@@ -108,24 +108,26 @@
 **Depende de:** ✅ 5C concluída  
 
 ### Implementação
-- [ ] Criar `src/controllers/MemoryController.ts`
-  - [ ] `GET /api/memories` — Listar com filtros e paginação
-  - [ ] `POST /api/memories/search` — Endpoint de teste operacional de busca híbrida
-  - [ ] `GET /api/memories/candidates` — Fila de memórias pendentes de curadoria
-  - [ ] `PATCH /api/memories/:id/status` — Atualizar status de ciclo de vida
-  - [ ] `PUT /api/memories/:id` — Atualizar conteúdo e tags
-  - [ ] `DELETE /api/memories/:id` — Exclusão ou invalidação manual
-- [ ] Criar `src/api/memoryRouter.ts` com proteção de autenticação e RBAC
-- [ ] Registrar `memoryRouter` em `src/app.ts`
-- [ ] Registrar `memoryController` em `src/config/container.ts`
+- [x] Criar `src/controllers/MemoryController.ts`
+  - [x] `GET /api/memories` — Listar com filtros e paginação
+  - [x] `POST /api/memories/search` — Endpoint de teste operacional de busca híbrida
+  - [x] `GET /api/memories/candidates` — Fila de memórias pendentes de curadoria
+  - [x] `PATCH /api/memories/:id/status` — Atualizar status de ciclo de vida com validação de máquina de estados
+  - [x] `PUT /api/memories/:id` — Atualizar conteúdo e tags
+  - [x] `DELETE /api/memories/:id` — Exclusão ou invalidação manual
+- [x] Criar `src/api/memoryRouter.ts` com proteção de autenticação e RBAC
+- [x] Registrar `memoryRouter` em `src/app.ts`
+- [x] Registrar `memoryController` em `src/config/container.ts`
 
 ### Testes
-- [ ] Criar `src/controllers/MemoryController.test.ts`
-- [ ] Criar `src/api/memoryRouter.test.ts`
+- [x] Criar `src/controllers/MemoryController.test.ts` (12 testes unitários)
+- [x] Criar `src/api/memoryRouter.test.ts` (8 testes de rotas e RBAC)
 
 ### Verificação
-- [ ] Todos os testes da API REST de memórias passam
-- [ ] Proteção RBAC validada (`viewer` leitura, `operator` alteração, `admin` deleção)
+- [x] Todos os testes da API REST de memórias passam
+- [x] Proteção RBAC validada (`viewer` leitura, `operator` alteração, `admin` deleção)
+- [x] `npm test` passa sem regressões (77/77 arquivos, 467/467 testes aprovados)
+- [x] Compilação limpa em TypeScript strict (`npm run build`)
 
 ---
 

@@ -45,6 +45,8 @@ describe('AgentHarness', () => {
             findByWorkspaceId: vi.fn().mockResolvedValue([]),
             findById: vi.fn().mockResolvedValue(null),
             delete: vi.fn().mockResolvedValue(true),
+            find: vi.fn().mockResolvedValue({ total: 0, memories: [] }),
+            update: vi.fn().mockResolvedValue(null),
             updateStatus: vi.fn().mockResolvedValue(true),
             findCandidates: vi.fn().mockResolvedValue([]),
             findExpired: vi.fn().mockResolvedValue([]),
@@ -144,7 +146,12 @@ describe('AgentHarness', () => {
             updatedAt: new Date()
         };
 
-        vi.mocked(memoryRepository.searchRelevant).mockResolvedValueOnce([fakeMemory]);
+        vi.mocked(memoryRepository.searchHybrid).mockResolvedValueOnce([{
+            memory: fakeMemory,
+            score: 0.9,
+            vectorRank: 1,
+            textRank: 1,
+        }]);
         vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
             type: 'text',
             content: 'Identifiquei que você possui plano Enterprise!'
@@ -170,7 +177,7 @@ describe('AgentHarness', () => {
             mcpClient
         });
 
-        expect(memoryRepository.searchRelevant).toHaveBeenCalledWith(
+        expect(memoryRepository.searchHybrid).toHaveBeenCalledWith(
             expect.objectContaining({
                 tenantId: 'tenant-1',
                 workspaceId: 'ws-1',
@@ -178,6 +185,57 @@ describe('AgentHarness', () => {
             })
         );
         expect(result.status).toBe('completed');
+    });
+
+    it('deve usar searchRelevant como fallback caso searchHybrid não esteja definido', async () => {
+        const { llmProvider, mcpClient, memoryRepository, embeddingProvider } = makeMocks();
+        const fakeMemory: Memory = {
+            id: 'mem-fallback',
+            tenantId: 'tenant-1',
+            workspaceId: 'ws-1',
+            type: 'fact',
+            status: 'active',
+            content: 'Cliente possui plano Enterprise.',
+            importance: 0.9,
+            createdAt: new Date(),
+            updatedAt: new Date()
+        };
+
+        // Remove searchHybrid para simular repositório legado
+        (memoryRepository as any).searchHybrid = undefined;
+        vi.mocked(memoryRepository.searchRelevant).mockResolvedValueOnce([fakeMemory]);
+        vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+            type: 'text',
+            content: 'Identifiquei que você possui plano Enterprise!'
+        });
+
+        const harness = new AgentHarness(
+            contextAssembler,
+            undefined,
+            undefined,
+            memoryRepository,
+            undefined,
+            embeddingProvider
+        );
+
+        const context = new ChatContext('thread-1', 'ws-1');
+        await harness.run({
+            tenantId: 'tenant-1',
+            workspaceId: 'ws-1',
+            threadId: 'thread-1',
+            userMessage: 'Qual é o meu plano?',
+            context,
+            llmProvider,
+            mcpClient
+        });
+
+        expect(memoryRepository.searchRelevant).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                query: 'Qual é o meu plano?'
+            })
+        );
     });
 
     it('deve executar o fluxo de ferramenta (tool_call) e resolver texto final', async () => {

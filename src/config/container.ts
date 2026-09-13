@@ -30,6 +30,7 @@ import { OnboardingController } from '../controllers/OnboardingController.js';
 import { AuthController } from '../controllers/AuthController.js';
 import { EvaluationController } from '../controllers/EvaluationController.js';
 import { AgentRunController } from '../controllers/AgentRunController.js';
+import { MemoryController } from '../controllers/MemoryController.js';
 import { AggregationService } from '../evaluation/AggregationService.js';
 import { RunAnalyticsService } from '../services/RunAnalyticsService.js';
 import { Redis } from 'ioredis';
@@ -166,6 +167,11 @@ export const aggregationService = new AggregationService(evaluationRepository);
 export const evaluationController = new EvaluationController(evaluationRepository, aggregationService);
 export const runAnalyticsService = new RunAnalyticsService(agentRunRepository);
 export const agentRunController = new AgentRunController(runAnalyticsService);
+export const memoryController = new MemoryController(
+    memoryRepository,
+    memoryReranker,
+    embeddingProvider
+);
 
 export const queueWorker = new BullMQWorker(
     redisConnection,

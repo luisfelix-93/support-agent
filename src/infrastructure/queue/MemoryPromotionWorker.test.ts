@@ -47,6 +47,8 @@ describe('MemoryPromotionWorker', () => {
             findByWorkspaceId: vi.fn().mockResolvedValue([]),
             findById: vi.fn().mockResolvedValue(null),
             delete: vi.fn().mockResolvedValue(true),
+            find: vi.fn().mockResolvedValue({ total: 0, memories: [] }),
+            update: vi.fn().mockResolvedValue(null),
             updateStatus: vi.fn().mockResolvedValue(true),
             findCandidates: vi.fn().mockResolvedValue([]),
             findExpired: vi.fn().mockResolvedValue([]),
