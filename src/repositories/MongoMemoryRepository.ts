@@ -9,6 +9,7 @@ import type {
     MemoryStatus
 } from "../domain/Memory.js";
 import type { IMemoryRepository } from "../domain/ports/IMemoryRepository.js";
+import { reciprocalRankFusion } from "../domain/algorithms/ReciprocalRankFusion.js";
 import { logger } from "../config/logger.js";
 import {
     agentMemorySearchDurationSeconds,
@@ -172,23 +173,162 @@ export class MongoMemoryRepository implements IMemoryRepository {
         return result.deletedCount > 0;
     }
 
-    async searchHybrid(input: HybridMemorySearchInput): Promise<HybridSearchResult[]> {
-        const limit = input.limit ?? 5;
-        const relevant = await this.searchRelevant({
-            tenantId: input.tenantId,
-            workspaceId: input.workspaceId,
-            query: input.query,
-            vector: input.vector,
-            limit,
-            threshold: input.threshold,
-        });
+    async ensureIndexes(): Promise<void> {
+        try {
+            await this.collection.createIndex(
+                { content: 'text', tags: 'text' },
+                {
+                    name: 'text_content_tags_idx',
+                    weights: { tags: 5, content: 1 },
+                    default_language: 'portuguese',
+                }
+            );
 
-        return relevant.map((memory, index) => ({
-            memory,
-            score: memory.importance,
-            vectorRank: index + 1,
-            textRank: index + 1,
-        }));
+            await this.collection.createIndex(
+                { expiresAt: 1 },
+                {
+                    name: 'ttl_expires_at_idx',
+                    expireAfterSeconds: 0,
+                }
+            );
+
+            await this.collection.createIndex(
+                { tenantId: 1, workspaceId: 1, status: 1, createdAt: -1 },
+                { name: 'tenant_workspace_status_created_idx' }
+            );
+
+            log.info('Índices de memória (Text, TTL, Multi-tenant) verificados/criados com sucesso.');
+        } catch (error) {
+            log.warn({ err: error }, 'Erro ao criar índices na coleção memories.');
+        }
+    }
+
+    async searchHybrid(input: HybridMemorySearchInput): Promise<HybridSearchResult[]> {
+        const startTime = Date.now();
+        try {
+            const limit = input.limit ?? 5;
+            const threshold = input.threshold ?? 0.65;
+            const statuses: MemoryStatus[] = input.statuses && input.statuses.length > 0
+                ? input.statuses
+                : ['active', 'validated'];
+
+            const candidateLimit = Math.max(limit * 3, 15);
+            const docMap = new Map<string, MemoryDocument>();
+
+            const baseFilter: any = {
+                tenantId: input.tenantId,
+                workspaceId: input.workspaceId,
+                status: { $in: statuses },
+            };
+
+            if (input.types && input.types.length > 0) {
+                baseFilter.type = { $in: input.types };
+            }
+            if (input.tags && input.tags.length > 0) {
+                baseFilter.tags = { $in: input.tags };
+            }
+
+            // 1. Busca Vetorial
+            const vectorResults: Array<{ id: string; score: number; importance: number }> = [];
+            if (input.vector && input.vector.length > 0) {
+                const vectorFilter = {
+                    ...baseFilter,
+                    embedding: { $exists: true, $ne: [] },
+                };
+
+                const candidateDocs = await this.collection.find(vectorFilter).toArray();
+                for (const doc of candidateDocs) {
+                    docMap.set(doc._id, doc);
+                    const sim = this.calculateCosineSimilarity(input.vector, doc.embedding || []);
+                    if (sim >= threshold) {
+                        vectorResults.push({ id: doc._id, score: sim, importance: doc.importance });
+                    }
+                }
+                vectorResults.sort((a, b) => b.score - a.score);
+                vectorResults.splice(candidateLimit);
+            }
+
+            // 2. Busca Textual (Termos Técnicos Exatos & Text Search)
+            const textResults: Array<{ id: string; score: number; importance: number }> = [];
+            const query = input.query ? input.query.trim() : '';
+
+            if (query) {
+                let textDocs: MemoryDocument[] = [];
+
+                try {
+                    const textFilter = {
+                        ...baseFilter,
+                        $text: { $search: query },
+                    };
+                    textDocs = await this.collection
+                        .find(textFilter, { projection: { score: { $meta: 'textScore' } } })
+                        .sort({ score: { $meta: 'textScore' } } as any)
+                        .limit(candidateLimit)
+                        .toArray();
+                } catch {
+                    // Fallback se text index não estiver disponível ou ambiente de mock
+                    textDocs = [];
+                }
+
+                if (textDocs.length === 0) {
+                    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const regexFilter = {
+                        ...baseFilter,
+                        $or: [
+                            { content: { $regex: escapedQuery, $options: 'i' } },
+                            { tags: { $regex: escapedQuery, $options: 'i' } },
+                        ],
+                    };
+                    textDocs = await this.collection
+                        .find(regexFilter)
+                        .sort({ importance: -1, createdAt: -1 })
+                        .limit(candidateLimit)
+                        .toArray();
+                }
+
+                textDocs.forEach((doc, idx) => {
+                    docMap.set(doc._id, doc);
+                    const score = (doc as any).score ?? Math.max(1.0, 10 - idx * 0.5);
+                    textResults.push({ id: doc._id, score, importance: doc.importance });
+                });
+            }
+
+            // 3. Reciprocal Rank Fusion (RRF)
+            const fused = reciprocalRankFusion(vectorResults, textResults, {
+                k: 60,
+                vectorWeight: input.weights?.vector ?? 1.0,
+                textWeight: input.weights?.text ?? 1.2,
+                importanceWeight: 0.3,
+            });
+
+            const topFused = fused.slice(0, limit);
+            const results: HybridSearchResult[] = [];
+
+            for (const item of topFused) {
+                let doc = docMap.get(item.id);
+                if (!doc) {
+                    doc = await this.collection.findOne({ _id: item.id, tenantId: input.tenantId }) ?? undefined;
+                }
+                if (doc) {
+                    results.push({
+                        memory: this.toDomain(doc),
+                        score: item.rrfScore,
+                        vectorRank: item.vectorRank,
+                        textRank: item.textRank,
+                        vectorScore: item.vectorScore,
+                        textScore: item.textScore,
+                    });
+                }
+            }
+
+            return results;
+        } finally {
+            const durationSeconds = (Date.now() - startTime) / 1000;
+            agentMemorySearchDurationSeconds.observe(
+                { tenantId: input.tenantId, searchType: 'hybrid' },
+                durationSeconds
+            );
+        }
     }
 
     async updateStatus(

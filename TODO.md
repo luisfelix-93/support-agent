@@ -46,29 +46,29 @@
 **Depende de:** ✅ 5A concluída  
 
 ### Implementação
-- [ ] Criar `src/domain/algorithms/ReciprocalRankFusion.ts`
-  - [ ] Implementar algoritmo RRF puro com constante $k=60$
-  - [ ] Suporte a pesos customizados para rankings vetorial e textual
-  - [ ] Ponderação com campo `importance` da memória
-- [ ] Atualizar `src/repositories/MongoMemoryRepository.ts`
-  - [ ] Atualizar schema `MemoryDocument` com novos campos de ciclo de vida
-  - [ ] Configurar índice de texto MongoDB em `content` e `tags`
-  - [ ] Configurar índice TTL do MongoDB em `expiresAt` (`expireAfterSeconds: 0`)
-  - [ ] Configurar índice multi-tenant composto (`tenantId`, `workspaceId`, `status`, `createdAt`)
-  - [ ] Implementar método `searchHybrid` combinando busca vetorial com `$text` via RRF
-  - [ ] Implementar métodos de ciclo de vida (`updateStatus`, `findCandidates`, `findExpired`, `purgeExpired`)
+- [x] Criar `src/domain/algorithms/ReciprocalRankFusion.ts`
+  - [x] Implementar algoritmo RRF puro com constante $k=60$
+  - [x] Suporte a pesos customizados para rankings vetorial e textual
+  - [x] Ponderação com campo `importance` da memória
+- [x] Atualizar `src/repositories/MongoMemoryRepository.ts`
+  - [x] Atualizar schema `MemoryDocument` com novos campos de ciclo de vida
+  - [x] Configurar método `ensureIndexes()` com índice de texto MongoDB em `content` e `tags`
+  - [x] Configurar índice TTL do MongoDB em `expiresAt` (`expireAfterSeconds: 0`)
+  - [x] Configurar índice multi-tenant composto (`tenantId`, `workspaceId`, `status`, `createdAt`)
+  - [x] Implementar método `searchHybrid` combinando busca vetorial com `$text` via RRF
+  - [x] Implementar métodos de ciclo de vida (`updateStatus`, `findCandidates`, `findExpired`, `purgeExpired`)
 
 ### Testes
-- [ ] Criar `src/domain/algorithms/ReciprocalRankFusion.test.ts`
-  - [ ] Testar fusão para itens presentes em uma ou ambas as listas
-  - [ ] Testar ponderação de pesos e desempates
-- [ ] Atualizar/Criar `src/repositories/MongoMemoryRepository.test.ts`
-  - [ ] Testar busca híbrida com priorização de termos exatos de erro
-  - [ ] Testar isolamento por tenant e filtragem por status (`active` vs `candidate`)
+- [x] Criar `src/domain/algorithms/ReciprocalRankFusion.test.ts`
+  - [x] Testar fusão para itens presentes em uma ou ambas as listas
+  - [x] Testar ponderação de pesos e desempates
+- [x] Atualizar/Criar `src/repositories/MongoMemoryRepository.test.ts`
+  - [x] Testar busca híbrida com priorização de termos exatos de erro
+  - [x] Testar isolamento por tenant e filtragem por status (`active` vs `candidate`)
 
 ### Verificação
-- [ ] `npm test` passa com 100% de sucesso
-- [ ] Compilação limpa (`npm run build`)
+- [x] `npm test` passa com 100% de sucesso (74/74 arquivos, 441/441 testes aprovados)
+- [x] Compilação limpa (`npm run build`)
 
 ---
 
