@@ -79,24 +79,25 @@
 **Depende de:** ✅ 5B concluída  
 
 ### Implementação
-- [ ] Criar `src/services/ContextualMemoryReranker.ts`
-  - [ ] Implementar `IMemoryReranker` com heurísticas de relevância operacional e recência
-- [ ] Atualizar `src/infrastructure/memory/LLMMemoryExtractor.ts`
-  - [ ] Adicionar extração de `confidenceScore` e `tags` no prompt estruturado
-  - [ ] Definir TTL padrão por categoria de memória (`incident` 30d, `resolution` 90d, `fact` indefinido)
-  - [ ] Atribuir status inicial baseado no score de confiança (`active` >= 0.8 vs `candidate` < 0.8)
-- [ ] Atualizar `src/harness/ContextAssembler.ts`
-  - [ ] Integrar recuperação híbrida via `searchHybrid` e `ContextualMemoryReranker`
-- [ ] Atualizar `src/config/container.ts` com as novas dependências
+- [x] Criar `src/services/ContextualMemoryReranker.ts`
+  - [x] Implementar `IMemoryReranker` com heurísticas de relevância operacional e recência
+- [x] Atualizar `src/infrastructure/memory/LLMMemoryExtractor.ts`
+  - [x] Adicionar extração de `confidenceScore` e `tags` no prompt estruturado
+  - [x] Definir TTL padrão por categoria de memória (`incident` 30d, `resolution` 90d, `fact` indefinido)
+  - [x] Atribuir status inicial baseado no score de confiança (`active` >= 0.8 vs `candidate` < 0.8)
+- [x] Atualizar `src/harness/ContextAssembler.ts`
+  - [x] Integrar recuperação híbrida via `searchHybrid` e `ContextualMemoryReranker`
+  - [x] Injetar tags contextuais formatadas no prompt de sistema
+- [x] Atualizar `src/config/container.ts` com as novas dependências
 
 ### Testes
-- [ ] Criar `src/services/ContextualMemoryReranker.test.ts`
-- [ ] Atualizar `src/infrastructure/memory/LLMMemoryExtractor.test.ts`
-- [ ] Atualizar `src/harness/ContextAssembler.test.ts`
+- [x] Criar `src/services/ContextualMemoryReranker.test.ts`
+- [x] Atualizar `src/infrastructure/memory/LLMMemoryExtractor.test.ts`
+- [x] Atualizar `src/harness/ContextAssembler.test.ts`
 
 ### Verificação
-- [ ] `npm test` passa sem erros
-- [ ] Testes de montagem de contexto no harness aprovados
+- [x] `npm test` passa sem erros (75/75 arquivos, 446/446 testes aprovados)
+- [x] Compilação limpa em TypeScript strict (`npm run build`)
 
 ---
 

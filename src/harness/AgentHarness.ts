@@ -6,6 +6,7 @@ import type { IMemoryRepository } from "../domain/ports/IMemoryRepository.js";
 import type { IQueueService } from "../domain/ports/IQueueService.js";
 import type { IEmbeddingProvider } from "../domain/ports/IEmbeddingProvider.js";
 import type { IAgentRunRepository } from "../domain/ports/IAgentRunRepository.js";
+import type { IMemoryReranker } from "../domain/ports/IMemoryReranker.js";
 import type { Memory } from "../domain/Memory.js";
 import { AgentRun, type ToolCallRecord } from "../domain/AgentRun.js";
 import type { LLMCallRecord } from "../domain/LLMCallRecord.js";
@@ -37,7 +38,8 @@ export class AgentHarness implements IAgentHarness {
         private readonly memoryRepository?: IMemoryRepository,
         private readonly queueService?: IQueueService,
         private readonly embeddingProvider?: IEmbeddingProvider,
-        private readonly agentRunRepository?: IAgentRunRepository
+        private readonly agentRunRepository?: IAgentRunRepository,
+        private readonly memoryReranker?: IMemoryReranker
     ) {}
 
     async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -165,13 +167,31 @@ export class AgentHarness implements IAgentHarness {
                                         'agent.has_vector': !!queryVector,
                                     },
                                 },
-                                async () => this.memoryRepository!.searchRelevant({
-                                    tenantId: input.tenantId,
-                                    workspaceId: input.workspaceId,
-                                    query: input.userMessage,
-                                    vector: queryVector,
-                                    limit: 5,
-                                })
+                                async () => {
+                                    if (typeof this.memoryRepository!.searchHybrid === 'function') {
+                                        const hybridResults = await this.memoryRepository!.searchHybrid({
+                                            tenantId: input.tenantId,
+                                            workspaceId: input.workspaceId,
+                                            query: input.userMessage!,
+                                            vector: queryVector,
+                                            limit: 5,
+                                        });
+
+                                        if (this.memoryReranker) {
+                                            const reranked = await this.memoryReranker.rerank(hybridResults, input.userMessage!);
+                                            return reranked.map(r => r.memory);
+                                        }
+                                        return hybridResults.map(r => r.memory);
+                                    }
+
+                                    return this.memoryRepository!.searchRelevant({
+                                        tenantId: input.tenantId,
+                                        workspaceId: input.workspaceId,
+                                        query: input.userMessage,
+                                        vector: queryVector,
+                                        limit: 5,
+                                    });
+                                }
                             );
                         } catch (memError) {
                             log.warn({ err: memError }, 'Falha ao buscar memórias de longo prazo. Continuando sem memórias.');

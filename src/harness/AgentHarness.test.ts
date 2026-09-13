@@ -40,10 +40,15 @@ describe('AgentHarness', () => {
             save: vi.fn().mockResolvedValue(undefined),
             saveBatch: vi.fn().mockResolvedValue(undefined),
             searchRelevant: vi.fn().mockResolvedValue([]),
+            searchHybrid: vi.fn().mockResolvedValue([]),
             findByTenantId: vi.fn().mockResolvedValue([]),
             findByWorkspaceId: vi.fn().mockResolvedValue([]),
             findById: vi.fn().mockResolvedValue(null),
             delete: vi.fn().mockResolvedValue(true),
+            updateStatus: vi.fn().mockResolvedValue(true),
+            findCandidates: vi.fn().mockResolvedValue([]),
+            findExpired: vi.fn().mockResolvedValue([]),
+            purgeExpired: vi.fn().mockResolvedValue(0),
         };
 
         const queueService: IQueueService = {
@@ -132,6 +137,7 @@ describe('AgentHarness', () => {
             tenantId: 'tenant-1',
             workspaceId: 'ws-1',
             type: 'fact',
+            status: 'active',
             content: 'Cliente possui plano Enterprise.',
             importance: 0.9,
             createdAt: new Date(),

@@ -21,10 +21,13 @@ export class ContextAssembler implements IContextAssembler {
             );
         }
 
-        // 2. Memórias de longo prazo se fornecidas (Fases futuras)
+        // 2. Memórias de longo prazo se fornecidas (Fase 4 & 5)
         if (options.memories && options.memories.length > 0) {
             const memoryText = options.memories
-                .map(m => `- [${m.type.toUpperCase()}] ${m.content}`)
+                .map(m => {
+                    const tagInfo = m.tags && m.tags.length > 0 ? ` [tags: ${m.tags.join(', ')}]` : '';
+                    return `- [${m.type.toUpperCase()}] ${m.content}${tagInfo}`;
+                })
                 .join('\n');
             assembledMessages.push(
                 new Message(

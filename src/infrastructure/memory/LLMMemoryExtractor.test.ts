@@ -124,13 +124,30 @@ describe('LLMMemoryExtractor', () => {
         expect(memories).toEqual([]);
     });
 
-    it('deve retornar array vazio se a resposta do LLM for uma tool_call', async () => {
+    it('deve extrair confidenceScore, tags e classificar status como candidate se confiança < 0.8', async () => {
+        const jsonResponse = JSON.stringify([
+            {
+                type: 'incident',
+                content: 'Possível lentidão causada por consulta não indexada na tabela users.',
+                importance: 0.7,
+                confidenceScore: 0.65,
+                tags: ['users', 'slow-query', 'database'],
+            },
+            {
+                type: 'fact',
+                content: 'O pool HikariCP tem tamanho máximo de 20 conexões.',
+                importance: 0.9,
+                confidenceScore: 0.95,
+                tags: ['hikaricp', 'pool'],
+            }
+        ]);
+
         vi.mocked(mockLLMProvider.generateResponse).mockResolvedValue({
-            type: 'tool_call',
-            tool: { id: 'call_1', name: 'some_tool', parameters: {} },
+            type: 'text',
+            content: jsonResponse,
         });
 
-        const messages = [new Message('1', 'user', 'Oi!')];
+        const messages = [new Message('1', 'user', 'Acho que a tabela users está lenta sem índice.')];
 
         const memories = await extractor.extract({
             tenantId: 'tenant-1',
@@ -140,6 +157,19 @@ describe('LLMMemoryExtractor', () => {
             llmProvider: mockLLMProvider,
         });
 
-        expect(memories).toEqual([]);
+        expect(memories).toHaveLength(2);
+        // Primeiro item: confidence 0.65 < 0.8 => candidate, tipo incident => TTL 30 dias
+        expect(memories[0].status).toBe('candidate');
+        expect(memories[0].confidenceScore).toBe(0.65);
+        expect(memories[0].tags).toEqual(['users', 'slow-query', 'database']);
+        expect(memories[0].ttlSeconds).toBe(30 * 24 * 60 * 60);
+        expect(memories[0].expiresAt).toBeDefined();
+
+        // Segundo item: confidence 0.95 >= 0.8 => active, tipo fact => permanente (sem TTL)
+        expect(memories[1].status).toBe('active');
+        expect(memories[1].confidenceScore).toBe(0.95);
+        expect(memories[1].tags).toEqual(['hikaricp', 'pool']);
+        expect(memories[1].ttlSeconds).toBeUndefined();
+        expect(memories[1].expiresAt).toBeUndefined();
     });
 });
