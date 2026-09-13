@@ -44,4 +44,33 @@ describe('ContextAssembler', () => {
         expect(assembled.messages.length).toBeLessThan(10);
         expect(assembled.messages[assembled.messages.length - 1].content).toContain('10');
     });
+
+    it('deve injetar memórias formatadas incluindo tags contextuais no prompt', async () => {
+        const context = new ChatContext('thread-1', 'ws-1');
+        context.addMessage(new Message('msg-1', 'user', 'Como resolvo o timeout?'));
+
+        const assembled = await assembler.assemble(context, {
+            memories: [
+                {
+                    id: 'mem-1',
+                    tenantId: 'tenant-1',
+                    workspaceId: 'ws-1',
+                    type: 'resolution',
+                    status: 'active',
+                    content: 'Aumentar o pool do HikariCP para 30 conexões resolve timeouts em pico.',
+                    importance: 0.9,
+                    tags: ['hikaricp', 'timeout', 'postgres'],
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                }
+            ]
+        });
+
+        expect(assembled.messages.length).toBe(2);
+        const systemMsg = assembled.messages[0];
+        expect(systemMsg.role).toBe('system');
+        expect(systemMsg.content).toContain('Contexto Relevante de Memória:');
+        expect(systemMsg.content).toContain('[RESOLUTION] Aumentar o pool do HikariCP para 30 conexões');
+        expect(systemMsg.content).toContain('[tags: hikaricp, timeout, postgres]');
+    });
 });

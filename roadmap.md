@@ -49,13 +49,13 @@ O Support Agent já possui uma fundação técnica robusta e validada em produç
                     └─────────┬─────────┘
                               ▼
                     ┌───────────────────┐
-                    │ 5. MEMORY 2.0     │  🔄 Próximo Foco
+                    │ 5. MEMORY 2.0     │  ✅ Concluída
                     │ Contexto híbrido  │
                     │ e ciclo de vida   │
                     └─────────┬─────────┘
                               ▼
                     ┌───────────────────┐
-                    │ 6. MCP PLATFORM   │  🔄 Planejada
+                    │ 6. MCP PLATFORM   │  🔄 Próximo Foco
                     │ Registry &        │
                     │ Tool Governance   │
                     └─────────┬─────────┘
@@ -163,27 +163,41 @@ Evolução do Support Agent de um bot de perguntas e respostas para um **investi
 
 ---
 
+## Fase 5 — Memory 2.0 (Recuperação Híbrida & Ciclo de Vida)
+**Prioridade: 🔴 P0** | **Status: ✅ Concluída**
+
+Evolução do subsistema de memória corporativa para garantir recuperação de precisão cirúrgica de termos operacionais, governança e expiração automática:
+
+- **Motor de Recuperação Híbrida & RRF**:
+  - [x] Algoritmo puro de Reciprocal Rank Fusion (`ReciprocalRankFusion`, $k=60$) combinando rankings vetoriais e textuais com pesos configuráveis ($w_{text}=1.2$, $w_{vector}=1.0$) e ponderação por importância da memória.
+  - [x] Criação de índices MongoDB nativos: Text Search (`content` e `tags` com peso 5:1), TTL index em `expiresAt` (`expireAfterSeconds: 0`) e índice composto multi-tenant (`tenantId`, `workspaceId`, `status`, `createdAt`).
+  - [x] Método `searchHybrid` com fallback transparente a expressões regulares (`$regex`) para garantia de resiliência.
+- **Contextual Memory Reranker & Harness**:
+  - [x] `ContextualMemoryReranker` com detecção de termos operacionais (códigos HTTP, constantes de erro `ERR_*`, slugs de pods/serviços), bonificação de correspondência exata e decaimento exponencial de recência (~35 dias).
+  - [x] Integração no `AgentHarness` e injeção formatada de memórias com tags contextuais e tipos (`[INCIDENT]`, `[tags: ...]`) via `ContextAssembler`.
+  - [x] Extração aprimorada no `LLMMemoryExtractor` com atribuição de `confidenceScore`, `tags` e cálculo automático de TTL baseado na categoria da memória (`incident` 30d, `resolution` 90d, `fact` permanente).
+- **Máquina de Estados de Ciclo de Vida**:
+  - [x] Estados formais: `candidate` $\to$ `validated` $\to$ `active` $\to$ `updated` $\to$ `expired`.
+  - [x] Validação estrita de transições com `MemoryLifecycle.canTransition`.
+  - [x] Atribuição inicial baseada em limiar de confiança ($\ge 0.8 \to \text{active}$, $< 0.8 \to \text{candidate}$).
+  - [x] Métodos de repositório para expiração: `findExpired` e `purgeExpired`.
+- **API REST de Governança de Memória (`/api/memories`)**:
+  - [x] `GET /api/memories`: Listagem paginada multi-tenant com filtros por status, tipo e tag (`viewer`, `operator`, `admin`).
+  - [x] `POST /api/memories/search`: Endpoint operacional de teste de busca híbrida (`viewer`, `operator`, `admin`).
+  - [x] `GET /api/memories/candidates`: Fila de memórias candidatas pendentes de curadoria (`operator`, `admin`).
+  - [x] `PATCH /api/memories/:id/status`: Transição de status com validação de máquina de estados e auditoria (`operator`, `admin`).
+  - [x] `PUT /api/memories/:id`: Edição de conteúdo, importância e tags (`operator`, `admin`).
+  - [x] `DELETE /api/memories/:id`: Exclusão definitiva de memórias obsoletas (`admin`).
+  - [x] Proteção completa com autenticação JWT, rate limiting por tenant e audit logger.
+
+---
+
 # Fases Futuras
 
 ---
 
-## Fase 5 — Memory 2.0 (Recuperação Híbrida & Ciclo de Vida)
-**Prioridade: 🟠 P1**
-
-Aprimorar o contexto e a qualidade do conhecimento retido pelo agente:
-
-- **Busca Híbrida (Hybrid Retrieval)**:
-  - Combinação de busca vetorial (similaridade de cosseno) com busca textual exata (BM25/Regex) para códigos de erro, IDs de transação e nomes de microsserviços.
-  - Reranker de relevância contextual.
-- **Ciclo de Vida de Memórias**:
-  - Estados de memória: `candidate` → `validated` → `active` → `updated` → `expired`.
-  - Expiração configurável (TTL) para fatos transitórios.
-  - Interface para exclusão ou invalidação manual de memórias obsoletas por tenant.
-
----
-
 ## Fase 6 — MCP Platform & Governança de Ferramentas
-**Prioridade: 🟠 P1**
+**Prioridade: 🔴 P0** | **Status: 🔄 Próximo Foco**
 
 Transformar o MCP de integrações pontuais em uma plataforma extensível e governada:
 

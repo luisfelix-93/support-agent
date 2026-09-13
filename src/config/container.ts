@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 import { BullMQAdapter } from '../infrastructure/queue/BullMQAdapter.js';
 import { BullMQWorker } from '../infrastructure/queue/BullMQWorker.js';
 import { MemoryPromotionWorker } from '../infrastructure/queue/MemoryPromotionWorker.js';
@@ -29,6 +30,7 @@ import { OnboardingController } from '../controllers/OnboardingController.js';
 import { AuthController } from '../controllers/AuthController.js';
 import { EvaluationController } from '../controllers/EvaluationController.js';
 import { AgentRunController } from '../controllers/AgentRunController.js';
+import { MemoryController } from '../controllers/MemoryController.js';
 import { AggregationService } from '../evaluation/AggregationService.js';
 import { RunAnalyticsService } from '../services/RunAnalyticsService.js';
 import { Redis } from 'ioredis';
@@ -38,6 +40,7 @@ import { LLMMemoryExtractor } from '../infrastructure/memory/LLMMemoryExtractor.
 import { OpenAIEmbeddingProvider } from '../infrastructure/llm/OpenAIEmbeddingProvider.js';
 import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
+import { ContextualMemoryReranker } from '../services/ContextualMemoryReranker.js';
 import { PlaybookRegistry } from '../domain/workflows/PlaybookRegistry.js';
 import { InvestigationEngine } from '../harness/InvestigationEngine.js';
 import { ApiErrorPlaybook } from '../domain/workflows/playbooks/ApiErrorPlaybook.js';
@@ -105,6 +108,14 @@ const memoryExtractor = new LLMMemoryExtractor();
 
 const isLongTermMemoryEnabled = process.env.LONG_TERM_MEMORY_ENABLED !== 'false';
 const activeMemoryRepository = isLongTermMemoryEnabled ? memoryRepository : undefined;
+export const memoryReranker = new ContextualMemoryReranker();
+
+// Inicializa índices de busca híbrida e TTL no MongoDB
+if (isLongTermMemoryEnabled) {
+    memoryRepository.ensureIndexes().catch(err => {
+        logger.warn({ err }, 'Falha na inicialização assíncrona dos índices de memória.');
+    });
+}
 
 const agentHarness = new AgentHarness(
     contextAssembler,
@@ -113,7 +124,8 @@ const agentHarness = new AgentHarness(
     activeMemoryRepository,
     queueAdapter,
     embeddingProvider,
-    agentRunRepository
+    agentRunRepository,
+    memoryReranker
 );
 
 // ─── Playbooks & Investigation Engine ───────────────
@@ -155,6 +167,11 @@ export const aggregationService = new AggregationService(evaluationRepository);
 export const evaluationController = new EvaluationController(evaluationRepository, aggregationService);
 export const runAnalyticsService = new RunAnalyticsService(agentRunRepository);
 export const agentRunController = new AgentRunController(runAnalyticsService);
+export const memoryController = new MemoryController(
+    memoryRepository,
+    memoryReranker,
+    embeddingProvider
+);
 
 export const queueWorker = new BullMQWorker(
     redisConnection,
