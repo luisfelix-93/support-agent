@@ -91,6 +91,7 @@ export class LLMMemoryExtractor implements IMemoryExtractor {
                     workspaceId: input.workspaceId,
                     threadId: input.threadId,
                     type,
+                    status: 'active',
                     content: item.content.trim(),
                     importance,
                     createdAt: now,

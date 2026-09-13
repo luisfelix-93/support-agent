@@ -1,6 +1,13 @@
 import type { Collection } from "mongodb";
 import { MongoConnection } from "../infrastructure/database/MongoConnection.js";
-import type { Memory, MemorySearchInput, MemoryType } from "../domain/Memory.js";
+import type {
+    Memory,
+    MemorySearchInput,
+    HybridMemorySearchInput,
+    HybridSearchResult,
+    MemoryType,
+    MemoryStatus
+} from "../domain/Memory.js";
 import type { IMemoryRepository } from "../domain/ports/IMemoryRepository.js";
 import { logger } from "../config/logger.js";
 import {
@@ -16,8 +23,14 @@ export interface MemoryDocument {
     workspaceId: string;
     threadId?: string;
     type: MemoryType;
+    status: MemoryStatus;
     content: string;
     importance: number;
+    confidenceScore?: number;
+    tags?: string[];
+    ttlSeconds?: number;
+    expiresAt?: Date;
+    validatedBy?: string;
     embedding?: number[];
     metadata?: Record<string, unknown>;
     createdAt: Date;
@@ -159,6 +172,74 @@ export class MongoMemoryRepository implements IMemoryRepository {
         return result.deletedCount > 0;
     }
 
+    async searchHybrid(input: HybridMemorySearchInput): Promise<HybridSearchResult[]> {
+        const limit = input.limit ?? 5;
+        const relevant = await this.searchRelevant({
+            tenantId: input.tenantId,
+            workspaceId: input.workspaceId,
+            query: input.query,
+            vector: input.vector,
+            limit,
+            threshold: input.threshold,
+        });
+
+        return relevant.map((memory, index) => ({
+            memory,
+            score: memory.importance,
+            vectorRank: index + 1,
+            textRank: index + 1,
+        }));
+    }
+
+    async updateStatus(
+        id: string,
+        tenantId: string,
+        status: MemoryStatus,
+        metadata?: Record<string, unknown>
+    ): Promise<boolean> {
+        const updateDoc: Record<string, unknown> = {
+            status,
+            updatedAt: new Date(),
+        };
+        if (metadata) {
+            updateDoc.metadata = metadata;
+        }
+        const result = await this.collection.updateOne(
+            { _id: id, tenantId },
+            { $set: updateDoc }
+        );
+        return result.matchedCount > 0;
+    }
+
+    async findCandidates(tenantId: string, limit: number = 20): Promise<Memory[]> {
+        const docs = await this.collection
+            .find({ tenantId, status: 'candidate' })
+            .sort({ createdAt: -1 })
+            .limit(limit)
+            .toArray();
+
+        return docs.map(doc => this.toDomain(doc));
+    }
+
+    async findExpired(now: Date = new Date(), limit: number = 100): Promise<Memory[]> {
+        const docs = await this.collection
+            .find({
+                expiresAt: { $lte: now, $exists: true, $ne: null } as any,
+                status: { $ne: 'expired' }
+            })
+            .limit(limit)
+            .toArray();
+
+        return docs.map(doc => this.toDomain(doc));
+    }
+
+    async purgeExpired(now: Date = new Date()): Promise<number> {
+        const result = await this.collection.deleteMany({
+            expiresAt: { $lte: now, $exists: true, $ne: null } as any
+        });
+        return result.deletedCount;
+    }
+
     private calculateCosineSimilarity(a: number[], b: number[]): number {
         if (a.length !== b.length || a.length === 0) return 0;
         let dotProduct = 0;
@@ -182,8 +263,14 @@ export class MongoMemoryRepository implements IMemoryRepository {
             workspaceId: memory.workspaceId,
             threadId: memory.threadId,
             type: memory.type,
+            status: memory.status || 'active',
             content: memory.content,
             importance: memory.importance,
+            confidenceScore: memory.confidenceScore,
+            tags: memory.tags,
+            ttlSeconds: memory.ttlSeconds,
+            expiresAt: memory.expiresAt,
+            validatedBy: memory.validatedBy,
             embedding: memory.embedding,
             metadata: memory.metadata,
             createdAt: memory.createdAt ?? new Date(),
@@ -198,8 +285,14 @@ export class MongoMemoryRepository implements IMemoryRepository {
             workspaceId: doc.workspaceId,
             threadId: doc.threadId,
             type: doc.type,
+            status: doc.status || 'active',
             content: doc.content,
             importance: doc.importance,
+            confidenceScore: doc.confidenceScore,
+            tags: doc.tags,
+            ttlSeconds: doc.ttlSeconds,
+            expiresAt: doc.expiresAt,
+            validatedBy: doc.validatedBy,
             embedding: doc.embedding,
             metadata: doc.metadata,
             createdAt: doc.createdAt,
