@@ -153,38 +153,106 @@ Implementações de acesso a dados em MongoDB nativo:
 
 ---
 
-## 3. Subsistema de Memória Híbrida
+## 3. Subsistema de Memória 2.0 (Recuperação Híbrida & Ciclo de Vida)
 
-O agente utiliza uma estratégia de memória de dois níveis:
+O Support Agent adota uma arquitetura de memória corporativa de alta fidelidade e governança contínua:
 
 ```text
-┌──────────────────────────────────────────────────────────────────────────┐
-│                             DIÁLOGO ATIVO                                │
-└───────────────────────┬──────────────────────────┬───────────────────────┘
-                        │                          │
-        (Contexto imediato da thread)   (Fatos duradouros / Preferências)
-                        │                          │
-                        ▼                          ▼
-           ┌────────────────────────┐  ┌────────────────────────┐
-           │   Short-Term Memory    │  │    Long-Term Memory    │
-           │         (Redis)        │  │   (MongoDB + Vetores)  │
-           └────────────────────────┘  └────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   DIÁLOGO ATIVO                                        │
+└───────────────────────────┬────────────────────────────────┬───────────────────────────┘
+                            │                                │
+            (Contexto imediato da thread)        (Fatos duradouros / Resoluções / Incidentes)
+                            │                                │
+                            ▼                                ▼
+               ┌────────────────────────┐       ┌────────────────────────┐
+               │   Short-Term Memory    │       │    Long-Term Memory    │
+               │         (Redis)        │       │   (MongoDB 2.0 Híbrido)│
+               └────────────────────────┘       └────────────┬───────────┘
+                                                             │
+                         ┌───────────────────────────────────┴───────────────────────────────────┐
+                         ▼                                                                       ▼
+             ┌────────────────────────┐                                              ┌────────────────────────┐
+             │  Recuperação Híbrida   │                                              │   Ciclo de Vida (TTL)  │
+             │  • Vetorial (Cosseno)  │                                              │  • candidate (conf<0.8)│
+             │  • Textual ($text)     │                                              │  • validated           │
+             │  • RRF (k=60)          │                                              │  • active (conf>=0.8)  │
+             │  • Contextual Reranker │                                              │  • updated             │
+             └────────────────────────┘                                              │  • expired (TTL Mongo) │
+                                                                                     └────────────────────────┘
 ```
 
+### 3.1. Níveis de Memória
 1. **Short-Term Memory (Redis)**:
-   - Chave: `memory:short:{workspaceId}:{threadId}`
+   - Chave: `memory:short:{workspaceId}:{threadId}`.
    - Armazena as interações mais recentes da thread atual para manter a continuidade imediata.
-   - Possui TTL configurável (evita acúmulo desnecessário).
+   - TTL configurável por workspace/tenant.
+2. **Long-Term Memory (MongoDB + Embeddings + Text Index)**:
+   - Armazena o conhecimento permanente isolado rigorosamente por `tenantId` e `workspaceId`.
+   - Índices nativos criados em `ensureIndexes()`:
+     - Text Index composto: `{ content: 'text', tags: 'text' }` com pesos `{ tags: 5, content: 1 }`.
+     - TTL Index nativo: `{ expiresAt: 1 }` com `expireAfterSeconds: 0`.
+     - Índice composto multi-tenant: `{ tenantId: 1, workspaceId: 1, status: 1, createdAt: -1 }`.
 
-2. **Long-Term Memory (MongoDB + Embeddings)**:
-   - Armazena informações permanentes isoladas por `tenantId` e `workspaceId`.
-   - Busca semântica vetorial calculando a **Similaridade de Cosseno**:
-     $$\text{Cosine Similarity} = \frac{\mathbf{u} \cdot \mathbf{v}}{\|\mathbf{u}\| \|\mathbf{v}\|}$$
-   - Threshold configurável ($\ge 0.65$). As memórias mais relevantes são injetadas no prompt de sistema pelo `ContextAssembler`.
+### 3.2. Motor de Recuperação Híbrida & Algoritmo RRF (Reciprocal Rank Fusion)
+A recuperação vetorial por similaridade de cosseno é excelente para proximidade semântica genérica, mas insuficiente em incidentes de infraestrutura que exigem correspondência exata de termos operacionais (códigos de erro como `ERR_DATABASE_POOL_EXHAUSTED`, códigos HTTP `504`, IDs de transação ou slugs de pods/serviços).
 
-3. **Promoção Assíncrona via BullMQ (`MemoryPromotionWorker`)**:
-   - Não bloqueia a resposta do usuário: ao concluir a resposta, o Harness publica um job na fila `memory-promotion`.
-   - O worker extrai fatos e regras estruturados via LLM (`LLMMemoryExtractor`), gera embeddings de 1536 dimensões via `OpenAIEmbeddingProvider`, verifica duplicatas e persiste no MongoDB.
+O método `searchHybrid` combina as duas técnicas via **Reciprocal Rank Fusion (RRF)**:
+$$RRF(d) = \left( \frac{w_{\text{vec}}}{k + r_{\text{vec}}(d)} + \frac{w_{\text{text}}}{k + r_{\text{text}}(d)} \right) \cdot (1 + \text{importance} \cdot 0.2)$$
+
+- **Constante $k=60$**: Suaviza a discrepância entre posições de ranking.
+- **Pesos padrão**: $w_{\text{text}} = 1.2$ (prioriza termos técnicos exatos) e $w_{\text{vec}} = 1.0$.
+- **Ponderação por Importância**: Memórias com peso operacional maior recebem um multiplicador de até 20%.
+
+### 3.3. Contextual Memory Reranker (`ContextualMemoryReranker`)
+Após a fusão RRF, o `ContextualMemoryReranker` refina os top-K candidatos aplicando:
+1. **Extração de Termos Técnicos**: Regex para códigos HTTP (`100-599`), constantes de erro (`ERR_*`, `*_ERROR`), nomes de exceções (`*Exception`, `*Error`) e slugs de microsserviços.
+2. **Bônus de Correspondência Exata**: Aumenta o score quando os termos operacionais da mensagem aparecem no conteúdo ou nas tags da memória.
+3. **Decaimento Exponencial por Recência**:
+   $$\text{Score}_{\text{final}} = \text{Score} \cdot e^{-\lambda \cdot \Delta t}$$
+   Com fator $\lambda = 0.02$, correspondendo a uma meia-vida operacional de aproximadamente 35 dias para incidentes transitórios.
+
+### 3.4. Máquina de Estados e Ciclo de Vida da Memória
+O domínio (`MemoryLifecycle`) implementa uma máquina de estados estrita:
+
+```text
+    ┌──────────────┐
+    │  candidate   │ ──(curadoria/validação)──► ┌─────────────┐
+    └──────┬───────┘                            │  validated  │
+           │                                    └──────┬──────┘
+           │ (auto-ativação conf >= 0.8)               │
+           └───────────────────┬───────────────────────┘
+                               ▼
+                        ┌─────────────┐
+        ┌────────────── │   active    │ ◄─────────────┐
+        │               └──────┬──────┘               │
+        │ (edição)             │ (expiração TTL)      │ (re-ativação)
+        ▼                      ▼                      │
+  ┌───────────┐         ┌─────────────┐               │
+  │  updated  │────────►│   expired   │───────────────┘
+  └───────────┘         └─────────────┘
+```
+
+- **Classificação Inicial Automática**:
+  - `LLMMemoryExtractor` atribui `confidenceScore` (0 a 1.0).
+  - Se $\text{score} \ge 0.8$: status `active`.
+  - Se $\text{score} < 0.8$: status `candidate` (aguarda curadoria humana).
+- **TTL por Categoria**:
+  - `incident`: TTL de 30 dias (fatos temporários de degradação).
+  - `resolution`: TTL de 90 dias.
+  - `fact` / `preference`: permanente (`expiresAt = null`).
+- **Expiração & Purga**:
+  - MongoDB TTL Index remove automaticamente documentos quando `expiresAt <= now`.
+  - Repositório expõe `findExpired()` e `purgeExpired()` para limpeza programada e auditoria.
+
+### 3.5. API REST de Governança (`/api/memories`)
+Interface administrativa segura protegida por JWT, rate limiting e RBAC:
+- `GET /api/memories`: Consulta paginada com filtros por tenant, workspace, status, tipo e tag (`viewer`, `operator`, `admin`).
+- `POST /api/memories/search`: Execução operacional de busca híbrida com inspeção de scores vetoriais e textuais (`viewer`, `operator`, `admin`).
+- `GET /api/memories/candidates`: Fila de memórias pendentes de curadoria humana (`operator`, `admin`).
+- `PATCH /api/memories/:id/status`: Transição manual de status com validação de máquina de estados (`operator`, `admin`).
+- `PUT /api/memories/:id`: Edição de conteúdo, importância e tags (`operator`, `admin`).
+- `DELETE /api/memories/:id`: Exclusão definitiva de memória obsoleta (`admin`).
 
 ---
 

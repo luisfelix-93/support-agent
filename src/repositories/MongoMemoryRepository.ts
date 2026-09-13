@@ -385,6 +385,9 @@ export class MongoMemoryRepository implements IMemoryRepository {
             updatedAt: new Date(),
         };
         if (metadata) {
+            if (typeof metadata.validatedBy === 'string') {
+                updateDoc.validatedBy = metadata.validatedBy;
+            }
             updateDoc.metadata = metadata;
         }
         const result = await this.collection.updateOne(
