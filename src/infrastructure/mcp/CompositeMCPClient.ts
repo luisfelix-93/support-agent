@@ -2,6 +2,8 @@ import { ToolCall } from "../../domain/ToolCall.js";
 import type { IMCPClient, ToolFilterOptions } from "../../domain/ports/IMCPClient.js";
 import type { MCPInitializeResult } from "../../domain/MCPServerCapabilities.js";
 import type { MCPServerRegistration } from "../../domain/MCPServerRegistration.js";
+import type { ToolGovernanceService } from "../../services/ToolGovernanceService.js";
+import type { ToolGovernancePolicy } from "../../domain/ToolGovernance.js";
 import { logger } from "../../config/logger.js";
 
 const log = logger.child({ module: 'CompositeMCPClient' });
@@ -15,6 +17,7 @@ const log = logger.child({ module: 'CompositeMCPClient' });
  * 3. Tolerância a falhas parciais: falha de um servidor MCP não impede o funcionamento dos demais.
  * 4. Circuit Breakers isolados: cada servidor mantém seu próprio estado de resiliência.
  * 5. Descoberta contextual: suporte a filtragem por domínios/playbooks via ToolFilterOptions.
+ * 6. Governança de ferramentas: interceptador de risco (READ_ONLY, LOW_RISK, HIGH_RISK, FORBIDDEN).
  */
 export class CompositeMCPClient implements IMCPClient {
     private readonly servers = new Map<string, MCPServerRegistration>();
@@ -22,12 +25,30 @@ export class CompositeMCPClient implements IMCPClient {
     private readonly toolRoutingMap = new Map<string, { serverId: string; actualToolName: string }>();
     private initialized = false;
 
-    constructor(initialServers?: MCPServerRegistration[]) {
+    constructor(
+        initialServers?: MCPServerRegistration[],
+        private readonly governanceService?: ToolGovernanceService,
+        private governancePolicy?: ToolGovernancePolicy
+    ) {
         if (initialServers) {
             for (const server of initialServers) {
                 this.registerServer(server);
             }
         }
+    }
+
+    /**
+     * Define ou atualiza a política de governança de ferramentas para este cliente.
+     */
+    setGovernancePolicy(policy?: ToolGovernancePolicy): void {
+        this.governancePolicy = policy;
+    }
+
+    /**
+     * Retorna a política de governança ativa.
+     */
+    getGovernancePolicy(): ToolGovernancePolicy | undefined {
+        return this.governancePolicy;
     }
 
     /**
@@ -245,6 +266,23 @@ export class CompositeMCPClient implements IMCPClient {
     async executeTool(tool: ToolCall): Promise<any> {
         if (!tool || !tool.name) {
             throw new Error('ToolCall inválido fornecido ao CompositeMCPClient.');
+        }
+
+        // 0. Avaliação de governança de segurança e risco (se configurado)
+        if (this.governanceService) {
+            const decision = this.governanceService.evaluate(tool, this.governancePolicy);
+            if (!decision.allowed) {
+                log.warn(
+                    { tool: tool.name, riskLevel: decision.riskLevel, reason: decision.reason },
+                    'Execução de ferramenta bloqueada pela governança de segurança.'
+                );
+                return {
+                    error: `Execução bloqueada por governança de segurança: ${decision.reason}`,
+                    blocked: true,
+                    riskLevel: decision.riskLevel,
+                    requiresApproval: decision.requiresApproval ?? false,
+                };
+            }
         }
 
         // 1. Tenta resolver pelo mapa de rotas

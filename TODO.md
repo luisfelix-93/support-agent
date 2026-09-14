@@ -79,32 +79,32 @@
 
 **Branch:** `feature/phase-6-multi-mcp-platform`  
 **Responsável:** `security-auditor` / `backend-specialist`  
-**Depende de:** Sub-Fase 6B concluída  
-**Status:** ⏳ Pendente  
+**Depende de:** ✅ Sub-Fase 6B concluída  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Criar enum e tipos de governança em `src/domain/ToolGovernance.ts`:
-  - [ ] `ToolRiskLevel` (`READ_ONLY`, `LOW_RISK`, `HIGH_RISK`, `FORBIDDEN`)
-  - [ ] Interface `ToolGovernancePolicy` (regras por regex/nomes exatos e overrides por tenant)
-- [ ] Criar serviço `src/services/ToolGovernanceService.ts`:
-  - [ ] Classificação automática de ferramentas por padrões (`get_*`, `list_*`, `query_*` $\to$ `READ_ONLY`)
-  - [ ] Padrões destrutivos (`delete_*`, `drop_*`, `truncate_*`, `kill_*`, `purge_*` $\to$ `FORBIDDEN`)
-  - [ ] Ações operacionais com impacto (`restart_*`, `scale_*`, `deploy_*` $\to$ `HIGH_RISK`)
-  - [ ] Validação de permissão de execução: `canExecute(toolCall, tenantPolicy)`
-- [ ] Integrar interceptador de governança em `CompositeMCPClient` e `AgentHarness`:
-  - [ ] Bloqueio imediato com registro de auditoria para ferramentas `FORBIDDEN`
-  - [ ] Tratamento seguro de recusa sem quebra do fluxo do agente
+- [x] Criar enum e tipos de governança em `src/domain/ToolGovernance.ts`:
+  - [x] `ToolRiskLevel` (`READ_ONLY`, `LOW_RISK`, `HIGH_RISK`, `FORBIDDEN`)
+  - [x] Interface `ToolGovernancePolicy` (regras por regex/nomes exatos e overrides por tenant)
+- [x] Criar serviço `src/services/ToolGovernanceService.ts`:
+  - [x] Classificação automática de ferramentas por padrões (`get_*`, `list_*`, `query_*` $\to$ `READ_ONLY`)
+  - [x] Padrões destrutivos (`delete_*`, `drop_*`, `truncate_*`, `kill_*`, `purge_*` $\to$ `FORBIDDEN`)
+  - [x] Ações operacionais com impacto (`restart_*`, `scale_*`, `deploy_*` $\to$ `HIGH_RISK`)
+  - [x] Validação de permissão de execução: `canExecute(toolCall, tenantPolicy)`
+- [x] Integrar interceptador de governança em `CompositeMCPClient` e `AgentHarness`:
+  - [x] Bloqueio imediato com registro de auditoria para ferramentas `FORBIDDEN`
+  - [x] Tratamento seguro de recusa sem quebra do fluxo do agente
 
 ### Testes
-- [ ] Criar `src/services/ToolGovernanceService.test.ts`:
-  - [ ] Testar classificação padrão para ferramentas de SRE / Investigação
-  - [ ] Testar bloqueio de comandos destrutivos (`FORBIDDEN`)
-  - [ ] Testar regras de override específicas por tenant
-- [ ] Testar interceptação de governança no `CompositeMCPClient`
+- [x] Criar `src/services/ToolGovernanceService.test.ts` (17 testes unitários):
+  - [x] Testar classificação padrão para ferramentas de SRE / Investigação
+  - [x] Testar bloqueio de comandos destrutivos (`FORBIDDEN`)
+  - [x] Testar regras de override específicas por tenant
+- [x] Testar interceptação de governança no `CompositeMCPClient` (20 testes integrados)
 
 ### Verificação
-- [ ] `npm test` passa sem erros
-- [ ] `npm run build` compila limpo
+- [x] `npm test` passa sem erros (81/81 arquivos, 526/526 testes aprovados)
+- [x] `npm run build` compila limpo (TypeScript strict 0 erros)
 
 ---
 
