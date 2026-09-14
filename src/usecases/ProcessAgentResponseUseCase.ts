@@ -5,6 +5,10 @@ import { IChatRepository } from "../domain/ports/IChatRepository.js";
 import { LLMFactory } from "../infrastructure/llm/LLMFactory.js";
 import { IChatProvider } from "../domain/ports/IChatProvider.js";
 import { MCPHttpAdapter } from "../infrastructure/mcp/MCPHttpAdapter.js";
+import { CompositeMCPClient } from "../infrastructure/mcp/CompositeMCPClient.js";
+import type { IMCPClient, ToolFilterOptions } from "../domain/ports/IMCPClient.js";
+import type { MCPServerRegistration } from "../domain/MCPServerRegistration.js";
+import type { ToolGovernanceService } from "../services/ToolGovernanceService.js";
 import { CircuitBreaker } from "../infrastructure/resilience/CircuitBreaker.js";
 import { ISpaceMappingRepository } from "../domain/ports/ISpaceMappingRepository.js";
 import { IAgentHarness } from "../domain/ports/IAgentHarness.js";
@@ -14,7 +18,7 @@ import { logger } from "../config/logger.js";
 const log = logger.child({ module: 'ProcessAgentResponseUseCase' });
 
 export class ProcessAgentResponseUse {
-    private readonly mcpClients = new Map<string, MCPHttpAdapter>();
+    private readonly mcpClients = new Map<string, IMCPClient>();
     private readonly circuitBreakers = new Map<string, CircuitBreaker>();
 
     constructor(
@@ -22,7 +26,8 @@ export class ProcessAgentResponseUse {
         private readonly tenantRepository: ITenantRepository,
         private readonly chatRepository: IChatRepository,
         private readonly harness: IAgentHarness,
-        private readonly investigationEngine?: InvestigationEngine
+        private readonly investigationEngine?: InvestigationEngine,
+        private readonly toolGovernanceService?: ToolGovernanceService
     ){}
 
     async execute(
@@ -32,7 +37,7 @@ export class ProcessAgentResponseUse {
         chatProvider: IChatProvider,
         expectedWorkspaceId?: string
     ): Promise<void> {
-        let mcpClient: MCPHttpAdapter | null = null;
+        let mcpClient: IMCPClient | null = null;
         try {
             // 0. Descobre a qual Tenant esse espaço de chat pertence
             const mapping = await this.spaceMappingRepository.findBySpaceId(spaceId);
@@ -79,21 +84,61 @@ export class ProcessAgentResponseUse {
 
             // 3. Instancia provedores e ferramentas dinamicamente para este tenant
             const llmProvider = LLMFactory.create(tenant.llmConfig);
-            
-            const mcpConfigKey = JSON.stringify(tenant.mcpConfig);
+
+            // 4. Avaliação de Playbooks e descoberta contextual de ferramentas
+            const investigationPlan = this.investigationEngine?.evaluate(userText, context);
+
+            // 5. Instanciação e cache do MCPClient (suporte a single server e Multi-MCP Composite)
+            const isMultiMcp = Boolean(tenant.mcpServers && tenant.mcpServers.length > 1);
+            const mcpConfigKey = JSON.stringify(tenant.mcpServers && tenant.mcpServers.length > 0 ? tenant.mcpServers : tenant.mcpConfig);
+
             let cachedClient = this.mcpClients.get(mcpConfigKey);
             if (!cachedClient) {
-                let circuitBreaker = this.circuitBreakers.get(tenant.workspaceId);
-                if (!circuitBreaker) {
-                    circuitBreaker = new CircuitBreaker({ name: `mcp-${tenant.workspaceId}` });
-                    this.circuitBreakers.set(tenant.workspaceId, circuitBreaker);
+                if (isMultiMcp) {
+                    const serverRegistrations: MCPServerRegistration[] = (tenant.mcpServers ?? [])
+                        .filter(s => s.enabled !== false)
+                        .map(serverConfig => {
+                            const cbKey = `${tenant.workspaceId}-${serverConfig.id}`;
+                            let circuitBreaker = this.circuitBreakers.get(cbKey);
+                            if (!circuitBreaker) {
+                                circuitBreaker = new CircuitBreaker({ name: `mcp-${cbKey}` });
+                                this.circuitBreakers.set(cbKey, circuitBreaker);
+                            }
+                            const adapter = new MCPHttpAdapter(
+                                serverConfig.url,
+                                serverConfig.apiKey ?? '',
+                                serverConfig.timeoutMs ?? 25000,
+                                circuitBreaker
+                            );
+                            return {
+                                id: serverConfig.id,
+                                name: serverConfig.name,
+                                client: adapter,
+                                domains: serverConfig.domains,
+                            };
+                        });
+
+                    cachedClient = new CompositeMCPClient(
+                        serverRegistrations,
+                        this.toolGovernanceService
+                    );
+                } else {
+                    let circuitBreaker = this.circuitBreakers.get(tenant.workspaceId);
+                    if (!circuitBreaker) {
+                        circuitBreaker = new CircuitBreaker({ name: `mcp-${tenant.workspaceId}` });
+                        this.circuitBreakers.set(tenant.workspaceId, circuitBreaker);
+                    }
+                    const singleConfig = (tenant.mcpServers && tenant.mcpServers.length === 1)
+                        ? tenant.mcpServers[0]
+                        : tenant.mcpConfig;
+
+                    cachedClient = new MCPHttpAdapter(
+                        singleConfig.url,
+                        singleConfig.apiKey ?? '',
+                        25000,
+                        circuitBreaker
+                    );
                 }
-                cachedClient = new MCPHttpAdapter(
-                    tenant.mcpConfig.url,
-                    tenant.mcpConfig.apiKey,
-                    25000,
-                    circuitBreaker
-                );
                 this.mcpClients.set(mcpConfigKey, cachedClient);
             }
             mcpClient = cachedClient;
@@ -102,17 +147,23 @@ export class ProcessAgentResponseUse {
                 await mcpClient.connect();
             }
 
-            // Buscar as ferramentas dinamicamente do MCP Server
+            // Buscar as ferramentas dinamicamente do MCP Server com filtro contextual
             let mcpTools: any[] = [];
             try {
-                const toolsResponse = await mcpClient.listTools();
+                const filterOptions: ToolFilterOptions = {};
+                if (investigationPlan?.domains && investigationPlan.domains.length > 0) {
+                    filterOptions.domains = investigationPlan.domains;
+                }
+                if (investigationPlan?.playbookIds && investigationPlan.playbookIds.length > 0) {
+                    filterOptions.playbookIds = investigationPlan.playbookIds;
+                }
+                const toolsResponse = await mcpClient.listTools(
+                    Object.keys(filterOptions).length > 0 ? filterOptions : undefined
+                );
                 mcpTools = toolsResponse.tools || [];
             } catch (toolsError) {
                 log.error({ err: toolsError }, 'Erro ao obter ferramentas do MCP.');
             }
-
-            // 4. Avaliação de Playbooks e delegação da execução ao Agent Harness Runtime
-            const investigationPlan = this.investigationEngine?.evaluate(userText, context);
 
             const harnessResult = await this.harness.run({
                 tenantId: tenant.workspaceId,

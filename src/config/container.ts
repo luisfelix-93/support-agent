@@ -47,6 +47,7 @@ import { ApiErrorPlaybook } from '../domain/workflows/playbooks/ApiErrorPlaybook
 import { LatencyTracePlaybook } from '../domain/workflows/playbooks/LatencyTracePlaybook.js';
 import { KubernetesPlaybook } from '../domain/workflows/playbooks/KubernetesPlaybook.js';
 import { DatabasePlaybook } from '../domain/workflows/playbooks/DatabasePlaybook.js';
+import { ToolGovernanceService } from '../services/ToolGovernanceService.js';
 import { AESEncryptionService } from '../infrastructure/security/AESEncryptionService.js';
 import { IdempotencyGuard } from '../infrastructure/resilience/IdempotencyGuard.js';
 
@@ -136,13 +137,16 @@ playbookRegistry.register(new KubernetesPlaybook());
 playbookRegistry.register(new DatabasePlaybook());
 export const investigationEngine = new InvestigationEngine(playbookRegistry);
 
+export const toolGovernanceService = new ToolGovernanceService();
+
 // ─── Use Cases ───────────────────────────────────────
 const processAgentUseCase = new ProcessAgentResponseUse(
     spaceMappingRepository,
     tenantRepository,
     chatRepository,
     agentHarness,
-    investigationEngine
+    investigationEngine,
+    toolGovernanceService
 );
 
 const registerUserUseCase = new RegisterUserUseCase(userRepository);

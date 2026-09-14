@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TenantRepository } from './TenantRepository.js';
-import { Tenant } from '../domain/Tenant.js';
+import { Tenant, type MCPServerConfig } from '../domain/Tenant.js';
 import type { IEncryptionService } from '../domain/ports/IEncryptionService.js';
 import { MongoConnection } from '../infrastructure/database/MongoConnection.js';
 
@@ -60,6 +60,15 @@ describe('TenantRepository', () => {
                             url: 'https://mcp.acme.com',
                             apiKey: 'enc:mcp:mcp-secret-12345678',
                         },
+                        mcpServers: [
+                            {
+                                id: 'default',
+                                name: 'Default MCP Server',
+                                url: 'https://mcp.acme.com',
+                                apiKey: 'enc:mcp:mcp-secret-12345678',
+                                enabled: true,
+                            }
+                        ],
                         isActive: true,
                     },
                 },
@@ -91,6 +100,46 @@ describe('TenantRepository', () => {
                 { upsert: true }
             );
         });
+
+        it('deve salvar e criptografar cada servidor na lista mcpServers', async () => {
+            const multiServers: MCPServerConfig[] = [
+                { id: 'k8s', name: 'Kubernetes MCP', url: 'https://k8s.acme.com', apiKey: 'k8s-secret-key', domains: ['kubernetes'] },
+                { id: 'loki', name: 'Loki MCP', url: 'https://loki.acme.com', apiKey: 'loki-secret-key', domains: ['observability'] },
+            ];
+
+            const multiTenant = new Tenant(
+                'ws-multi',
+                dummyTenant.llmConfig,
+                { url: 'https://k8s.acme.com', apiKey: 'k8s-secret-key' },
+                true,
+                multiServers
+            );
+
+            await repository.save(multiTenant);
+
+            expect(mockEncryptionService.encrypt).toHaveBeenCalledWith('k8s-secret-key', 'mcp');
+            expect(mockEncryptionService.encrypt).toHaveBeenCalledWith('loki-secret-key', 'mcp');
+
+            expect(mockCollection.updateOne).toHaveBeenCalledWith(
+                { workspaceId: 'ws-multi' },
+                {
+                    $set: expect.objectContaining({
+                        workspaceId: 'ws-multi',
+                        mcpServers: [
+                            expect.objectContaining({
+                                id: 'k8s',
+                                apiKey: 'enc:mcp:k8s-secret-key',
+                            }),
+                            expect.objectContaining({
+                                id: 'loki',
+                                apiKey: 'enc:mcp:loki-secret-key',
+                            }),
+                        ],
+                    }),
+                },
+                { upsert: true }
+            );
+        });
     });
 
     describe('findByWorkspaceId', () => {
@@ -119,6 +168,29 @@ describe('TenantRepository', () => {
             expect(result).not.toBeNull();
             expect(mockEncryptionService.decrypt).toHaveBeenCalledWith('iv:tag:encrypted-mcp-key', 'mcp');
             expect(result?.mcpConfig.apiKey).toBe('encrypted-mcp-key');
+            expect(result?.mcpServers).toHaveLength(1);
+            expect(result?.mcpServers[0].apiKey).toBe('encrypted-mcp-key');
+        });
+
+        it('deve carregar e descriptografar múltiplos servidores MCP salvos em mcpServers', async () => {
+            mockCollection.findOne.mockResolvedValue({
+                workspaceId: 'ws-acme-multi',
+                llmConfig: dummyTenant.llmConfig,
+                mcpServers: [
+                    { id: 'k8s', name: 'K8s', url: 'https://k8s.io', apiKey: 'iv:tag:secret-k8s', domains: ['k8s'] },
+                    { id: 'db', name: 'DB', url: 'https://db.io', apiKey: 'iv:tag:secret-db', domains: ['database'] },
+                ],
+                isActive: true,
+            });
+
+            const result = await repository.findByWorkspaceId('ws-acme-multi');
+
+            expect(result).not.toBeNull();
+            expect(result?.mcpServers).toHaveLength(2);
+            expect(result?.mcpServers[0].id).toBe('k8s');
+            expect(result?.mcpServers[0].apiKey).toBe('secret-k8s');
+            expect(result?.mcpServers[1].id).toBe('db');
+            expect(result?.mcpServers[1].apiKey).toBe('secret-db');
         });
 
         it('deve suportar campo legado mcpConfig.serverUrl', async () => {
@@ -135,6 +207,7 @@ describe('TenantRepository', () => {
             const result = await repository.findByWorkspaceId('ws-acme');
 
             expect(result?.mcpConfig.url).toBe('https://legacy-mcp.acme.com');
+            expect(result?.mcpServers[0].url).toBe('https://legacy-mcp.acme.com');
         });
 
         it('deve retornar o texto plano se a apiKey não tiver o formato cifrado de 3 partes', async () => {
@@ -180,6 +253,26 @@ describe('TenantRepository', () => {
             expect(result).not.toBeNull();
             expect(result?.workspaceId).toBe('ws-acme');
             expect(result?.mcpConfig.apiKey).toBe('***...5678');
+            expect(result?.mcpServers[0].apiKey).toBe('***...5678');
+        });
+
+        it('deve mascarar múltiplos servidores MCP em mcpServers', async () => {
+            mockCollection.findOne.mockResolvedValue({
+                workspaceId: 'ws-multi',
+                llmConfig: dummyTenant.llmConfig,
+                mcpServers: [
+                    { id: 'k8s', name: 'K8s', url: 'https://k8s.io', apiKey: 'iv:tag:1234' },
+                    { id: 'loki', name: 'Loki', url: 'https://loki.io', apiKey: 'iv:tag:long-secret-9999' }
+                ],
+                isActive: true,
+            });
+
+            const result = await repository.findByWorkspaceIdSafe('ws-multi');
+
+            expect(result).not.toBeNull();
+            expect(result?.mcpServers).toHaveLength(2);
+            expect(result?.mcpServers[0].apiKey).toBe('****');
+            expect(result?.mcpServers[1].apiKey).toBe('***...9999');
         });
 
         it('deve mascarar como **** quando a chave possuir 4 caracteres ou menos', async () => {

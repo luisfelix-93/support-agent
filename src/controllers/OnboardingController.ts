@@ -34,18 +34,29 @@ export class OnboardingController {
     // ─── POST /api/onboarding/tenants ────────────────────
     async registerTenant(req: Request, res: Response): Promise<void> {
         try {
-            const { workspaceId, llmConfig, mcpConfig } = req.body;
+            const { workspaceId, llmConfig, mcpConfig, mcpServers } = req.body;
 
-            if (!workspaceId || !llmConfig || !mcpConfig) {
-                res.status(400).json({ error: 'Fields "workspaceId", "llmConfig" and "mcpConfig" are required.' });
+            if (!workspaceId || !llmConfig || (!mcpConfig && (!mcpServers || mcpServers.length === 0))) {
+                res.status(400).json({ error: 'Fields "workspaceId", "llmConfig" and ("mcpConfig" or "mcpServers") are required.' });
                 return;
             }
 
-            const result = await this.registerTenantUseCase.execute({ workspaceId, llmConfig, mcpConfig });
+            const result = await this.registerTenantUseCase.execute({ workspaceId, llmConfig, mcpConfig, mcpServers });
             res.status(201).json(result);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to register tenant.';
-            const status = message.includes('already exists') ? 409 : 500;
+            let status = 500;
+            if (message.includes('already exists')) {
+                status = 409;
+            } else if (
+                message.includes('obrigatório') ||
+                message.includes('required') ||
+                message.includes('inválid') ||
+                message.includes('duplicado') ||
+                message.includes('deve possuir')
+            ) {
+                status = 400;
+            }
             res.status(status).json({ error: message });
         }
     }

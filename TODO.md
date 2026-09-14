@@ -1,165 +1,175 @@
-# TODO — Fase 5: Memory 2.0 (Recuperação Híbrida & Ciclo de Vida)
+# TODO — Fase 6: MCP Platform (Multi-Server & Tool Governance)
 
-> Checklist operacional de implementação organizado por sub-fases para acompanhamento contínuo da Fase 5.  
+> Checklist operacional de implementação organizado por sprints/sub-fases para acompanhamento contínuo da Fase 6.  
 > Marque `[x]` conforme cada item for concluído.  
-> Plano de referência: [memory-2-hybrid-lifecycle.md](memory-2-hybrid-lifecycle.md) | Roadmap: [roadmap.md](roadmap.md)  
-> Fase anterior: [Fase 4 Concluída](docs/phase4-summary.md)  
+> Plano de referência: [multi-mcp-platform.md](multi-mcp-platform.md) | Roadmap: [roadmap.md](roadmap.md)  
+> Fase anterior: [Fase 5 Concluída](docs/phase5-summary.md)  
 
 ---
 
-## Sub-Fase 5A: Setup da Branch & Fundação de Domínio (Contratos e Entidades Core)
+## Sub-Fase 6A (Sprint 6.1): Core Composite MCP Client & Namespacing
 
-**Branch:** `feature/memory-2-hybrid-lifecycle`  
+**Branch:** `feature/phase-6-multi-mcp-platform`  
+**Responsável:** `backend-specialist`  
+**Status:** ✅ Concluída  
+
+### Implementação
+- [x] Criar e publicar a branch dedicada `feature/phase-6-multi-mcp-platform`
+- [x] Criar contratos e tipos em `src/domain/ports/IMCPClient.ts` / `src/domain/MCPServerRegistration.ts`:
+  - [x] Definir tipo `MCPServerRegistration` (`id`, `name`, `client: IMCPClient`, `domains`, `isDefault`)
+  - [x] Definir opções de descoberta contextual `ToolFilterOptions` (`domains?: string[]`, `playbookIds?: string[]`)
+- [x] Criar classe `CompositeMCPClient` implementando `IMCPClient` em `src/infrastructure/mcp/CompositeMCPClient.ts`:
+  - [x] Método `registerServer(registration: MCPServerRegistration): void`
+  - [x] Método `connect(): Promise<MCPInitializeResult>` conectando em paralelo (`Promise.allSettled`)
+  - [x] Método `isConnected(): boolean` (retorna true se ao menos um servidor saudável estiver conectado)
+  - [x] Método `listTools(options?: ToolFilterOptions): Promise<{ tools: any[] }>` com namespacing `<serverId>__<toolName>`
+  - [x] Método `executeTool(tool: ToolCall): Promise<any>` com extração de namespace e encaminhamento ao adapter alvo
+  - [x] Método `close(): Promise<void>` liberando conexões filhas
+- [x] Implementar isolamento de Circuit Breaker e timeout defensivo por servidor registrado
+
+### Testes
+- [x] Criar `src/infrastructure/mcp/CompositeMCPClient.test.ts` (20 testes unitários)
+  - [x] Testar registro de múltiplos servidores e agregação com prefixos de namespace
+  - [x] Testar roteamento correto do `executeTool` com remoção do prefixo no envio ao servidor destino
+  - [x] Testar tolerância a falhas parciais no `connect` (1 servidor off não impede os outros)
+  - [x] Testar isolamento de falhas e Circuit Breaker independente por servidor
+
+### Verificação
+- [x] `npm test` passa sem regressões (79/79 arquivos, 491/491 testes aprovados)
+- [x] `npm run build` compila sem erros (TypeScript strict 0 erros)
+
+---
+
+## Sub-Fase 6B (Sprint 6.2): Configuração Multi-Tenant & Persistência Criptografada
+
+**Branch:** `feature/phase-6-multi-mcp-platform`  
+**Responsável:** `database-architect` / `backend-specialist`  
+**Depende de:** ✅ Sub-Fase 6A concluída  
+**Status:** ✅ Concluída  
+
+### Implementação
+- [x] Atualizar entidade `Tenant` em `src/domain/Tenant.ts`:
+  - [x] Definir interface `MCPServerConfig` (`id`, `name`, `url`, `apiKey?`, `domains?`, `timeoutMs?`, `enabled?`)
+  - [x] Adicionar campo opcional `mcpServers?: MCPServerConfig[]` mantendo `mcpConfig?: MCPConfig` para retrocompatibilidade
+- [x] Atualizar `src/repositories/TenantRepository.ts`:
+  - [x] Criptografia AES-256-GCM para as API Keys de todos os servidores da lista `mcpServers` ao persistir no MongoDB
+  - [x] Descriptografia segura de cada `apiKey` ao carregar o tenant do banco
+  - [x] Mascaramento de segurança em consultas administrativas (`maskApiKey`)
+  - [x] Suporte bidirecional a tenants legados com apenas `mcpConfig`
+- [x] Atualizar `src/usecases/RegisterTenantUseCase.ts`:
+  - [x] Aceitar lista de servidores MCP no input (`mcpServers`)
+  - [x] Validação de integridade (IDs de servidores únicos, URLs válidas)
+- [x] Atualizar `src/controllers/OnboardingController.ts` para receber e validar payload multi-MCP
+
+### Testes
+- [x] Atualizar `src/repositories/TenantRepository.test.ts`:
+  - [x] Testar salvamento e criptografia de múltiplos servidores MCP
+  - [x] Testar carregamento com descriptografia correta
+  - [x] Testar retrocompatibilidade com documentos legados (single `mcpConfig`)
+- [x] Atualizar `src/usecases/RegisterTenantUseCase.test.ts` (9 testes)
+- [x] Criar `src/controllers/OnboardingController.test.ts` (11 testes)
+
+### Verificação
+- [x] `npm test` passa com 100% de sucesso (80/80 arquivos, 509/509 testes aprovados)
+- [x] `npm run build` compila sem erros (TypeScript strict 0 erros)
+
+---
+
+## Sub-Fase 6C (Sprint 6.3): Tool Governance & Política de Risco
+
+**Branch:** `feature/phase-6-multi-mcp-platform`  
+**Responsável:** `security-auditor` / `backend-specialist`  
+**Depende de:** ✅ Sub-Fase 6B concluída  
+**Status:** ✅ Concluída  
+
+### Implementação
+- [x] Criar enum e tipos de governança em `src/domain/ToolGovernance.ts`:
+  - [x] `ToolRiskLevel` (`READ_ONLY`, `LOW_RISK`, `HIGH_RISK`, `FORBIDDEN`)
+  - [x] Interface `ToolGovernancePolicy` (regras por regex/nomes exatos e overrides por tenant)
+- [x] Criar serviço `src/services/ToolGovernanceService.ts`:
+  - [x] Classificação automática de ferramentas por padrões (`get_*`, `list_*`, `query_*` $\to$ `READ_ONLY`)
+  - [x] Padrões destrutivos (`delete_*`, `drop_*`, `truncate_*`, `kill_*`, `purge_*` $\to$ `FORBIDDEN`)
+  - [x] Ações operacionais com impacto (`restart_*`, `scale_*`, `deploy_*` $\to$ `HIGH_RISK`)
+  - [x] Validação de permissão de execução: `canExecute(toolCall, tenantPolicy)`
+- [x] Integrar interceptador de governança em `CompositeMCPClient` e `AgentHarness`:
+  - [x] Bloqueio imediato com registro de auditoria para ferramentas `FORBIDDEN`
+  - [x] Tratamento seguro de recusa sem quebra do fluxo do agente
+
+### Testes
+- [x] Criar `src/services/ToolGovernanceService.test.ts` (17 testes unitários):
+  - [x] Testar classificação padrão para ferramentas de SRE / Investigação
+  - [x] Testar bloqueio de comandos destrutivos (`FORBIDDEN`)
+  - [x] Testar regras de override específicas por tenant
+- [x] Testar interceptação de governança no `CompositeMCPClient` (20 testes integrados)
+
+### Verificação
+- [x] `npm test` passa sem erros (81/81 arquivos, 526/526 testes aprovados)
+- [x] `npm run build` compila limpo (TypeScript strict 0 erros)
+
+---
+
+## Sub-Fase 6D (Sprint 6.4): Tool Discovery Contextual, Integração E2E & Documentação
+
+**Branch:** `feature/phase-6-multi-mcp-platform`  
 **Responsável:** `backend-specialist` / `project-planner`  
+**Depende de:** ✅ Sub-Fase 6C concluída  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [x] Criar e publicar a branch dedicada `feature/memory-2-hybrid-lifecycle` a partir da `dev`
-- [x] Atualizar `src/domain/Memory.ts`
-  - [x] Adicionar tipo `MemoryStatus` (`'candidate' | 'validated' | 'active' | 'updated' | 'expired'`)
-  - [x] Estender interface `Memory` com campos: `status`, `ttlSeconds`, `expiresAt`, `confidenceScore`, `validatedBy`, `tags`
-  - [x] Definir interface `HybridMemorySearchInput` com pesos customizados e filtros de status/tags
-  - [x] Definir interface `HybridSearchResult` com scores detalhados (vetorial, textual, RRF)
-- [x] Criar `src/domain/ports/IMemoryReranker.ts`
-  - [x] Definir interface `IMemoryReranker` para ordenação contextual pós-recuperação
-- [x] Atualizar `src/domain/ports/IMemoryRepository.ts`
-  - [x] Declarar `searchHybrid(input: HybridMemorySearchInput): Promise<HybridSearchResult[]>`
-  - [x] Declarar `updateStatus(id: string, tenantId: string, status: MemoryStatus, metadata?: Record<string, unknown>): Promise<boolean>`
-  - [x] Declarar `findCandidates(tenantId: string, limit?: number): Promise<Memory[]>`
-  - [x] Declarar `findExpired(now?: Date, limit?: number): Promise<Memory[]>`
-  - [x] Declarar `purgeExpired(now?: Date): Promise<number>`
-
-### Testes
-- [x] Criar `src/domain/MemoryLifecycle.test.ts`
-  - [x] Testar regras de transição de status válidas e inválidas
-  - [x] Testar sanitização e cálculo de `expiresAt` via `ttlSeconds`
-
-### Verificação
-- [x] `npm test` passa sem regressões (73/73 arquivos, 429/429 testes aprovados)
-- [x] `npm run build` compila sem erros (TypeScript strict)
-
----
-
-## Sub-Fase 5B: Motor de Recuperação Híbrida & Algoritmo RRF (Reciprocal Rank Fusion)
-
-**Branch:** `feature/memory-2-hybrid-lifecycle`  
-**Responsável:** `backend-specialist`  
-**Depende de:** ✅ 5A concluída  
-
-### Implementação
-- [x] Criar `src/domain/algorithms/ReciprocalRankFusion.ts`
-  - [x] Implementar algoritmo RRF puro com constante $k=60$
-  - [x] Suporte a pesos customizados para rankings vetorial e textual
-  - [x] Ponderação com campo `importance` da memória
-- [x] Atualizar `src/repositories/MongoMemoryRepository.ts`
-  - [x] Atualizar schema `MemoryDocument` com novos campos de ciclo de vida
-  - [x] Configurar método `ensureIndexes()` com índice de texto MongoDB em `content` e `tags`
-  - [x] Configurar índice TTL do MongoDB em `expiresAt` (`expireAfterSeconds: 0`)
-  - [x] Configurar índice multi-tenant composto (`tenantId`, `workspaceId`, `status`, `createdAt`)
-  - [x] Implementar método `searchHybrid` combinando busca vetorial com `$text` via RRF
-  - [x] Implementar métodos de ciclo de vida (`updateStatus`, `findCandidates`, `findExpired`, `purgeExpired`)
-
-### Testes
-- [x] Criar `src/domain/algorithms/ReciprocalRankFusion.test.ts`
-  - [x] Testar fusão para itens presentes em uma ou ambas as listas
-  - [x] Testar ponderação de pesos e desempates
-- [x] Atualizar/Criar `src/repositories/MongoMemoryRepository.test.ts`
-  - [x] Testar busca híbrida com priorização de termos exatos de erro
-  - [x] Testar isolamento por tenant e filtragem por status (`active` vs `candidate`)
-
-### Verificação
-- [x] `npm test` passa com 100% de sucesso (74/74 arquivos, 441/441 testes aprovados)
-- [x] Compilação limpa (`npm run build`)
-
----
-
-## Sub-Fase 5C: Contextual Reranker Service & Integração com o Harness
-
-**Branch:** `feature/memory-2-hybrid-lifecycle`  
-**Responsável:** `backend-specialist`  
-**Depende de:** ✅ 5B concluída  
-
-### Implementação
-- [x] Criar `src/services/ContextualMemoryReranker.ts`
-  - [x] Implementar `IMemoryReranker` com heurísticas de relevância operacional e recência
-- [x] Atualizar `src/infrastructure/memory/LLMMemoryExtractor.ts`
-  - [x] Adicionar extração de `confidenceScore` e `tags` no prompt estruturado
-  - [x] Definir TTL padrão por categoria de memória (`incident` 30d, `resolution` 90d, `fact` indefinido)
-  - [x] Atribuir status inicial baseado no score de confiança (`active` >= 0.8 vs `candidate` < 0.8)
-- [x] Atualizar `src/harness/ContextAssembler.ts`
-  - [x] Integrar recuperação híbrida via `searchHybrid` e `ContextualMemoryReranker`
-  - [x] Injetar tags contextuais formatadas no prompt de sistema
-- [x] Atualizar `src/config/container.ts` com as novas dependências
-
-### Testes
-- [x] Criar `src/services/ContextualMemoryReranker.test.ts`
-- [x] Atualizar `src/infrastructure/memory/LLMMemoryExtractor.test.ts`
-- [x] Atualizar `src/harness/ContextAssembler.test.ts`
-
-### Verificação
-- [x] `npm test` passa sem erros (75/75 arquivos, 446/446 testes aprovados)
-- [x] Compilação limpa em TypeScript strict (`npm run build`)
-
----
-
-## Sub-Fase 5D: API REST de Governança de Memória (`/api/memories`)
-
-**Branch:** `feature/memory-2-hybrid-lifecycle`  
-**Responsável:** `backend-specialist`  
-**Depende de:** ✅ 5C concluída  
-
-### Implementação
-- [x] Criar `src/controllers/MemoryController.ts`
-  - [x] `GET /api/memories` — Listar com filtros e paginação
-  - [x] `POST /api/memories/search` — Endpoint de teste operacional de busca híbrida
-  - [x] `GET /api/memories/candidates` — Fila de memórias pendentes de curadoria
-  - [x] `PATCH /api/memories/:id/status` — Atualizar status de ciclo de vida com validação de máquina de estados
-  - [x] `PUT /api/memories/:id` — Atualizar conteúdo e tags
-  - [x] `DELETE /api/memories/:id` — Exclusão ou invalidação manual
-- [x] Criar `src/api/memoryRouter.ts` com proteção de autenticação e RBAC
-- [x] Registrar `memoryRouter` em `src/app.ts`
-- [x] Registrar `memoryController` em `src/config/container.ts`
-
-### Testes
-- [x] Criar `src/controllers/MemoryController.test.ts` (12 testes unitários)
-- [x] Criar `src/api/memoryRouter.test.ts` (8 testes de rotas e RBAC)
-
-### Verificação
-- [x] Todos os testes da API REST de memórias passam
-- [x] Proteção RBAC validada (`viewer` leitura, `operator` alteração, `admin` deleção)
-- [x] `npm test` passa sem regressões (77/77 arquivos, 467/467 testes aprovados)
-- [x] Compilação limpa em TypeScript strict (`npm run build`)
-
----
-
-## Sub-Fase 5E: Teste de Integração E2E, Cobertura, Documentação & Fechamento
-
-**Branch:** `feature/memory-2-hybrid-lifecycle`  
-**Responsável:** `backend-specialist` / `project-planner`  
-**Depende de:** ✅ 5D concluída  
-
-### Implementação
-- [x] Criar teste E2E `src/harness/HybridMemoryLifecycle.integration.test.ts`
-  - [x] Simular extração de memória transitória de incidente com TTL
-  - [x] Provar recuperação superior de termos técnicos exatos (`ERR_DATABASE_POOL_EXHAUSTED`) sobre similaridade vetorial genérica
-  - [x] Validar transição de status (`candidate` -> `validated` -> `active`) e expiração
+- [x] Atualizar `src/usecases/ProcessAgentResponseUseCase.ts`:
+  - [x] Instanciar `CompositeMCPClient` alimentado com os servidores do tenant
+  - [x] Filtrar ferramentas ativas contextualmente usando os `playbookIds` e domínios avaliados pelo `InvestigationEngine`
+- [x] Atualizar container de injeção de dependências em `src/config/container.ts`
+- [x] Criar teste de integração E2E em `src/harness/MultiMCPInvestigation.integration.test.ts`:
+  - [x] Configurar cenário de teste com 2 servidores MCP ativos (ex: `k8s-mcp` e `observability-mcp`)
+  - [x] Simular investigação autônoma cruzada executando ferramentas de ambos os servidores com namespacing
+  - [x] Validar que o `EvidenceLedger` e o `SessionSummary` consolidam evidências vindas de múltiplos servidores
 - [x] Atualizar documentações:
-  - [x] Atualizar `roadmap.md` marcando a Fase 5 como concluída `[x]` e apontando a Fase 6
-  - [x] Atualizar `architecture.md` com os diagramas de Busca Híbrida (RRF) e Ciclo de Vida
-  - [x] Criar `docs/phase5-summary.md` consolidando os resultados
-  - [x] Atualizar coleções Postman com os endpoints de `/api/memories`
+  - [x] Atualizar `roadmap.md` marcando a Fase 6 como concluída `[x]`
+  - [x] Atualizar `architecture.md` com o diagrama do `CompositeMCPClient` e catálogo multi-servidor
+  - [x] Criar `docs/phase6-summary.md` consolidando entregas e métricas
+  - [x] Atualizar coleções Postman com novos exemplos de payload de onboarding
 
 ### Verificação Final
-- [x] `npm test` — 100% dos testes aprovados (78/78 arquivos, 471/471 testes aprovados)
-- [x] `npm run build` — compilação limpa em TypeScript strict (0 erros)
-- [x] `npm run test:unit` — 100% dos testes unitários passando
+- [x] `npm test` — 100% dos testes aprovados (82/82 arquivos, 528 testes)
+- [x] `npm run test:integration` — 100% dos testes de integração passando (9 arquivos, 16 testes)
+- [x] `npm run build` — 0 erros de compilação TypeScript strict
 
 ---
 
-## Definition of Done (Fase 5 Completa)
+## Definition of Done (Fase 6 Completa)
 
-- [x] Todas as sub-fases (5A, 5B, 5C, 5D, 5E) marcadas como concluídas
-- [x] Busca híbrida funcional no MongoDB combinando `$text` + vetorial via algoritmo RRF
-- [x] Reranker contextual operacional garantindo prioridade a termos exatos técnicos
-- [x] Máquina de estados de ciclo de vida (`candidate`, `validated`, `active`, `updated`, `expired`) com TTL ativo
-- [x] API REST de governança de memórias com controle de acesso RBAC
-- [x] 100% de testes automatizados passando sem regressões (471 testes)
+- [x] Todas as sub-fases (6A, 6B, 6C, 6D) concluídas e testadas
+- [x] `CompositeMCPClient` roteia perfeitamente chamadas com namespacing para 2 ou mais servidores MCP
+- [x] Isolamento de falhas: queda de um servidor MCP não derruba as ferramentas dos outros servidores
+- [x] Criptografia AES-256-GCM ativa para todos os servidores MCP cadastrados por tenant
+- [x] Governança ativa bloqueando ferramentas destrutivas (`FORBIDDEN`)
+- [x] Descoberta contextual de ferramentas integrada aos playbooks do `InvestigationEngine`
+- [x] Suíte de testes automatizados com cobertura total sem regressões
+
+---
+
+## Histórico de Fases Anteriores Concluídas
+
+<details>
+<summary><b>Fase 6: Multi-MCP Platform & Governança de Ferramentas — Concluída ✅</b></summary>
+
+- [x] Sub-Fase 6A: Core Composite MCP Client & Namespacing
+- [x] Sub-Fase 6B: Configuração Multi-Tenant & Persistência Criptografada
+- [x] Sub-Fase 6C: Tool Governance & Política de Risco
+- [x] Sub-Fase 6D: Tool Discovery Contextual, Integração E2E & Documentação
+- [x] 100% de testes aprovados (82 arquivos, 528 testes)
+- [x] Documento consolidado: [docs/phase6-summary.md](docs/phase6-summary.md)
+</details>
+
+<details>
+<summary><b>Fase 5: Memory 2.0 (Recuperação Híbrida & Ciclo de Vida) — Concluída ✅</b></summary>
+
+- [x] Sub-Fase 5A: Setup da Branch & Fundação de Domínio (Contratos e Entidades Core)
+- [x] Sub-Fase 5B: Motor de Recuperação Híbrida & Algoritmo RRF (Reciprocal Rank Fusion)
+- [x] Sub-Fase 5C: Contextual Reranker Service & Integração com o Harness
+- [x] Sub-Fase 5D: API REST de Governança de Memória (`/api/memories`)
+- [x] Sub-Fase 5E: Teste de Integração E2E, Cobertura, Documentação & Fechamento
+- [x] 100% de testes aprovados (78 arquivos, 471 testes)
+- [x] Documento consolidado: [docs/phase5-summary.md](docs/phase5-summary.md)
+</details>

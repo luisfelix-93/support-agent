@@ -26,23 +26,23 @@ O sistema é centrado no domínio e orquestrado pela **Camada Agent Harness**, c
 │                 │        TiktokenAdapter (BPE)                              │
 └─────────┬───────┴──────────────┬──────────────────┬─────────────────┬───────┘
           │                      │                  │                 │
-    ┌─────▼───────┐        ┌─────▼──────┐     ┌─────▼─────────┐ ┌─────▼─────────┐
-    │ ILLMProvider│        │ IMCPClient │     │IShortTermMem. │ │IMemoryRepos.  │
-    └─────┬───────┘        └─────┬──────┘     └─────┬─────────┘ └─────┬─────────┘
-          │                      │                  │                 │
-    ┌─────▼───────┐        ┌─────▼──────┐     ┌─────▼─────────┐ ┌─────▼─────────┐
-    │   OpenAI    │        │    MCP     │     │  Redis STM    │ │ MongoMemory   │
-    │   Adapter   │        │   HTTP     │     │  (ioredis)    │ │ (Cosine/Vector│
-    ├─────────────┤        │  Adapter   │     └───────────────┘ └───────────────┘
-    │  Anthropic  │        └────────────┘                             ▲
-    │   Adapter   │                                                   │
-    ├─────────────┤        ┌────────────────────────────────────┐     │
-    │   DeepSeek  │        │       BullMQ Queue Service         │     │
-    ├─────────────┤        │     ('memory-promotion' queue)     │     │
-    │   Google    │        └─────────────────┬──────────────────┘     │
-    └─────────────┘                          │                        │
-          │                                  ▼                        │
-          │ (Persiste Run) ┌────────────────────────────────────┐     │
+    ┌─────▼───────┐        ┌─────────▼─────────┐     ┌─────▼─────────┐ ┌─────▼─────────┐
+    │ ILLMProvider│        │    IMCPClient     │     │IShortTermMem. │ │IMemoryRepos.  │
+    └─────┬───────┘        └─────────┬─────────┘     └─────┬─────────┘ └─────┬─────────┘
+          │                          │                     │                 │
+    ┌─────▼───────┐        ┌─────────┴─────────┐     ┌─────▼─────────┐ ┌─────▼─────────┐
+    │   OpenAI    │        │CompositeMCPClient │     │  Redis STM    │ │ MongoMemory   │
+    │   Adapter   │        │(Governance/Router)│     │  (ioredis)    │ │ (Cosine/Vector│
+    ├─────────────┤        └─────────┬─────────┘     └───────────────┘ └───────────────┘
+    │  Anthropic  │                  │                                        ▲
+    │   Adapter   │        ┌─────────┴─────────┐                              │
+    ├─────────────┤        ▼                   ▼                              │
+    │   DeepSeek  │   ┌─────────┐         ┌─────────┐                         │
+    ├─────────────┤   │ K8s MCP │  ...    │Loki MCP │                         │
+    │   Google    │   │(Adapter)│         │(Adapter)│                         │
+    └─────────────┘   └─────────┘         └─────────┘                         │
+          │                                                                   │
+          │ (Persiste Run) ┌────────────────────────────────────┐             │
           ▼                │      MemoryPromotionWorker         │     │
     ┌───────────────┐      │   - LLMMemoryExtractor             │     │
     │AgentRunRepos. │      │   - OpenAIEmbeddingProvider (1536d)├─────┘
@@ -139,10 +139,11 @@ Orquestram os fluxos de aplicação sem acoplar a regras específicas de canais:
 ### 2.5. Infrastructure (`src/infrastructure`)
 Adaptadores concretos das interfaces de domínio:
 - **LLM**: `OpenAIAdapter`, `AnthropicAdapter`, `GoogleAdapter`, `DeepSeekAdapter`, unificados via `LLMFactory`.
-- **MCP**: `MCPHttpAdapter` (JSON-RPC 2.0 com circuit breaker e timeout).
+- **MCP & Multi-MCP**: `MCPHttpAdapter` (JSON-RPC 2.0 direto) e `CompositeMCPClient` (agregação de múltiplos servidores MCP com namespacing determinístico `<serverId>__<toolName>`, roteamento inteligente com prefix stripping reverso, circuit breakers isolados e tolerância a falhas parciais).
+- **Tool Governance**: `ToolGovernanceService` para classificação semântica preventiva de risco (`READ_ONLY`, `LOW_RISK`, `HIGH_RISK`, `FORBIDDEN`) e bloqueio preventivo de comandos destrutivos.
 - **Embeddings**: `OpenAIEmbeddingProvider` (vetorização com `text-embedding-3-small`, 1536 dimensões).
 - **Memória & Filas**: `RedisShortTermMemory` (ioredis), `BullMQAdapter` e workers (`BullMQWorker`, `MemoryPromotionWorker`, `EvaluationWorker`).
-- **Segurança**: `AESEncryptionService` (AES-256-GCM para segredos em repouso).
+- **Segurança**: `AESEncryptionService` (AES-256-GCM para segredos em repouso e chaves MCP).
 
 ### 2.6. Repositories (`src/repositories`)
 Implementações de acesso a dados em MongoDB nativo:
@@ -256,7 +257,67 @@ Interface administrativa segura protegida por JWT, rate limiting e RBAC:
 
 ---
 
-## 4. Pipeline de Telemetria e Avaliação Contínua
+## 4. Subsistema Multi-MCP Platform & Governança de Ferramentas
+
+O Support Agent evoluiu sua integração MCP de uma conexão ponto-a-ponto isolada para uma **Plataforma Multi-MCP Composta**, permitindo conectar simultaneamente múltiplos servidores especializados (Kubernetes, Observabilidade, Banco de Dados, etc.) sob o mesmo tenant de forma isolada, governada e com alto desempenho.
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              ProcessAgentResponseUseCase                               │
+│                         (Avalia Playbooks & Seleciona Domínios)                         │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │
+                                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  CompositeMCPClient                                    │
+│  ┌──────────────────────────────────────────────────────────────────────────────────┐  │
+│  │ 1. Tool Discovery Contextual: filtra por domínios ('kubernetes', 'observability')│  │
+│  │ 2. Namespacing Determinístico: expõe `<serverId>__<toolName>` ao LLM              │  │
+│  │ 3. Tool Governance Service: avalia risco da tool antes da chamada               │  │
+│  │    • READ_ONLY    ➔ Execução liberada                                            │  │
+│  │    • FORBIDDEN    ➔ Bloqueio imediato preventivo sem crash                       │  │
+│  │    • HIGH_RISK    ➔ Exige confirmação / aprovação manual                         │  │
+│  │ 4. Roteamento Reverso & Prefix Stripping: envia `toolName` limpo ao servidor alvo │  │
+│  └────────────────────────────────────────┬─────────────────────────────────────────┘  │
+└───────────────────────────────────────────┼────────────────────────────────────────────┘
+                                            │
+                  ┌─────────────────────────┼─────────────────────────┐
+                  ▼                         ▼                         ▼
+        ┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
+        │  MCPHttpAdapter   │     │  MCPHttpAdapter   │     │  MCPHttpAdapter   │
+        │  (k8s-cluster)    │     │  (observability)  │     │  (database-sql)   │
+        ├───────────────────┤     ├───────────────────┤     ├───────────────────┤
+        │ • Circuit Breaker │     │ • Circuit Breaker │     │ • Circuit Breaker │
+        │   Isolado (k8s)   │     │   Isolado (obs)   │     │   Isolado (db)    │
+        │ • Timeout próprio │     │ • Timeout próprio │     │ • Timeout próprio │
+        │ • AES-256-GCM Key │     │ • AES-256-GCM Key │     │ • AES-256-GCM Key │
+        └───────────────────┘     └───────────────────┘     └───────────────────┘
+```
+
+### 4.1. Namespacing e Roteamento Reverso
+- **Evita Colisões**: Quando dois servidores exportam ferramentas com o mesmo nome (ex: `query` ou `get_status`), o `CompositeMCPClient` prefixa automaticamente as ferramentas como `<serverId>__<toolName>` (ex: `k8s__get_status` e `obs__get_status`).
+- **Prefix Stripping**: Durante a execução, o cliente intercepta o ToolCall, identifica o servidor correspondente pelo prefixo, extrai o nome original da ferramenta e envia apenas o nome original para o servidor MCP remoto.
+
+### 4.2. Isolamento de Falhas e Circuit Breakers Independentes
+- **Tolerância a Falhas Parciais**: Conexões com múltiplos servidores são inicializadas em paralelo com `Promise.allSettled`. Se um dos servidores estiver indisponível ou instável, os demais continuam operando normalmente.
+- **Circuit Breakers Isolados**: Cada servidor MCP possui seu próprio `CircuitBreaker` instanciado com o identificador `${tenantId}-${serverId}`. Se o servidor de observabilidade falhar repetidamente e abrir o circuito, o servidor de Kubernetes permanece 100% disponível.
+
+### 4.3. Tool Governance & Matriz de Risco
+O `ToolGovernanceService` intercepta chamadas de ferramentas prevenindo ações acidentais ou abusivas de agentes autônomos:
+- **`READ_ONLY`**: Ferramentas de inspeção e telemetria (`get_*`, `list_*`, `query_*`, `describe_*`, `fetch_*`, `read_*`). Executadas com autonomia total.
+- **`LOW_RISK`**: Ações operacionais informativas ou de baixo impacto (`ping_*`, `test_*`, `validate_*`, `check_*`).
+- **`HIGH_RISK`**: Modificações de estado operacional (`restart_*`, `scale_*`, `deploy_*`, `rollback_*`). Exigem aprovação ou confirmação explícita (`requiresApproval: true`).
+- **`FORBIDDEN`**: Ações destrutivas com risco de perda de dados irreversível (`delete_*`, `drop_*`, `truncate_*`, `kill_*`, `purge_*`). Bloqueadas preventivamente no cliente composto, retornando recusa estruturada para o agente sem abortar a conversa.
+- **Políticas e Overrides por Tenant**: Suporte a expressões com wildcards glob (`*`) customizáveis por tenant via `ToolGovernancePolicy`.
+
+### 4.4. Descoberta Contextual de Ferramentas (Contextual Discovery)
+- Em vez de inundar a janela de contexto do LLM com dezenas de ferramentas de todos os servidores cadastrados, o `InvestigationEngine` analisa a mensagem do usuário e contexto da sessão para identificar os playbooks pertinentes (`kubernetes`, `api_error`, `latency_trace`, `database`).
+- Os playbooks mapeiam seus domínios investigativos (`kubernetes`, `observability`, `database`), passando `ToolFilterOptions` ao `CompositeMCPClient.listTools({ domains })`.
+- Somente ferramentas dos servidores pertencentes aos domínios ativos (além dos servidores default) são injetadas no prompt do LLM, economizando tokens e eliminando alucinações de escolha de ferramenta.
+
+---
+
+## 5. Pipeline de Telemetria e Avaliação Contínua
 
 ```text
 [AgentHarness Finalizado]
@@ -286,11 +347,11 @@ Interface administrativa segura protegida por JWT, rate limiting e RBAC:
 
 ---
 
-## 5. Resiliência e Confiabilidade
+## 6. Resiliência e Confiabilidade
 
-1. **Circuit Breaker para MCP**:
-   - Monitora falhas consecutivas de comunicação com o servidor MCP.
-   - Abre o circuito em caso de indisponibilidade, permitindo fallback rápido sem travar a thread.
+1. **Circuit Breakers Isolados para MCP**:
+   - Cada servidor MCP registrado mantém seu próprio estado de `CircuitBreaker`.
+   - Falhas consecutivas em um servidor (ex: Loki) não afetam a disponibilidade dos outros (ex: Kubernetes).
 2. **Idempotência**:
    - Webhooks de mensageria (Slack / Google Chat) utilizam chaves de idempotência baseadas em `eventId` ou hash da mensagem no Redis para prevenir respostas duplicadas.
 3. **Limites de Execução (Guardrails)**:
@@ -301,7 +362,7 @@ Interface administrativa segura protegida por JWT, rate limiting e RBAC:
 
 ---
 
-## 6. Observabilidade Nativa
+## 7. Observabilidade Nativa
 
 O sistema possui observabilidade completa integrada aos três pilares:
 
