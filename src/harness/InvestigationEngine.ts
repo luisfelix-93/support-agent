@@ -4,6 +4,7 @@ import { SessionSummary } from "../domain/workflows/SessionSummary.js";
 
 export interface InvestigationPlan {
     playbookIds: string[];
+    domains?: string[];
     systemInstructions: string;
     recommendedTools: string[];
     isIncident: boolean;
@@ -30,6 +31,26 @@ export class InvestigationEngine {
         const playbookIds = matchedPlaybooks.map(p => p.id);
         const playbookPrompts = matchedPlaybooks.map(p => `### Playbook: ${p.name} (${p.id})\n${p.getInvestigationPrompt()}`).join('\n\n');
         
+        const domainsSet = new Set<string>();
+        for (const pb of matchedPlaybooks) {
+            if (pb.domain) {
+                domainsSet.add(pb.domain);
+                if (pb.domain === 'kubernetes') {
+                    domainsSet.add('k8s');
+                    domainsSet.add('infra');
+                } else if (pb.domain === 'api' || pb.domain === 'latency') {
+                    domainsSet.add('observability');
+                    domainsSet.add('metrics');
+                    domainsSet.add('logs');
+                    domainsSet.add('traces');
+                } else if (pb.domain === 'database') {
+                    domainsSet.add('db');
+                    domainsSet.add('infra');
+                }
+            }
+        }
+        const domains = Array.from(domainsSet);
+
         const recommendedToolsSet = new Set<string>();
         for (const pb of matchedPlaybooks) {
             for (const tool of pb.getRecommendedTools()) {
@@ -78,6 +99,7 @@ ${playbookPrompts}`;
 
         return {
             playbookIds,
+            domains,
             systemInstructions,
             recommendedTools,
             isIncident: true,

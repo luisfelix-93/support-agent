@@ -55,13 +55,13 @@ O Support Agent já possui uma fundação técnica robusta e validada em produç
                     └─────────┬─────────┘
                               ▼
                     ┌───────────────────┐
-                    │ 6. MCP PLATFORM   │  🔄 Próximo Foco
-                    │ Registry &        │
-                    │ Tool Governance   │
+                    │ 6. MCP PLATFORM   │  ✅ Concluída
+                    │ Multi-MCP,        │  (Isolamento, Governança,
+                    │ Namespacing & CB) │   Tool Discovery)
                     └─────────┬─────────┘
                               ▼
                     ┌───────────────────┐
-                    │ 7. CONTROL PLANE  │  🔄 Planejada
+                    │ 7. CONTROL PLANE  │  🔄 Próximo Foco
                     │ Dashboard web,    │
                     │ gestão e métricas │
                     └─────────┬─────────┘
@@ -192,34 +192,46 @@ Evolução do subsistema de memória corporativa para garantir recuperação de 
 
 ---
 
+## Fase 6 — Multi-MCP Platform & Governança de Ferramentas
+**Prioridade: 🔴 P0** | **Status: ✅ Concluída**
+
+Transformação da camada MCP de uma conexão ponto-a-ponto isolada em uma plataforma Multi-MCP extensível, resiliente e segura:
+
+- **Composite MCP Client & Namespacing Transparente (Sub-Fase 6A)**:
+  - [x] Agregação unificada de múltiplos servidores MCP sob a interface `IMCPClient`.
+  - [x] Namespacing determinístico `<serverId>__<toolName>` para evitar colisões entre ferramentas de diferentes servidores.
+  - [x] Roteamento e prefix stripping transparente: entrega `ToolCall` limpo ao adaptador do servidor de destino.
+  - [x] Inicialização paralela resiliente com `Promise.allSettled` e tolerância a falhas parciais (servidores instáveis não bloqueiam os saudáveis).
+  - [x] Circuit Breaker isolado por servidor MCP: estado de resiliência independente para cada endpoint.
+- **Configuração Multi-Tenant & Persistência Criptografada (Sub-Fase 6B)**:
+  - [x] Extensão da entidade `Tenant` com suporte a array de `mcpServers?: MCPServerConfig[]` com retrocompatibilidade automática com o modelo legado.
+  - [x] Criptografia AES-256-GCM em repouso de `apiKey` por servidor no `TenantRepository`.
+  - [x] Mascaramento de segurança (`maskApiKey`) para respostas de API (`GET /api/onboarding/tenants`).
+  - [x] Validação rigorosa no `RegisterTenantUseCase` e `OnboardingController` (unicidade de IDs, URLs HTTP/HTTPS válidas, sanitização).
+- **Tool Governance & Política de Risco (Sub-Fase 6C)**:
+  - [x] Classificação de risco em 4 níveis: `READ_ONLY`, `LOW_RISK`, `HIGH_RISK`, `FORBIDDEN`.
+  - [x] `ToolGovernanceService`: categorização semântica por regex (`get_*`, `list_*`, `query_*` $\to$ `READ_ONLY`; `delete_*`, `drop_*`, `kill_*` $\to$ `FORBIDDEN`).
+  - [x] Suporte a regras personalizadas com wildcards glob (`*`) e overrides por tenant.
+  - [x] Interceptação preventiva antes do despacho da ferramenta, bloqueando chamadas destrutivas ou não autorizadas sem crashar o loop agentic.
+- **Tool Discovery Contextual & Integração E2E (Sub-Fase 6D)**:
+  - [x] Integração no `ProcessAgentResponseUseCase` e `container.ts` com cache inteligente por tenant.
+  - [x] Injeção de `ToolFilterOptions` (`domains`, `playbookIds`) alimentado pelo `InvestigationEngine`, entregando apenas as ferramentas pertinentes ao domínio investigativo ativo.
+  - [x] Teste de integração E2E `MultiMCPInvestigation.integration.test.ts` cobrindo roteamento cross-server (`k8s` + `observability`), isolamento de falhas, bloqueio de comandos destrutivos e síntese no `SessionSummary`.
+
+---
+
 # Fases Futuras
 
 ---
 
-## Fase 6 — MCP Platform & Governança de Ferramentas
-**Prioridade: 🔴 P0** | **Status: 🔄 Próximo Foco**
-
-Transformar o MCP de integrações pontuais em uma plataforma extensível e governada:
-
-- **MCP Registry**:
-  - Catálogo centralizado de servidores MCP (Observabilidade, Infraestrutura, Banco de Dados, CI/CD).
-  - Configuração dinâmica de servidores MCP por tenant.
-- **Tool Discovery Contextual**:
-  - Em vez de enviar dezenas de ferramentas simultaneamente para o LLM, injetar apenas as ferramentas pertinentes ao domínio do problema.
-- **Governança e Política de Risco (Tool Governance)**:
-  - Classificação de ferramentas: `READ_ONLY`, `LOW_RISK`, `HIGH_RISK`, `FORBIDDEN`.
-  - Bloqueio de ferramentas destrutivas e exigência de aprovação manual para ações críticas (`REQUIRE_APPROVAL`).
-
----
-
 ## Fase 7 — Control Plane & UI Administrativa
-**Prioridade: 🟡 P2**
+**Prioridade: 🟡 P2** | **Status: 🔄 Próximo Foco**
 
 Desenvolvimento de um dashboard web unificado para operadores e administradores:
 
 - Visão consolidada de execuções (`Agent Runs`), taxa de sucesso e custos em USD em tempo real.
-- Gestão visual de tenants, usuários, chaves de API e conexões com Slack/Google Chat.
-- Consulta e auditoria do histórico de memórias extraídas.
+- Gestão visual de tenants, usuários, servidores MCP e conexões com Slack/Google Chat.
+- Curadoria e auditoria do histórico de memórias e governança de ferramentas.
 - Inspeção detalhada de traces e pontuações de auto-avaliação.
 
 ---

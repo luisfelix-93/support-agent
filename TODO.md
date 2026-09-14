@@ -112,44 +112,55 @@
 
 **Branch:** `feature/phase-6-multi-mcp-platform`  
 **Responsável:** `backend-specialist` / `project-planner`  
-**Depende de:** Sub-Fase 6C concluída  
-**Status:** ⏳ Pendente  
+**Depende de:** ✅ Sub-Fase 6C concluída  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Atualizar `src/usecases/ProcessAgentResponseUseCase.ts`:
-  - [ ] Instanciar `CompositeMCPClient` alimentado com os servidores do tenant
-  - [ ] Filtrar ferramentas ativas contextualmente usando os `playbookIds` e domínios avaliados pelo `InvestigationEngine`
-- [ ] Atualizar container de injeção de dependências em `src/config/container.ts`
-- [ ] Criar teste de integração E2E em `src/harness/MultiMCPInvestigation.integration.test.ts`:
-  - [ ] Configurar cenário de teste com 2 servidores MCP ativos (ex: `k8s-mcp` e `observability-mcp`)
-  - [ ] Simular investigação autônoma cruzada executando ferramentas de ambos os servidores com namespacing
-  - [ ] Validar que o `EvidenceLedger` e o `SessionSummary` consolidam evidências vindas de múltiplos servidores
-- [ ] Atualizar documentações:
-  - [ ] Atualizar `roadmap.md` marcando a Fase 6 como concluída `[x]`
-  - [ ] Atualizar `architecture.md` com o diagrama do `CompositeMCPClient` e catálogo multi-servidor
-  - [ ] Criar `docs/phase6-summary.md` consolidando entregas e métricas
-  - [ ] Atualizar coleções Postman com novos exemplos de payload de onboarding
+- [x] Atualizar `src/usecases/ProcessAgentResponseUseCase.ts`:
+  - [x] Instanciar `CompositeMCPClient` alimentado com os servidores do tenant
+  - [x] Filtrar ferramentas ativas contextualmente usando os `playbookIds` e domínios avaliados pelo `InvestigationEngine`
+- [x] Atualizar container de injeção de dependências em `src/config/container.ts`
+- [x] Criar teste de integração E2E em `src/harness/MultiMCPInvestigation.integration.test.ts`:
+  - [x] Configurar cenário de teste com 2 servidores MCP ativos (ex: `k8s-mcp` e `observability-mcp`)
+  - [x] Simular investigação autônoma cruzada executando ferramentas de ambos os servidores com namespacing
+  - [x] Validar que o `EvidenceLedger` e o `SessionSummary` consolidam evidências vindas de múltiplos servidores
+- [x] Atualizar documentações:
+  - [x] Atualizar `roadmap.md` marcando a Fase 6 como concluída `[x]`
+  - [x] Atualizar `architecture.md` com o diagrama do `CompositeMCPClient` e catálogo multi-servidor
+  - [x] Criar `docs/phase6-summary.md` consolidando entregas e métricas
+  - [x] Atualizar coleções Postman com novos exemplos de payload de onboarding
 
 ### Verificação Final
-- [ ] `npm test` — 100% dos testes aprovados
-- [ ] `npm run test:integration` — 100% dos testes de integração passando
-- [ ] `npm run build` — 0 erros de compilação TypeScript strict
+- [x] `npm test` — 100% dos testes aprovados (82/82 arquivos, 528 testes)
+- [x] `npm run test:integration` — 100% dos testes de integração passando (9 arquivos, 16 testes)
+- [x] `npm run build` — 0 erros de compilação TypeScript strict
 
 ---
 
 ## Definition of Done (Fase 6 Completa)
 
-- [ ] Todas as sub-fases (6A, 6B, 6C, 6D) concluídas e testadas
-- [ ] `CompositeMCPClient` roteia perfeitamente chamadas com namespacing para 2 ou mais servidores MCP
-- [ ] Isolamento de falhas: queda de um servidor MCP não derruba as ferramentas dos outros servidores
-- [ ] Criptografia AES-256-GCM ativa para todos os servidores MCP cadastrados por tenant
-- [ ] Governança ativa bloqueando ferramentas destrutivas (`FORBIDDEN`)
-- [ ] Descoberta contextual de ferramentas integrada aos playbooks do `InvestigationEngine`
-- [ ] Suíte de testes automatizados com cobertura total sem regressões
+- [x] Todas as sub-fases (6A, 6B, 6C, 6D) concluídas e testadas
+- [x] `CompositeMCPClient` roteia perfeitamente chamadas com namespacing para 2 ou mais servidores MCP
+- [x] Isolamento de falhas: queda de um servidor MCP não derruba as ferramentas dos outros servidores
+- [x] Criptografia AES-256-GCM ativa para todos os servidores MCP cadastrados por tenant
+- [x] Governança ativa bloqueando ferramentas destrutivas (`FORBIDDEN`)
+- [x] Descoberta contextual de ferramentas integrada aos playbooks do `InvestigationEngine`
+- [x] Suíte de testes automatizados com cobertura total sem regressões
 
 ---
 
 ## Histórico de Fases Anteriores Concluídas
+
+<details>
+<summary><b>Fase 6: Multi-MCP Platform & Governança de Ferramentas — Concluída ✅</b></summary>
+
+- [x] Sub-Fase 6A: Core Composite MCP Client & Namespacing
+- [x] Sub-Fase 6B: Configuração Multi-Tenant & Persistência Criptografada
+- [x] Sub-Fase 6C: Tool Governance & Política de Risco
+- [x] Sub-Fase 6D: Tool Discovery Contextual, Integração E2E & Documentação
+- [x] 100% de testes aprovados (82 arquivos, 528 testes)
+- [x] Documento consolidado: [docs/phase6-summary.md](docs/phase6-summary.md)
+</details>
 
 <details>
 <summary><b>Fase 5: Memory 2.0 (Recuperação Híbrida & Ciclo de Vida) — Concluída ✅</b></summary>

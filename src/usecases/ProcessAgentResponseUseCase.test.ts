@@ -268,4 +268,65 @@ describe('ProcessAgentResponseUseCase', () => {
             expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-1', 'Diagnóstico concluído.');
         });
     });
+
+    describe('Multi-MCP Platform & Contextual Tool Discovery', () => {
+        it('deve instanciar CompositeMCPClient e aplicar filtro contextual de domínios quando tenant possuir múltiplos servidores MCP', async () => {
+            const multiMcpTenant = new Tenant(
+                'workspace-multi',
+                { provider: 'openai', apiKey: 'sk-test' },
+                { url: 'https://mcp-legacy.example.com', apiKey: 'key' },
+                true,
+                [
+                    { id: 'k8s', name: 'Kubernetes MCP', url: 'https://k8s.example.com', domains: ['kubernetes', 'infra'] },
+                    { id: 'loki', name: 'Loki MCP', url: 'https://loki.example.com', domains: ['observability', 'logs'] }
+                ]
+            );
+
+            const multiMapping = new SpaceMapping('spaces/MULTI123', 'workspace-multi');
+            const customSpaceRepo = makeSpaceMappingRepo({ findBySpaceId: vi.fn().mockResolvedValue(multiMapping) });
+            const customTenantRepo = makeTenantRepo({ findByWorkspaceId: vi.fn().mockResolvedValue(multiMcpTenant) });
+
+            const mockEngine: any = {
+                evaluate: vi.fn().mockReturnValue({
+                    playbookIds: ['kubernetes'],
+                    domains: ['kubernetes', 'k8s', 'infra'],
+                    systemInstructions: 'DIRETRIZ K8S',
+                    recommendedTools: ['get_pod_status'],
+                    isIncident: true,
+                }),
+            };
+
+            const customHarness = {
+                run: vi.fn().mockResolvedValue({
+                    runId: 'run-multi',
+                    response: 'Pod investigado com sucesso.',
+                    iterations: 1,
+                    toolCalls: [],
+                    status: 'completed',
+                    durationMs: 80,
+                }),
+            };
+
+            const multiUseCase = new ProcessAgentResponseUse(
+                customSpaceRepo,
+                customTenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockEngine
+            );
+
+            await multiUseCase.execute('spaces/MULTI123', 'thread-1', 'Pod reiniciando no cluster', chatProvider);
+
+            expect(mockEngine.evaluate).toHaveBeenCalled();
+            expect(customHarness.run).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    tenantId: 'workspace-multi',
+                    systemInstructions: 'DIRETRIZ K8S',
+                    playbookIds: ['kubernetes'],
+                    mcpClient: expect.any(Object),
+                })
+            );
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-1', 'Pod investigado com sucesso.');
+        });
+    });
 });
