@@ -12,6 +12,16 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
+# ─── Stage: Migrator (execução de migrations isoladas) ──
+FROM node:20-alpine AS migrator
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --chown=node:node --from=runner-deps /app/node_modules ./node_modules
+COPY --chown=node:node --from=builder /app/dist ./dist
+COPY --chown=node:node --from=builder /app/package.json ./package.json
+USER node
+CMD ["npm", "run", "migrate:dist"]
+
 # ─── Stage 3: Runner de produção ─────────────────────
 FROM node:20-alpine AS runner
 WORKDIR /app

@@ -53,11 +53,21 @@ import { IdempotencyGuard } from '../infrastructure/resilience/IdempotencyGuard.
 
 import { HealthChecker } from '../infrastructure/health/HealthChecker.js';
 
-// ─── Database Connection ─────────────────────────────
+import { MigrationRunner } from '../infrastructure/database/migrations/MigrationRunner.js';
+
+// ─── Database Connection & Migrations ────────────────
 await MongoConnection.connect(
     process.env.MONGODB_URI!,
     process.env.MONGODB_DB_NAME!
 );
+
+export const migrationRunner = new MigrationRunner(MongoConnection.getDb());
+if (process.env.RUN_MIGRATIONS !== 'false') {
+    await migrationRunner.run().catch((err) => {
+        logger.error({ err }, 'Falha na execução das migrações do banco de dados.');
+        throw err;
+    });
+}
 
 // ─── Redis Connection (ioredis) ──────────────────────
 export const redisConnection = process.env.REDIS_URL
