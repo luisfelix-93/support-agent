@@ -62,3 +62,6 @@ node_inspect_*.json
 .yarn/
 .pnp.*
 .pnpm-store/
+
+# Clientes
+clients/
