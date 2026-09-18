@@ -17,6 +17,11 @@ import type { ISessionRepository } from "../domain/ports/ISessionRepository.js";
 import { InvestigationSession } from "../domain/InvestigationSession.js";
 import { SessionStatus } from "../domain/SessionStatus.js";
 import { ClosureIntentDetector } from "../services/ClosureIntentDetector.js";
+import {
+    agentSessionsTotal,
+    agentSessionsClosedTotal,
+    agentSessionDurationSeconds,
+} from "../infrastructure/metrics/AgentMetrics.js";
 import { logger } from "../config/logger.js";
 
 const log = logger.child({ module: 'ProcessAgentResponseUseCase' });
@@ -99,6 +104,12 @@ export class ProcessAgentResponseUse {
                         session.confirmClosure(summary ?? undefined);
                         await this.sessionRepository.save(session);
 
+                        agentSessionsClosedTotal.inc({ workspaceId: session.workspaceId, reason: 'user' });
+                        if (session.closedAt) {
+                            const durationSec = Math.max(0, (session.closedAt.getTime() - session.startedAt.getTime()) / 1000);
+                            agentSessionDurationSeconds.observe({ workspaceId: session.workspaceId, reason: 'user' }, durationSec);
+                        }
+
                         const summaryMarkdown = summary ? `\n\n${summary.toMarkdown()}` : '';
                         const closureMessage = `✅ **Sessão de investigação encerrada com sucesso.**${summaryMarkdown}`;
 
@@ -120,6 +131,12 @@ export class ProcessAgentResponseUse {
                         session.confirmClosure(summary ?? undefined);
                         await this.sessionRepository.save(session);
 
+                        agentSessionsClosedTotal.inc({ workspaceId: session.workspaceId, reason: 'user' });
+                        if (session.closedAt) {
+                            const durationSec = Math.max(0, (session.closedAt.getTime() - session.startedAt.getTime()) / 1000);
+                            agentSessionDurationSeconds.observe({ workspaceId: session.workspaceId, reason: 'user' }, durationSec);
+                        }
+
                         const summaryMarkdown = summary ? `\n\n${summary.toMarkdown()}` : '';
                         const closureMessage = `✅ **Sessão de investigação encerrada com sucesso pelo operador.**${summaryMarkdown}`;
 
@@ -139,8 +156,10 @@ export class ProcessAgentResponseUse {
                         threadId,
                         channelId: spaceId,
                     });
+                    agentSessionsTotal.inc({ workspaceId: session.workspaceId });
                 }
             }
+
 
             // 2. Aplica a regra de negócio: adiciona a nova mensagem do usuário
             context.addMessage(new Message(crypto.randomUUID(), 'user', userText));

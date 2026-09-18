@@ -4,6 +4,22 @@ Este documento apresenta o catálogo completo de recursos e capacidades técnica
 
 ---
 
+## Sumário
+
+1. [Runtime Agentic & Loop de Raciocínio (Agent Harness)](#1-runtime-agentic--loop-de-raciocínio-agent-harness)
+2. [Suporte a Múltiplos Provedores de LLM](#2-suporte-a-múltiplos-provedores-de-llm)
+3. [Integração Dinâmica com MCP (Model Context Protocol)](#3-integração-dinâmica-com-mcp-model-context-protocol)
+4. [Memória Híbrida & Busca Semântica](#4-memória-híbrida--busca-semântica)
+5. [Telemetria de Execuções e Custos (AgentRun)](#5-telemetria-de-execuções-e-custos-agentrun)
+6. [Framework de Auto-Avaliação Contínua](#6-framework-de-auto-avaliação-contínua)
+7. [Segurança, RBAC e Isolamento Multi-Tenant](#7-segurança-rbac-e-isolamento-multi-tenant)
+8. [Integrações Omnichannel (Chat)](#8-integrações-omnichannel-chat)
+9. [Observabilidade em Tempo Real](#9-observabilidade-em-tempo-real)
+10. [Support Workflows & Investigação Especializada de Incidentes (Fase 4)](#10-support-workflows--investigação-especializada-de-incidentes-fase-4)
+11. [Ciclo de Vida Híbrido de Sessão de Investigação (Session Lifecycle)](#11-ciclo-de-vida-híbrido-de-sessão-de-investigação-session-lifecycle)
+
+---
+
 ## 1. Runtime Agentic & Loop de Raciocínio (Agent Harness)
 
 O agente opera através de um runtime autônomo desacoplado (`IAgentHarness`), capaz de resolver solicitações complexas por meio de raciocínio iterativo:
@@ -184,3 +200,31 @@ O Support Agent evoluiu de um bot conversacional reativo para uma **plataforma a
   - Formatação corporativa padronizada ao final de cada diagnóstico, contendo: `runId`, serviço afetado, janela temporal do incidente, evidências consolidadas (logs, métricas, traces, infra, db), hipótese fundamentada de causa raiz (RCA) e ações recomendadas de mitigação e correção estrutural.
 - **Autonomia Controlada (Read-Only)**:
   - O agente coleta evidências, correlaciona dados e recomenda ações de remediação, sem executar comandos destrutivos ou mutações de infraestrutura sem supervisão humana.
+
+---
+
+## 11. Ciclo de Vida Híbrido de Sessão de Investigação (Session Lifecycle)
+
+O Support Agent implementa um **ciclo de vida formal de sessões de investigação** (`InvestigationSession`), eliminando sessões órfãs e entregando relatórios de síntese executiva no momento exato da resolução:
+
+- **Máquina de Estados de Domínio**:
+  - `ACTIVE`: Sessão em andamento investigando o incidente de forma iterativa.
+  - `AWAITING_CLOSURE_CONFIRMATION`: Causa raiz identificada e resumo preliminar emitido, aguardando validação do operador.
+  - `CLOSED_BY_USER`: Encerramento ativo confirmado diretamente pelo operador via chat.
+  - `CLOSED_BY_TIMEOUT`: Encerramento automático acionado por tempo limite de inatividade.
+- **Encerramento Conversacional Ativo (User-Driven)**:
+  - Ao emitir a hipótese de causa raiz e ações recomendadas, o agente anexa automaticamente um convite interativo de encerramento.
+  - **Detector Semântico de Intenção (`ClosureIntentDetector`)**:
+    - Reconhece afirmações diretas (*"Sim"*, *"Ok"*, *"Pode encerrar"*, *"Concluído"*), transitando para `CLOSED_BY_USER` e emitindo o `SessionSummary` formatado sem chamadas adicionais de LLM.
+    - Reconhece intenções de continuidade (*"Não"*, *"Ainda não"*, *"Verifique também o banco"*), revertendo para `ACTIVE` e continuando a investigação normalmente.
+    - Suporta comandos explícitos a qualquer momento (`/encerrar`, `/close`, `/finalizar`).
+- **Salvaguarda Automática por Inatividade (Idle Timeout & Sweeper)**:
+  - **Janela de Inatividade**: TTL configurável por sessão (padrão de 1 hora = `3.600.000 ms`), reiniciado a cada nova mensagem trocada (`touch()`).
+  - **Sweeper em Segundo Plano (`SessionTimeoutSweeper`)**: Varre periodicamente sessões inativas com `lastInteractionAt <= cutoffDate`.
+  - **Compilação Automática de Resumo**: Caso o operador abandone o chat após resolver a emergência, o sweeper sintetiza as evidências do `EvidenceLedger` em um `SessionSummary` estruturado e despacha a notificação na thread via `ChatProviderFactory`.
+  - **Worker Resiliente (`SessionTimeoutWorker`)**: Executa periodicamente em loop não-bloqueante com proteção contra concorrência (`isBusy`) e disparo manual sob demanda (`triggerNow()`).
+- **Observabilidade & Métricas de Sessão (Prometheus)**:
+  - `agent_sessions_total`: Contador de sessões de investigação abertas por workspace.
+  - `agent_sessions_closed_total{workspaceId, reason="user|timeout"}`: Contabilização de encerramentos ativos vs expirações por inatividade.
+  - `agent_session_duration_seconds{workspaceId, reason}`: Histograma com a duração total das investigações de suporte (buckets até 4 horas).
+

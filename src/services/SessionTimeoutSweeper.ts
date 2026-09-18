@@ -4,6 +4,10 @@ import type { ChatProviderFactory } from '../infrastructure/chat/ChatProviderFac
 import type { IChatRepository } from '../domain/ports/IChatRepository.js';
 import { SessionSummary } from '../domain/workflows/SessionSummary.js';
 import { Message } from '../domain/Message.js';
+import {
+    agentSessionsClosedTotal,
+    agentSessionDurationSeconds,
+} from '../infrastructure/metrics/AgentMetrics.js';
 import { logger } from '../config/logger.js';
 
 const log = logger.child({ module: 'SessionTimeoutSweeper' });
@@ -51,11 +55,18 @@ export class SessionTimeoutSweeper {
                     session.expireByTimeout(summary, referenceDate);
                     await this.sessionRepository.save(session);
 
+                    agentSessionsClosedTotal.inc({ workspaceId: session.workspaceId, reason: 'timeout' });
+                    if (session.closedAt) {
+                        const durationSec = Math.max(0, (session.closedAt.getTime() - session.startedAt.getTime()) / 1000);
+                        agentSessionDurationSeconds.observe({ workspaceId: session.workspaceId, reason: 'timeout' }, durationSec);
+                    }
+
                     result.expired++;
                     log.info(
                         { sessionId: session.id, threadId: session.threadId, workspaceId: session.workspaceId },
                         'Sessão de investigação encerrada por inatividade.'
                     );
+
 
                     // Notificação assíncrona para a thread no chat
                     await this.notifyThread(session, summary);

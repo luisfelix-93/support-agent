@@ -52,3 +52,26 @@ export const agentEmbeddingDurationSeconds = new client.Histogram({
     buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
     registers: [metricsRegister],
 });
+
+export const agentSessionsTotal = new client.Counter({
+    name: 'agent_sessions_total',
+    help: 'Total de sessões de investigação criadas por workspace.',
+    labelNames: ['workspaceId'],
+    registers: [metricsRegister],
+});
+
+export const agentSessionsClosedTotal = new client.Counter({
+    name: 'agent_sessions_closed_total',
+    help: 'Total de sessões de investigação encerradas por motivo.',
+    labelNames: ['workspaceId', 'reason'],
+    registers: [metricsRegister],
+});
+
+export const agentSessionDurationSeconds = new client.Histogram({
+    name: 'agent_session_duration_seconds',
+    help: 'Duração total da sessão de investigação em segundos.',
+    labelNames: ['workspaceId', 'reason'],
+    buckets: [60, 300, 900, 1800, 3600, 7200, 14400],
+    registers: [metricsRegister],
+});
+

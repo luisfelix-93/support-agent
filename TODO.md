@@ -149,44 +149,57 @@
 
 ## Sub-Fase 7E (Sprint 7.5): Integração E2E, Métricas & Fechamento de Fase
 
-**Branch:** `feature/phase-7-session-lifecycle`  
+**Branch:** `feature/session-lifecycle`  
 **Responsável:** `qa-automation-engineer` / `project-planner`  
-**Depende de:** Sub-Fase 7D  
-**Status:** ⏳ Pendente  
+**Depende de:** ✅ Sub-Fase 7D concluída  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Criar teste de integração E2E em `src/harness/HybridSessionLifecycle.integration.test.ts`:
-  - [ ] Cenário 1: Fechamento Conversacional Ativo (Início -> Investigação -> Proposta -> Confirmação -> SessionSummary -> Fechado)
-  - [ ] Cenário 2: Fechamento por Inatividade (Início -> Investigação -> Abandono de 1h -> Sweeper -> SessionSummary -> Fechado)
-- [ ] Adicionar métricas Prometheus em `src/infrastructure/metrics/AgentMetrics.ts`:
-  - [ ] `agent_sessions_total` (contador)
-  - [ ] `agent_sessions_closed_total` (labels: `reason="user|timeout"`)
-  - [ ] `agent_session_duration_seconds` (histograma)
-- [ ] Atualizar documentações:
-  - [ ] Atualizar `docs/roadmap.md` adicionando a Fase 7 detalhada
-  - [ ] Atualizar `architecture.md` com a máquina de estados do ciclo de vida da sessão
-  - [ ] Criar `docs/phase7-summary.md`
+- [x] Criar teste de integração E2E em `src/harness/HybridSessionLifecycle.integration.test.ts`:
+  - [x] Cenário 1: Fechamento Conversacional Ativo (Início -> Investigação -> Proposta -> Confirmação -> SessionSummary -> Fechado)
+  - [x] Cenário 2: Fechamento por Inatividade (Início -> Investigação -> Abandono de 1h -> Sweeper -> SessionSummary -> Fechado)
+- [x] Adicionar métricas Prometheus em `src/infrastructure/metrics/AgentMetrics.ts`:
+  - [x] `agent_sessions_total` (contador)
+  - [x] `agent_sessions_closed_total` (labels: `reason="user|timeout"`)
+  - [x] `agent_session_duration_seconds` (histograma)
+- [x] Atualizar documentações:
+  - [x] Atualizar `features.md` com a Seção 11 detalhada e índice geral
+  - [x] Atualizar `docs/roadmap.md` adicionando a Fase 7 detalhada e tabela de priorização
+  - [x] Atualizar `architecture.md` com a máquina de estados do ciclo de vida da sessão
+  - [x] Criar `docs/phase7-summary.md`
 
 ### Verificação Final
-- [ ] `npm test` — 100% dos testes aprovados
-- [ ] `npm run test:integration` — 100% dos testes de integração passando
-- [ ] `npm run build` — 0 erros de compilação TypeScript strict
+- [x] `npm test` — 100% dos testes aprovados (91/91 arquivos, 629/629 testes)
+- [x] `npm run test:integration` — 100% dos testes de integração passando (10/10 arquivos, 40/40 testes)
+- [x] `npm run build` — 0 erros de compilação TypeScript strict
 
 ---
 
 ## Definition of Done (Fase 7 Completa)
 
-- [ ] Todas as sub-fases (7A a 7E) concluídas e testadas
-- [ ] Máquina de estados de `InvestigationSession` robusta com isolamento multi-tenant
-- [ ] Fechamento ativo conversacional funcionando fluidamente no chat
-- [ ] Sweeper de inatividade encerrando sessões órfãs após 1 hora de inatividade
-- [ ] `SessionSummary` gerado e entregue confiavelmente em ambos os caminhos de fechamento
-- [ ] Métricas de sessões integradas ao Prometheus
-- [ ] Suíte de testes automatizados com 100% de aprovação e sem regressões
+- [x] Todas as sub-fases (7A a 7E) concluídas e testadas
+- [x] Máquina de estados de `InvestigationSession` robusta com isolamento multi-tenant
+- [x] Fechamento ativo conversacional funcionando fluidamente no chat
+- [x] Sweeper de inatividade encerrando sessões órfãs após 1 hora de inatividade
+- [x] `SessionSummary` gerado e entregue confiavelmente em ambos os caminhos de fechamento
+- [x] Métricas de sessões integradas ao Prometheus
+- [x] Suíte de testes automatizados com 100% de aprovação e sem regressões
 
 ---
 
 ## Histórico de Fases Anteriores Concluídas
+
+<details>
+<summary><b>Fase 7: Ciclo de Vida Híbrido de Sessão de Investigação — Concluída ✅</b></summary>
+
+- [x] Sub-Fase 7A: Fundação de Domínio (`InvestigationSession` & `SessionStatus`)
+- [x] Sub-Fase 7B: Repositório & Persistência MongoDB (`MongoSessionRepository`)
+- [x] Sub-Fase 7C: Detecção Semântica & Encerramento Conversacional (`ClosureIntentDetector`)
+- [x] Sub-Fase 7D: Sweeper de Inatividade & Background Worker (`SessionTimeoutSweeper`)
+- [x] Sub-Fase 7E: Integração E2E, Métricas Prometheus & Documentação
+- [x] 100% de testes aprovados (91 arquivos unitários, 629 testes / 10 arquivos de integração, 40 testes)
+- [x] Documento consolidado: [docs/phase7-summary.md](docs/phase7-summary.md)
+</details>
 
 <details>
 <summary><b>Fase 6: Multi-MCP Platform & Governança de Ferramentas — Concluída ✅</b></summary>
