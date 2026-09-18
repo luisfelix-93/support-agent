@@ -50,11 +50,23 @@ describe('AESEncryptionService', () => {
         const service = new AESEncryptionService(testKey);
         const encrypted = service.encrypt('super-secret');
         const [iv, authTag, data] = encrypted.split(':');
-        const tamperedTag = authTag.substring(0, authTag.length - 2) + '00';
-        const tamperedCipher = `${iv}:${tamperedTag}:${data}`;
 
-        expect(() => service.decrypt(tamperedCipher)).toThrow();
+        // Garantia matemática: XOR 0xff nunca produz o mesmo valor (evita falso-positivo quando o final for '00')
+        const firstTagByte = parseInt(authTag.substring(0, 2), 16);
+        const flippedTagByte = (firstTagByte ^ 0xff).toString(16).padStart(2, '0');
+        const tamperedTag = flippedTagByte + authTag.substring(2);
+        const tamperedTagCipher = `${iv}:${tamperedTag}:${data}`;
+
+        expect(() => service.decrypt(tamperedTagCipher)).toThrow();
+
+        // Adulteração do dado cifrado também deve lançar erro
+        const firstDataByte = parseInt(data.substring(0, 2), 16);
+        const flippedDataByte = (firstDataByte ^ 0xff).toString(16).padStart(2, '0');
+        const tamperedDataCipher = `${iv}:${authTag}:${flippedDataByte}${data.substring(2)}`;
+
+        expect(() => service.decrypt(tamperedDataCipher)).toThrow();
     });
+
 
     it('deve retornar string vazia ao criptografar ou descriptografar texto vazio', () => {
         const service = new AESEncryptionService(testKey);

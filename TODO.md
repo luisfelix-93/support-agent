@@ -43,33 +43,34 @@
 
 ## Sub-Fase 7B (Sprint 7.2): Persistência MongoDB & `ISessionRepository`
 
-**Branch:** `feature/phase-7-session-lifecycle`  
+**Branch:** `feature/session-lifecycle`  
 **Responsável:** `database-architect` / `backend-specialist`  
-**Depende de:** Sub-Fase 7A  
-**Status:** ⏳ Pendente  
+**Depende de:** ✅ Sub-Fase 7A concluída  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Criar contrato em `src/domain/ports/ISessionRepository.ts`:
-  - [ ] `save(session: InvestigationSession): Promise<void>`
-  - [ ] `findById(id: string): Promise<InvestigationSession | null>`
-  - [ ] `findActiveByThreadId(threadId: string, workspaceId: string): Promise<InvestigationSession | null>`
-  - [ ] `findInactiveSessions(cutoffDate: Date, limit?: number): Promise<InvestigationSession[]>`
-- [ ] Implementar repositório `MongoSessionRepository` em `src/repositories/MongoSessionRepository.ts`:
-  - [ ] Collection `investigation_sessions`
-  - [ ] Mapeamento bidirecional entre documentos MongoDB e a entidade `InvestigationSession`
-  - [ ] Serialização e deserialização do `EvidenceLedger` e `SessionSummary`
-  - [ ] Criação de índices: `{ workspaceId: 1, threadId: 1, status: 1 }` e `{ status: 1, lastInteractionAt: 1 }`
+- [x] Criar contrato em `src/domain/ports/ISessionRepository.ts`:
+  - [x] `save(session: InvestigationSession): Promise<void>`
+  - [x] `findById(id: string): Promise<InvestigationSession | null>`
+  - [x] `findActiveByThreadId(threadId: string, workspaceId: string): Promise<InvestigationSession | null>`
+  - [x] `findInactiveSessions(cutoffDate: Date, limit?: number): Promise<InvestigationSession[]>`
+- [x] Implementar repositório `MongoSessionRepository` em `src/repositories/MongoSessionRepository.ts`:
+  - [x] Collection `investigation_sessions`
+  - [x] Mapeamento bidirecional entre documentos MongoDB e a entidade `InvestigationSession`
+  - [x] Serialização e deserialização do `EvidenceLedger` e `SessionSummary`
+  - [x] Criação de índices: `{ id: 1 }` (único), `{ workspaceId: 1, threadId: 1, status: 1 }` e `{ status: 1, lastInteractionAt: 1 }`
 
 ### Testes
-- [ ] Criar `src/repositories/MongoSessionRepository.test.ts` (usando Mongo Memory Server):
-  - [ ] Testar criação e atualização de sessão
-  - [ ] Testar busca de sessão ativa por `threadId` e isolamento multi-workspace
-  - [ ] Testar consulta `findInactiveSessions` filtrando sessões ativas com `lastInteractionAt < cutoffDate`
-  - [ ] Testar hidratação correta de `EvidenceLedger` e `SessionSummary`
+- [x] Criar `src/repositories/MongoSessionRepository.test.ts` (8 testes unitários):
+  - [x] Testar criação e atualização de sessão com upsert
+  - [x] Testar busca de sessão ativa por `threadId` e isolamento multi-workspace
+  - [x] Testar consulta `findInactiveSessions` filtrando sessões ativas com `lastInteractionAt <= cutoffDate`
+  - [x] Testar hidratação correta de `EvidenceLedger` e `SessionSummary`
 
 ### Verificação
-- [ ] `npm test` passa sem falhas
-- [ ] `npm run build` compila limpo
+- [x] `npm test` passa sem falhas (87/87 arquivos, 564/564 testes aprovados)
+- [x] `npm run build` compila limpo (TypeScript strict 0 erros)
+
 
 ---
 
