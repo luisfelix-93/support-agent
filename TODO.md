@@ -1,151 +1,179 @@
-# TODO — Fase 6: MCP Platform (Multi-Server & Tool Governance)
+# TODO — Fase 7: Ciclo de Vida Híbrido de Sessão de Investigação (Session Lifecycle)
 
-> Checklist operacional de implementação organizado por sprints/sub-fases para acompanhamento contínuo da Fase 6.  
+> Checklist operacional de implementação organizado por sprints/sub-fases para acompanhamento contínuo da Fase 7.  
 > Marque `[x]` conforme cada item for concluído.  
-> Plano de referência: [multi-mcp-platform.md](multi-mcp-platform.md) | Roadmap: [roadmap.md](roadmap.md)  
-> Fase anterior: [Fase 5 Concluída](docs/phase5-summary.md)  
+> Plano de referência: [session-lifecycle.md](session-lifecycle.md) | Roadmap: [roadmap.md](docs/roadmap.md)  
+> Fase anterior: [Fase 6 Concluída](docs/phase6-summary.md)  
 
 ---
 
-## Sub-Fase 6A (Sprint 6.1): Core Composite MCP Client & Namespacing
+## Sub-Fase 7A (Sprint 7.1): Core Domain & Entidade `InvestigationSession`
 
-**Branch:** `feature/phase-6-multi-mcp-platform`  
+**Branch:** `feature/session-lifecycle`  
 **Responsável:** `backend-specialist`  
 **Status:** ✅ Concluída  
 
 ### Implementação
-- [x] Criar e publicar a branch dedicada `feature/phase-6-multi-mcp-platform`
-- [x] Criar contratos e tipos em `src/domain/ports/IMCPClient.ts` / `src/domain/MCPServerRegistration.ts`:
-  - [x] Definir tipo `MCPServerRegistration` (`id`, `name`, `client: IMCPClient`, `domains`, `isDefault`)
-  - [x] Definir opções de descoberta contextual `ToolFilterOptions` (`domains?: string[]`, `playbookIds?: string[]`)
-- [x] Criar classe `CompositeMCPClient` implementando `IMCPClient` em `src/infrastructure/mcp/CompositeMCPClient.ts`:
-  - [x] Método `registerServer(registration: MCPServerRegistration): void`
-  - [x] Método `connect(): Promise<MCPInitializeResult>` conectando em paralelo (`Promise.allSettled`)
-  - [x] Método `isConnected(): boolean` (retorna true se ao menos um servidor saudável estiver conectado)
-  - [x] Método `listTools(options?: ToolFilterOptions): Promise<{ tools: any[] }>` com namespacing `<serverId>__<toolName>`
-  - [x] Método `executeTool(tool: ToolCall): Promise<any>` com extração de namespace e encaminhamento ao adapter alvo
-  - [x] Método `close(): Promise<void>` liberando conexões filhas
-- [x] Implementar isolamento de Circuit Breaker e timeout defensivo por servidor registrado
+- [x] Criar branch dedicada `feature/session-lifecycle`
+- [x] Definir enum de status em `src/domain/SessionStatus.ts`:
+  - [x] `ACTIVE`, `AWAITING_CLOSURE_CONFIRMATION`, `CLOSED_BY_USER`, `CLOSED_BY_TIMEOUT`
+- [x] Criar entidade de domínio `InvestigationSession` em `src/domain/InvestigationSession.ts`:
+  - [x] Campos: `id`, `workspaceId`, `threadId`, `channelId`, `status`, `startedAt`, `lastInteractionAt`, `closedAt`, `idleTimeoutMs`, `evidenceLedger`, `sessionSummary`, `metadata`
+  - [x] Método `touch()`: atualiza `lastInteractionAt` e valida que a sessão está ativa
+  - [x] Método `proposeClosure()`: transita `ACTIVE` -> `AWAITING_CLOSURE_CONFIRMATION`
+  - [x] Método `confirmClosure(summary?: SessionSummary)`: transita para `CLOSED_BY_USER` e define `closedAt`
+  - [x] Método `cancelClosureProposal()`: reverte de `AWAITING_CLOSURE_CONFIRMATION` de volta para `ACTIVE`
+  - [x] Método `expireByTimeout(summary?: SessionSummary)`: transita para `CLOSED_BY_TIMEOUT` e define `closedAt`
+  - [x] Método `isExpired(referenceDate?: Date)`: cálculo defensivo de `(referenceDate - lastInteractionAt) >= idleTimeoutMs`
 
 ### Testes
-- [x] Criar `src/infrastructure/mcp/CompositeMCPClient.test.ts` (20 testes unitários)
-  - [x] Testar registro de múltiplos servidores e agregação com prefixos de namespace
-  - [x] Testar roteamento correto do `executeTool` com remoção do prefixo no envio ao servidor destino
-  - [x] Testar tolerância a falhas parciais no `connect` (1 servidor off não impede os outros)
-  - [x] Testar isolamento de falhas e Circuit Breaker independente por servidor
+- [x] Criar `src/domain/InvestigationSession.test.ts`:
+  - [x] Testar instanciação com valores padrão (timeout padrão de 1 hora = 3.600.000 ms)
+  - [x] Testar ciclo completo de transições de estado válidas
+  - [x] Testar bloqueio de transições inválidas (ex: tentar reativar sessão fechada)
+  - [x] Testar verificação de expiração por inatividade com datas mockadas
+  - [x] Testar atualização de timestamps ao executar `touch()`
 
 ### Verificação
-- [x] `npm test` passa sem regressões (79/79 arquivos, 491/491 testes aprovados)
-- [x] `npm run build` compila sem erros (TypeScript strict 0 erros)
+- [x] `npm test` passa sem regressões (86/86 arquivos, 556/556 testes aprovados)
+- [x] `npm run build` compila com 0 erros TypeScript strict
+
 
 ---
 
-## Sub-Fase 6B (Sprint 6.2): Configuração Multi-Tenant & Persistência Criptografada
+## Sub-Fase 7B (Sprint 7.2): Persistência MongoDB & `ISessionRepository`
 
-**Branch:** `feature/phase-6-multi-mcp-platform`  
+**Branch:** `feature/phase-7-session-lifecycle`  
 **Responsável:** `database-architect` / `backend-specialist`  
-**Depende de:** ✅ Sub-Fase 6A concluída  
-**Status:** ✅ Concluída  
+**Depende de:** Sub-Fase 7A  
+**Status:** ⏳ Pendente  
 
 ### Implementação
-- [x] Atualizar entidade `Tenant` em `src/domain/Tenant.ts`:
-  - [x] Definir interface `MCPServerConfig` (`id`, `name`, `url`, `apiKey?`, `domains?`, `timeoutMs?`, `enabled?`)
-  - [x] Adicionar campo opcional `mcpServers?: MCPServerConfig[]` mantendo `mcpConfig?: MCPConfig` para retrocompatibilidade
-- [x] Atualizar `src/repositories/TenantRepository.ts`:
-  - [x] Criptografia AES-256-GCM para as API Keys de todos os servidores da lista `mcpServers` ao persistir no MongoDB
-  - [x] Descriptografia segura de cada `apiKey` ao carregar o tenant do banco
-  - [x] Mascaramento de segurança em consultas administrativas (`maskApiKey`)
-  - [x] Suporte bidirecional a tenants legados com apenas `mcpConfig`
-- [x] Atualizar `src/usecases/RegisterTenantUseCase.ts`:
-  - [x] Aceitar lista de servidores MCP no input (`mcpServers`)
-  - [x] Validação de integridade (IDs de servidores únicos, URLs válidas)
-- [x] Atualizar `src/controllers/OnboardingController.ts` para receber e validar payload multi-MCP
+- [ ] Criar contrato em `src/domain/ports/ISessionRepository.ts`:
+  - [ ] `save(session: InvestigationSession): Promise<void>`
+  - [ ] `findById(id: string): Promise<InvestigationSession | null>`
+  - [ ] `findActiveByThreadId(threadId: string, workspaceId: string): Promise<InvestigationSession | null>`
+  - [ ] `findInactiveSessions(cutoffDate: Date, limit?: number): Promise<InvestigationSession[]>`
+- [ ] Implementar repositório `MongoSessionRepository` em `src/repositories/MongoSessionRepository.ts`:
+  - [ ] Collection `investigation_sessions`
+  - [ ] Mapeamento bidirecional entre documentos MongoDB e a entidade `InvestigationSession`
+  - [ ] Serialização e deserialização do `EvidenceLedger` e `SessionSummary`
+  - [ ] Criação de índices: `{ workspaceId: 1, threadId: 1, status: 1 }` e `{ status: 1, lastInteractionAt: 1 }`
 
 ### Testes
-- [x] Atualizar `src/repositories/TenantRepository.test.ts`:
-  - [x] Testar salvamento e criptografia de múltiplos servidores MCP
-  - [x] Testar carregamento com descriptografia correta
-  - [x] Testar retrocompatibilidade com documentos legados (single `mcpConfig`)
-- [x] Atualizar `src/usecases/RegisterTenantUseCase.test.ts` (9 testes)
-- [x] Criar `src/controllers/OnboardingController.test.ts` (11 testes)
+- [ ] Criar `src/repositories/MongoSessionRepository.test.ts` (usando Mongo Memory Server):
+  - [ ] Testar criação e atualização de sessão
+  - [ ] Testar busca de sessão ativa por `threadId` e isolamento multi-workspace
+  - [ ] Testar consulta `findInactiveSessions` filtrando sessões ativas com `lastInteractionAt < cutoffDate`
+  - [ ] Testar hidratação correta de `EvidenceLedger` e `SessionSummary`
 
 ### Verificação
-- [x] `npm test` passa com 100% de sucesso (80/80 arquivos, 509/509 testes aprovados)
-- [x] `npm run build` compila sem erros (TypeScript strict 0 erros)
+- [ ] `npm test` passa sem falhas
+- [ ] `npm run build` compila limpo
 
 ---
 
-## Sub-Fase 6C (Sprint 6.3): Tool Governance & Política de Risco
+## Sub-Fase 7C (Sprint 7.3): Detecção Conversacional & Proposta Ativa de Encerramento
 
-**Branch:** `feature/phase-6-multi-mcp-platform`  
-**Responsável:** `security-auditor` / `backend-specialist`  
-**Depende de:** ✅ Sub-Fase 6B concluída  
-**Status:** ✅ Concluída  
+**Branch:** `feature/phase-7-session-lifecycle`  
+**Responsável:** `backend-specialist`  
+**Depende de:** Sub-Fase 7B  
+**Status:** ⏳ Pendente  
 
 ### Implementação
-- [x] Criar enum e tipos de governança em `src/domain/ToolGovernance.ts`:
-  - [x] `ToolRiskLevel` (`READ_ONLY`, `LOW_RISK`, `HIGH_RISK`, `FORBIDDEN`)
-  - [x] Interface `ToolGovernancePolicy` (regras por regex/nomes exatos e overrides por tenant)
-- [x] Criar serviço `src/services/ToolGovernanceService.ts`:
-  - [x] Classificação automática de ferramentas por padrões (`get_*`, `list_*`, `query_*` $\to$ `READ_ONLY`)
-  - [x] Padrões destrutivos (`delete_*`, `drop_*`, `truncate_*`, `kill_*`, `purge_*` $\to$ `FORBIDDEN`)
-  - [x] Ações operacionais com impacto (`restart_*`, `scale_*`, `deploy_*` $\to$ `HIGH_RISK`)
-  - [x] Validação de permissão de execução: `canExecute(toolCall, tenantPolicy)`
-- [x] Integrar interceptador de governança em `CompositeMCPClient` e `AgentHarness`:
-  - [x] Bloqueio imediato com registro de auditoria para ferramentas `FORBIDDEN`
-  - [x] Tratamento seguro de recusa sem quebra do fluxo do agente
+- [ ] Criar serviço `src/services/ClosureIntentDetector.ts`:
+  - [ ] Detecção de respostas afirmativas ("sim", "pode encerrar", "fechar", "resolvido", "concluído")
+  - [ ] Detecção de respostas de continuação ("não", "quero ver mais", "ainda não", perguntas adicionais)
+  - [ ] Reconhecimento de comando explícito (`/encerrar`, `/close`, `/finalizar`)
+- [ ] Integrar fluxo no `InvestigationEngine` ou `ProcessAgentResponseUseCase`:
+  - [ ] Proposta de encerramento ao entregar hipótese de causa raiz/ações recomendadas
+  - [ ] Tratamento quando a sessão está em `AWAITING_CLOSURE_CONFIRMATION`
+  - [ ] Emissão do `SessionSummary` formatado ao confirmar o fechamento
+  - [ ] Associação da `InvestigationSession` durante a execução da mensagem
 
 ### Testes
-- [x] Criar `src/services/ToolGovernanceService.test.ts` (17 testes unitários):
-  - [x] Testar classificação padrão para ferramentas de SRE / Investigação
-  - [x] Testar bloqueio de comandos destrutivos (`FORBIDDEN`)
-  - [x] Testar regras de override específicas por tenant
-- [x] Testar interceptação de governança no `CompositeMCPClient` (20 testes integrados)
+- [ ] Criar `src/services/ClosureIntentDetector.test.ts`:
+  - [ ] Testar detecção de confirmações explícitas e comandos
+  - [ ] Testar detecção de continuação da investigação
+  - [ ] Testar neutralidade diante de mensagens genéricas
+- [ ] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts`:
+  - [ ] Testar transição de sessão com confirmação pelo usuário
+  - [ ] Testar continuidade da investigação quando o usuário rejeita o encerramento
 
 ### Verificação
-- [x] `npm test` passa sem erros (81/81 arquivos, 526/526 testes aprovados)
-- [x] `npm run build` compila limpo (TypeScript strict 0 erros)
+- [ ] `npm test` passa com 100% de sucesso
+- [ ] `npm run build` compila sem erros
 
 ---
 
-## Sub-Fase 6D (Sprint 6.4): Tool Discovery Contextual, Integração E2E & Documentação
+## Sub-Fase 7D (Sprint 7.4): Sweeper de Inatividade & Background Job
 
-**Branch:** `feature/phase-6-multi-mcp-platform`  
-**Responsável:** `backend-specialist` / `project-planner`  
-**Depende de:** ✅ Sub-Fase 6C concluída  
-**Status:** ✅ Concluída  
+**Branch:** `feature/phase-7-session-lifecycle`  
+**Responsável:** `backend-specialist`  
+**Depende de:** Sub-Fase 7C  
+**Status:** ⏳ Pendente  
 
 ### Implementação
-- [x] Atualizar `src/usecases/ProcessAgentResponseUseCase.ts`:
-  - [x] Instanciar `CompositeMCPClient` alimentado com os servidores do tenant
-  - [x] Filtrar ferramentas ativas contextualmente usando os `playbookIds` e domínios avaliados pelo `InvestigationEngine`
-- [x] Atualizar container de injeção de dependências em `src/config/container.ts`
-- [x] Criar teste de integração E2E em `src/harness/MultiMCPInvestigation.integration.test.ts`:
-  - [x] Configurar cenário de teste com 2 servidores MCP ativos (ex: `k8s-mcp` e `observability-mcp`)
-  - [x] Simular investigação autônoma cruzada executando ferramentas de ambos os servidores com namespacing
-  - [x] Validar que o `EvidenceLedger` e o `SessionSummary` consolidam evidências vindas de múltiplos servidores
-- [x] Atualizar documentações:
-  - [x] Atualizar `roadmap.md` marcando a Fase 6 como concluída `[x]`
-  - [x] Atualizar `architecture.md` com o diagrama do `CompositeMCPClient` e catálogo multi-servidor
-  - [x] Criar `docs/phase6-summary.md` consolidando entregas e métricas
-  - [x] Atualizar coleções Postman com novos exemplos de payload de onboarding
+- [ ] Criar serviço `src/services/SessionTimeoutSweeper.ts`:
+  - [ ] Método `sweepExpiredSessions(referenceDate?: Date): Promise<SweepResult>`
+  - [ ] Para cada sessão inativa:
+    - [ ] Transitar para `CLOSED_BY_TIMEOUT`
+    - [ ] Compilar `SessionSummary` a partir das evidências do `EvidenceLedger`
+    - [ ] Persistir atualização no repositório
+    - [ ] Enviar notificação de encerramento na thread via `IChatProvider`
+- [ ] Criar agendamento periódico ou job BullMQ:
+  - [ ] Configurar timer/worker defensivo em `src/infrastructure/queue/SessionTimeoutWorker.ts`
+  - [ ] Tratar tolerância a falhas (uma falha de envio não trava o lote)
+
+### Testes
+- [ ] Criar `src/services/SessionTimeoutSweeper.test.ts`:
+  - [ ] Testar identificação e encerramento em lote de sessões inativas
+  - [ ] Testar envio de mensagem de encerramento com `SessionSummary`
+  - [ ] Testar tolerância caso o envio ao chat falhe
+- [ ] Criar `src/infrastructure/queue/SessionTimeoutWorker.test.ts`
+
+### Verificação
+- [ ] `npm test` passa sem erros
+- [ ] `npm run build` compila limpo
+
+---
+
+## Sub-Fase 7E (Sprint 7.5): Integração E2E, Métricas & Fechamento de Fase
+
+**Branch:** `feature/phase-7-session-lifecycle`  
+**Responsável:** `qa-automation-engineer` / `project-planner`  
+**Depende de:** Sub-Fase 7D  
+**Status:** ⏳ Pendente  
+
+### Implementação
+- [ ] Criar teste de integração E2E em `src/harness/HybridSessionLifecycle.integration.test.ts`:
+  - [ ] Cenário 1: Fechamento Conversacional Ativo (Início -> Investigação -> Proposta -> Confirmação -> SessionSummary -> Fechado)
+  - [ ] Cenário 2: Fechamento por Inatividade (Início -> Investigação -> Abandono de 1h -> Sweeper -> SessionSummary -> Fechado)
+- [ ] Adicionar métricas Prometheus em `src/infrastructure/metrics/AgentMetrics.ts`:
+  - [ ] `agent_sessions_total` (contador)
+  - [ ] `agent_sessions_closed_total` (labels: `reason="user|timeout"`)
+  - [ ] `agent_session_duration_seconds` (histograma)
+- [ ] Atualizar documentações:
+  - [ ] Atualizar `docs/roadmap.md` adicionando a Fase 7 detalhada
+  - [ ] Atualizar `architecture.md` com a máquina de estados do ciclo de vida da sessão
+  - [ ] Criar `docs/phase7-summary.md`
 
 ### Verificação Final
-- [x] `npm test` — 100% dos testes aprovados (82/82 arquivos, 528 testes)
-- [x] `npm run test:integration` — 100% dos testes de integração passando (9 arquivos, 16 testes)
-- [x] `npm run build` — 0 erros de compilação TypeScript strict
+- [ ] `npm test` — 100% dos testes aprovados
+- [ ] `npm run test:integration` — 100% dos testes de integração passando
+- [ ] `npm run build` — 0 erros de compilação TypeScript strict
 
 ---
 
-## Definition of Done (Fase 6 Completa)
+## Definition of Done (Fase 7 Completa)
 
-- [x] Todas as sub-fases (6A, 6B, 6C, 6D) concluídas e testadas
-- [x] `CompositeMCPClient` roteia perfeitamente chamadas com namespacing para 2 ou mais servidores MCP
-- [x] Isolamento de falhas: queda de um servidor MCP não derruba as ferramentas dos outros servidores
-- [x] Criptografia AES-256-GCM ativa para todos os servidores MCP cadastrados por tenant
-- [x] Governança ativa bloqueando ferramentas destrutivas (`FORBIDDEN`)
-- [x] Descoberta contextual de ferramentas integrada aos playbooks do `InvestigationEngine`
-- [x] Suíte de testes automatizados com cobertura total sem regressões
+- [ ] Todas as sub-fases (7A a 7E) concluídas e testadas
+- [ ] Máquina de estados de `InvestigationSession` robusta com isolamento multi-tenant
+- [ ] Fechamento ativo conversacional funcionando fluidamente no chat
+- [ ] Sweeper de inatividade encerrando sessões órfãs após 1 hora de inatividade
+- [ ] `SessionSummary` gerado e entregue confiavelmente em ambos os caminhos de fechamento
+- [ ] Métricas de sessões integradas ao Prometheus
+- [ ] Suíte de testes automatizados com 100% de aprovação e sem regressões
 
 ---
 
