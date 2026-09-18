@@ -113,33 +113,37 @@
 
 ## Sub-Fase 7D (Sprint 7.4): Sweeper de Inatividade & Background Job
 
-**Branch:** `feature/phase-7-session-lifecycle`  
+**Branch:** `feature/session-lifecycle`  
 **Responsável:** `backend-specialist`  
-**Depende de:** Sub-Fase 7C  
-**Status:** ⏳ Pendente  
+**Depende de:** ✅ Sub-Fase 7C concluída  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Criar serviço `src/services/SessionTimeoutSweeper.ts`:
-  - [ ] Método `sweepExpiredSessions(referenceDate?: Date): Promise<SweepResult>`
-  - [ ] Para cada sessão inativa:
-    - [ ] Transitar para `CLOSED_BY_TIMEOUT`
-    - [ ] Compilar `SessionSummary` a partir das evidências do `EvidenceLedger`
-    - [ ] Persistir atualização no repositório
-    - [ ] Enviar notificação de encerramento na thread via `IChatProvider`
-- [ ] Criar agendamento periódico ou job BullMQ:
-  - [ ] Configurar timer/worker defensivo em `src/infrastructure/queue/SessionTimeoutWorker.ts`
-  - [ ] Tratar tolerância a falhas (uma falha de envio não trava o lote)
+- [x] Criar serviço `src/services/SessionTimeoutSweeper.ts`:
+  - [x] Método `sweepExpiredSessions(referenceDate?: Date, limit?: number): Promise<SweepResult>`
+  - [x] Transição para `CLOSED_BY_TIMEOUT` com timestamp exato
+  - [x] Compilação automática de `SessionSummary` a partir do `EvidenceLedger` da sessão
+  - [x] Persistência da sessão encerrada no repositório
+  - [x] Notificação resiliente na thread via `ChatProviderFactory` e persistência no `ChatRepository`
+- [x] Criar worker `src/infrastructure/queue/SessionTimeoutWorker.ts`:
+  - [x] Agendamento periódico seguro com `setInterval` e `.unref()`
+  - [x] Método `triggerNow()` para execução manual sob demanda
+  - [x] Tratamento de erros e controle de concorrência (`isBusy`)
+  - [x] Registro do `sessionTimeoutSweeper` e `sessionTimeoutWorker` em `src/config/container.ts`
 
 ### Testes
-- [ ] Criar `src/services/SessionTimeoutSweeper.test.ts`:
-  - [ ] Testar identificação e encerramento em lote de sessões inativas
-  - [ ] Testar envio de mensagem de encerramento com `SessionSummary`
-  - [ ] Testar tolerância caso o envio ao chat falhe
-- [ ] Criar `src/infrastructure/queue/SessionTimeoutWorker.test.ts`
+- [x] Criar `src/services/SessionTimeoutSweeper.test.ts` (6 testes unitários):
+  - [x] Testar identificação e encerramento em lote de sessões inativas
+  - [x] Testar envio de mensagem de encerramento com `SessionSummary`
+  - [x] Testar compilação automática a partir de evidências do `EvidenceLedger`
+  - [x] Testar respeito ao tempo de inatividade configurado (não fecha sessões recentes)
+  - [x] Testar tolerância resiliente caso o envio ao chat falhe
+- [x] Criar `src/infrastructure/queue/SessionTimeoutWorker.test.ts` (5 testes unitários)
 
 ### Verificação
-- [ ] `npm test` passa sem erros
-- [ ] `npm run build` compila limpo
+- [x] `npm test` passa sem erros (90/90 arquivos, 627/627 testes aprovados)
+- [x] `npm run build` compila limpo (TypeScript strict 0 erros)
+
 
 ---
 

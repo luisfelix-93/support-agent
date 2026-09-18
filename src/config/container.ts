@@ -3,6 +3,8 @@ import { BullMQAdapter } from '../infrastructure/queue/BullMQAdapter.js';
 import { BullMQWorker } from '../infrastructure/queue/BullMQWorker.js';
 import { MemoryPromotionWorker } from '../infrastructure/queue/MemoryPromotionWorker.js';
 import { EvaluationWorker } from '../infrastructure/queue/EvaluationWorker.js';
+import { SessionTimeoutSweeper } from '../services/SessionTimeoutSweeper.js';
+import { SessionTimeoutWorker } from '../infrastructure/queue/SessionTimeoutWorker.js';
 import { GoogleChatAdapter } from '../infrastructure/chat/GoogleChatAdapter.js';
 import { SlackChatAdapter } from '../infrastructure/chat/SlackChatAdapter.js';
 import { ChatProviderFactory } from '../infrastructure/chat/ChatProviderFactory.js';
@@ -220,6 +222,14 @@ export const evaluationWorker = new EvaluationWorker(
     evaluationRepository,
     'agent-evaluation'
 );
+
+export const sessionTimeoutSweeper = new SessionTimeoutSweeper(
+    sessionRepository,
+    chatProviderFactory,
+    chatRepository
+);
+
+export const sessionTimeoutWorker = new SessionTimeoutWorker(sessionTimeoutSweeper);
 
 if (process.env.START_WORKER !== 'false') {
     queueWorker.start();
