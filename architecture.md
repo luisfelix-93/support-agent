@@ -373,3 +373,91 @@ O sistema possui observabilidade completa integrada aos três pilares:
 | **Tracing** | OpenTelemetry + Tempo | Spans granulares por requisição HTTP, iteração do Harness, chamadas de LLM, embeddings e operações de repositório. |
 
 Consulte [grafana-tempo-tracing.md](grafana-tempo-tracing.md) para detalhes da topologia de rastreamento.
+
+---
+
+## 8. Ciclo de Vida Híbrido de Sessão de Investigação (Session Lifecycle)
+
+Para suportar investigações de incidentes de TI com início, meio e encerramento auditável, o agente implementa o modelo de **Ciclo de Vida Híbrido** gerenciado por `InvestigationSession`, `ClosureIntentDetector` e `SessionTimeoutSweeper`:
+
+```text
+                             [Nova Mensagem do Usuário]
+                                         │
+                                         ▼
+                            ┌────────────────────────┐
+                            │ ProcessAgentResponse   │
+                            └───────────┬────────────┘
+                                        │
+                      Existe sessão ativa para a thread?
+                                ├── Não ──► Cria InvestigationSession (ACTIVE)
+                                └── Sim
+                                     │
+                      Está em AWAITING_CONFIRMATION?
+                         ├── Sim: Checa ClosureIntentDetector
+                         │     ├── 'CONFIRM_CLOSURE' ──► Fecha CLOSED_BY_USER + Emite Summary (0 tokens LLM)
+                         │     └── 'REJECT_CLOSURE'  ──► Reverte para ACTIVE + Continua Investigação
+                         └── Não: Checa Comando /encerrar
+                               ├── Sim ──► Fecha CLOSED_BY_USER + Emite Summary
+                               └── Não ──► session.touch() + Executa AgentHarness
+                                                 │
+                                 Harness emitiu SessionSummary?
+                                       ├── Sim ──► session.proposeClosure() -> AWAITING_CONFIRMATION
+                                       └── Não ──► Mantém ACTIVE
+                                                 │
+                                                 ▼
+                                        [Salva no MongoDB]
+```
+
+### 8.1. Máquina de Estados
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE: Abertura da Thread / Mensagem
+    ACTIVE --> ACTIVE: Novas Evidências / Perguntas
+    ACTIVE --> AWAITING_CLOSURE_CONFIRMATION: Emissão do Resumo Executivo Preliminar
+    AWAITING_CLOSURE_CONFIRMATION --> ACTIVE: Operador rejeita encerramento ("Não", novas perguntas)
+    AWAITING_CLOSURE_CONFIRMATION --> CLOSED_BY_USER: Operador confirma ("Sim", "Encerrar")
+    ACTIVE --> CLOSED_BY_TIMEOUT: Inatividade >= 1 hora (Sweeper)
+    AWAITING_CLOSURE_CONFIRMATION --> CLOSED_BY_TIMEOUT: Inatividade >= 1 hora (Sweeper)
+    CLOSED_BY_USER --> [*]: Emissão Formal do Resumo
+    CLOSED_BY_TIMEOUT --> [*]: Síntese de Evidências do EvidenceLedger + Notificação
+```
+
+### 8.2. Modelo de Dados (`investigation_sessions`)
+
+A coleção `investigation_sessions` no MongoDB armazena o histórico auditável de cada incidente:
+
+```json
+{
+  "id": "sess-uuid-v4",
+  "workspaceId": "ws-production",
+  "threadId": "1710000000.123456",
+  "channelId": "C0123456789",
+  "status": "CLOSED_BY_USER",
+  "startedAt": "2026-09-18T10:00:00.000Z",
+  "lastInteractionAt": "2026-09-18T10:45:00.000Z",
+  "closedAt": "2026-09-18T10:46:00.000Z",
+  "idleTimeoutMs": 3600000,
+  "evidenceLedger": {
+    "logs": [...],
+    "metrics": [...],
+    "traces": [...],
+    "infrastructure": [...],
+    "database": [...]
+  },
+  "sessionSummary": {
+    "runId": "run-uuid",
+    "serviceName": "payment-api",
+    "rootCauseHypothesis": "Pool de conexões exaurido",
+    "recommendedActions": [...]
+  },
+  "metadata": { "source": "slack" },
+  "updatedAt": "2026-09-18T10:46:00.000Z"
+}
+```
+
+Índices configurados:
+- `{ id: 1 }` (único)
+- `{ workspaceId: 1, threadId: 1, status: 1 }` (recuperação da sessão ativa)
+- `{ status: 1, lastInteractionAt: 1 }` (varredura rápida de inatividade para o `SessionTimeoutSweeper`)
+

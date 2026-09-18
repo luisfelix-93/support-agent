@@ -3,6 +3,8 @@ import { BullMQAdapter } from '../infrastructure/queue/BullMQAdapter.js';
 import { BullMQWorker } from '../infrastructure/queue/BullMQWorker.js';
 import { MemoryPromotionWorker } from '../infrastructure/queue/MemoryPromotionWorker.js';
 import { EvaluationWorker } from '../infrastructure/queue/EvaluationWorker.js';
+import { SessionTimeoutSweeper } from '../services/SessionTimeoutSweeper.js';
+import { SessionTimeoutWorker } from '../infrastructure/queue/SessionTimeoutWorker.js';
 import { GoogleChatAdapter } from '../infrastructure/chat/GoogleChatAdapter.js';
 import { SlackChatAdapter } from '../infrastructure/chat/SlackChatAdapter.js';
 import { ChatProviderFactory } from '../infrastructure/chat/ChatProviderFactory.js';
@@ -19,6 +21,7 @@ import { ChatConfigRepository } from '../repositories/ChatConfigRepository.js';
 import { MongoMemoryRepository } from '../repositories/MongoMemoryRepository.js';
 import { AgentRunRepository } from '../repositories/AgentRunRepository.js';
 import { EvaluationRepository } from '../repositories/EvaluationRepository.js';
+import { MongoSessionRepository } from '../repositories/MongoSessionRepository.js';
 import { RegisterUserUseCase } from '../usecases/RegisterUserUseCase.js';
 import { LoginUserUseCase } from '../usecases/LoginUserUseCase.js';
 import { RegisterTenantUseCase } from '../usecases/RegisterTenantUseCase.js';
@@ -149,6 +152,11 @@ export const investigationEngine = new InvestigationEngine(playbookRegistry);
 
 export const toolGovernanceService = new ToolGovernanceService();
 
+export const sessionRepository = new MongoSessionRepository();
+await sessionRepository.createIndexes().catch((err) => {
+    logger.warn({ err }, 'Erro ao criar índices para investigation_sessions.');
+});
+
 // ─── Use Cases ───────────────────────────────────────
 const processAgentUseCase = new ProcessAgentResponseUse(
     spaceMappingRepository,
@@ -156,7 +164,8 @@ const processAgentUseCase = new ProcessAgentResponseUse(
     chatRepository,
     agentHarness,
     investigationEngine,
-    toolGovernanceService
+    toolGovernanceService,
+    sessionRepository
 );
 
 const registerUserUseCase = new RegisterUserUseCase(userRepository);
@@ -213,6 +222,14 @@ export const evaluationWorker = new EvaluationWorker(
     evaluationRepository,
     'agent-evaluation'
 );
+
+export const sessionTimeoutSweeper = new SessionTimeoutSweeper(
+    sessionRepository,
+    chatProviderFactory,
+    chatRepository
+);
+
+export const sessionTimeoutWorker = new SessionTimeoutWorker(sessionTimeoutSweeper);
 
 if (process.env.START_WORKER !== 'false') {
     queueWorker.start();

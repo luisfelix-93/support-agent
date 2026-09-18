@@ -70,7 +70,7 @@ export class AESEncryptionService implements IEncryptionService {
         }
 
         const parts = cipherText.split(':');
-        if (parts.length !== 3) {
+        if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
             throw new Error('[AESEncryptionService] Formato de texto cifrado inválido.');
         }
 
