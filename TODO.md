@@ -76,34 +76,38 @@
 
 ## Sub-Fase 7C (Sprint 7.3): Detecção Conversacional & Proposta Ativa de Encerramento
 
-**Branch:** `feature/phase-7-session-lifecycle`  
+**Branch:** `feature/session-lifecycle`  
 **Responsável:** `backend-specialist`  
-**Depende de:** Sub-Fase 7B  
-**Status:** ⏳ Pendente  
+**Depende de:** ✅ Sub-Fase 7B concluída  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Criar serviço `src/services/ClosureIntentDetector.ts`:
-  - [ ] Detecção de respostas afirmativas ("sim", "pode encerrar", "fechar", "resolvido", "concluído")
-  - [ ] Detecção de respostas de continuação ("não", "quero ver mais", "ainda não", perguntas adicionais)
-  - [ ] Reconhecimento de comando explícito (`/encerrar`, `/close`, `/finalizar`)
-- [ ] Integrar fluxo no `InvestigationEngine` ou `ProcessAgentResponseUseCase`:
-  - [ ] Proposta de encerramento ao entregar hipótese de causa raiz/ações recomendadas
-  - [ ] Tratamento quando a sessão está em `AWAITING_CLOSURE_CONFIRMATION`
-  - [ ] Emissão do `SessionSummary` formatado ao confirmar o fechamento
-  - [ ] Associação da `InvestigationSession` durante a execução da mensagem
+- [x] Criar serviço `src/services/ClosureIntentDetector.ts`:
+  - [x] Detecção de respostas afirmativas ("sim", "pode encerrar", "fechar", "resolvido", "concluído")
+  - [x] Detecção de respostas de continuação ("não", "quero ver mais", "ainda não", perguntas adicionais)
+  - [x] Reconhecimento de comando explícito (`/encerrar`, `/close`, `/finalizar`)
+- [x] Integrar fluxo no `ProcessAgentResponseUseCase.ts`:
+  - [x] Proposta de encerramento ao entregar hipótese de causa raiz/ações recomendadas com `SessionSummary`
+  - [x] Tratamento quando a sessão está em `AWAITING_CLOSURE_CONFIRMATION`
+  - [x] Emissão do `SessionSummary` formatado ao confirmar o fechamento sem re-execução desnecessária de LLM
+  - [x] Associação da `InvestigationSession` durante a execução da mensagem
+  - [x] Registro do `MongoSessionRepository` em `src/config/container.ts`
 
 ### Testes
-- [ ] Criar `src/services/ClosureIntentDetector.test.ts`:
-  - [ ] Testar detecção de confirmações explícitas e comandos
-  - [ ] Testar detecção de continuação da investigação
-  - [ ] Testar neutralidade diante de mensagens genéricas
-- [ ] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts`:
-  - [ ] Testar transição de sessão com confirmação pelo usuário
-  - [ ] Testar continuidade da investigação quando o usuário rejeita o encerramento
+- [x] Criar `src/services/ClosureIntentDetector.test.ts` (47 testes unitários):
+  - [x] Testar detecção de confirmações explícitas e comandos
+  - [x] Testar detecção de continuação da investigação
+  - [x] Testar neutralidade diante de mensagens genéricas
+- [x] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts` (15 testes):
+  - [x] Testar transição de sessão com confirmação pelo usuário
+  - [x] Testar continuidade da investigação quando o usuário rejeita o encerramento
+  - [x] Testar criação e persistência de nova sessão no primeiro contato
+  - [x] Testar encerramento imediato via comando `/encerrar`
 
 ### Verificação
-- [ ] `npm test` passa com 100% de sucesso
-- [ ] `npm run build` compila sem erros
+- [x] `npm test` passa com 100% de sucesso (88/88 arquivos, 616/616 testes aprovados)
+- [x] `npm run build` compila sem erros (TypeScript strict 0 erros)
+
 
 ---
 

@@ -329,4 +329,234 @@ describe('ProcessAgentResponseUseCase', () => {
             expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-1', 'Pod investigado com sucesso.');
         });
     });
+
+    describe('Ciclo de Vida de Sessão & Detecção Conversacional de Encerramento', () => {
+        let mockSessionRepo: any;
+        let mockInvestigationEngine: any;
+
+        const summaryText = `📋 RESUMO EXECUTIVO DE SESSÃO (SESSION SUMMARY)
+• Run ID: run-999
+• Serviço / Componente: payment-service
+• Janela do Incidente: 10:00 - 10:30
+💡 HIPÓTESE DE CAUSA RAIZ (RCA):
+Timeout no gateway de pagamentos externo.
+🛠️ AÇÕES RECOMENDADAS:
+1. Ajustar timeout para 5000ms.`;
+
+        beforeEach(() => {
+            mockSessionRepo = {
+                save: vi.fn().mockResolvedValue(undefined),
+                findById: vi.fn().mockResolvedValue(null),
+                findActiveByThreadId: vi.fn().mockResolvedValue(null),
+                findInactiveSessions: vi.fn().mockResolvedValue([]),
+                createIndexes: vi.fn().mockResolvedValue(undefined),
+            };
+
+            mockInvestigationEngine = {
+                evaluate: vi.fn().mockReturnValue({
+                    playbookIds: ['api-error'],
+                    domains: ['api'],
+                    systemInstructions: 'DIRETRIZ',
+                    recommendedTools: [],
+                    isIncident: true,
+                }),
+                extractSessionSummary: vi.fn().mockReturnValue(null),
+            };
+        });
+
+        it('deve criar uma nova InvestigationSession ativa no primeiro contato e salvá-la', async () => {
+            const customHarness = {
+                run: vi.fn().mockResolvedValue({
+                    runId: 'run-1',
+                    response: 'Investigação iniciada.',
+                    iterations: 1,
+                    toolCalls: [],
+                    status: 'completed',
+                    durationMs: 50,
+                }),
+            };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-1', 'Erro na API', chatProvider);
+
+            expect(mockSessionRepo.findActiveByThreadId).toHaveBeenCalledWith('thread-sess-1', 'workspace-abc');
+            expect(mockSessionRepo.save).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    threadId: 'thread-sess-1',
+                    workspaceId: 'workspace-abc',
+                    status: 'ACTIVE',
+                })
+            );
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-sess-1', 'Investigação iniciada.');
+        });
+
+        it('deve propor encerramento da sessão e anexar prompt de confirmação quando o LLM concluir a análise com SessionSummary', async () => {
+            const mockSummary = {
+                runId: 'run-999',
+                serviceName: 'payment-service',
+                toMarkdown: () => '### Resumo Formatado',
+            };
+            mockInvestigationEngine.extractSessionSummary.mockReturnValue(mockSummary);
+
+            const customHarness = {
+                run: vi.fn().mockResolvedValue({
+                    runId: 'run-999',
+                    response: summaryText,
+                    iterations: 1,
+                    toolCalls: [],
+                    status: 'completed',
+                    durationMs: 80,
+                }),
+            };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-2', 'Conclua a análise', chatProvider);
+
+            expect(mockSessionRepo.save).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    status: 'AWAITING_CLOSURE_CONFIRMATION',
+                    sessionSummary: mockSummary,
+                })
+            );
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-sess-2',
+                expect.stringContaining('Deseja encerrar esta sessão de investigação e confirmar o Resumo Executivo acima?')
+            );
+        });
+
+        it('deve fechar a sessão com CLOSED_BY_USER quando o operador responder "Sim" em confirmação', async () => {
+            const existingSession = {
+                id: 'sess-confirm',
+                threadId: 'thread-sess-3',
+                workspaceId: 'workspace-abc',
+                status: 'AWAITING_CLOSURE_CONFIRMATION',
+                sessionSummary: {
+                    runId: 'run-999',
+                    serviceName: 'payment-service',
+                    toMarkdown: () => '### Resumo Conclusivo',
+                },
+                confirmClosure: vi.fn(),
+                touch: vi.fn(),
+            };
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(existingSession);
+
+            const customHarness = { run: vi.fn() };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-3', 'Sim, pode encerrar', chatProvider);
+
+            expect(existingSession.confirmClosure).toHaveBeenCalledWith(existingSession.sessionSummary);
+            expect(mockSessionRepo.save).toHaveBeenCalledWith(existingSession);
+            expect(customHarness.run).not.toHaveBeenCalled(); // Não gasta LLM tokens desnecessários
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-sess-3',
+                expect.stringContaining('Sessão de investigação encerrada com sucesso.')
+            );
+        });
+
+        it('deve reverter para ACTIVE e continuar a investigação quando o operador responder negativamente à confirmação', async () => {
+            const existingSession = {
+                id: 'sess-reject',
+                threadId: 'thread-sess-4',
+                workspaceId: 'workspace-abc',
+                status: 'AWAITING_CLOSURE_CONFIRMATION',
+                cancelClosureProposal: vi.fn(),
+                touch: vi.fn(),
+            };
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(existingSession);
+
+            const customHarness = {
+                run: vi.fn().mockResolvedValue({
+                    runId: 'run-cont',
+                    response: 'Continuando análise dos pods...',
+                    iterations: 1,
+                    toolCalls: [],
+                    status: 'completed',
+                    durationMs: 60,
+                }),
+            };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-4', 'Não, verifique o banco de dados também', chatProvider);
+
+            expect(existingSession.cancelClosureProposal).toHaveBeenCalled();
+            expect(existingSession.touch).toHaveBeenCalled();
+            expect(customHarness.run).toHaveBeenCalled();
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith('thread-sess-4', 'Continuando análise dos pods...');
+        });
+
+        it('deve encerrar imediatamente ao receber comando explícito /encerrar', async () => {
+            const existingSession = {
+                id: 'sess-cmd',
+                threadId: 'thread-sess-5',
+                workspaceId: 'workspace-abc',
+                status: 'ACTIVE',
+                sessionSummary: {
+                    toMarkdown: () => '### Resumo Parcial',
+                },
+                confirmClosure: vi.fn(),
+                touch: vi.fn(),
+            };
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(existingSession);
+
+            const customHarness = { run: vi.fn() };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-5', '/encerrar', chatProvider);
+
+            expect(existingSession.confirmClosure).toHaveBeenCalledWith(existingSession.sessionSummary);
+            expect(mockSessionRepo.save).toHaveBeenCalledWith(existingSession);
+            expect(customHarness.run).not.toHaveBeenCalled();
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-sess-5',
+                expect.stringContaining('Sessão de investigação encerrada com sucesso pelo operador.')
+            );
+        });
+    });
 });
+

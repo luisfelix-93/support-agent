@@ -19,6 +19,7 @@ import { ChatConfigRepository } from '../repositories/ChatConfigRepository.js';
 import { MongoMemoryRepository } from '../repositories/MongoMemoryRepository.js';
 import { AgentRunRepository } from '../repositories/AgentRunRepository.js';
 import { EvaluationRepository } from '../repositories/EvaluationRepository.js';
+import { MongoSessionRepository } from '../repositories/MongoSessionRepository.js';
 import { RegisterUserUseCase } from '../usecases/RegisterUserUseCase.js';
 import { LoginUserUseCase } from '../usecases/LoginUserUseCase.js';
 import { RegisterTenantUseCase } from '../usecases/RegisterTenantUseCase.js';
@@ -149,6 +150,11 @@ export const investigationEngine = new InvestigationEngine(playbookRegistry);
 
 export const toolGovernanceService = new ToolGovernanceService();
 
+export const sessionRepository = new MongoSessionRepository();
+await sessionRepository.createIndexes().catch((err) => {
+    logger.warn({ err }, 'Erro ao criar índices para investigation_sessions.');
+});
+
 // ─── Use Cases ───────────────────────────────────────
 const processAgentUseCase = new ProcessAgentResponseUse(
     spaceMappingRepository,
@@ -156,7 +162,8 @@ const processAgentUseCase = new ProcessAgentResponseUse(
     chatRepository,
     agentHarness,
     investigationEngine,
-    toolGovernanceService
+    toolGovernanceService,
+    sessionRepository
 );
 
 const registerUserUseCase = new RegisterUserUseCase(userRepository);

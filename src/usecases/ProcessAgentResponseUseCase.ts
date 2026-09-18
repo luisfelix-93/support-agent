@@ -13,6 +13,10 @@ import { CircuitBreaker } from "../infrastructure/resilience/CircuitBreaker.js";
 import { ISpaceMappingRepository } from "../domain/ports/ISpaceMappingRepository.js";
 import { IAgentHarness } from "../domain/ports/IAgentHarness.js";
 import type { InvestigationEngine } from "../harness/InvestigationEngine.js";
+import type { ISessionRepository } from "../domain/ports/ISessionRepository.js";
+import { InvestigationSession } from "../domain/InvestigationSession.js";
+import { SessionStatus } from "../domain/SessionStatus.js";
+import { ClosureIntentDetector } from "../services/ClosureIntentDetector.js";
 import { logger } from "../config/logger.js";
 
 const log = logger.child({ module: 'ProcessAgentResponseUseCase' });
@@ -27,7 +31,9 @@ export class ProcessAgentResponseUse {
         private readonly chatRepository: IChatRepository,
         private readonly harness: IAgentHarness,
         private readonly investigationEngine?: InvestigationEngine,
-        private readonly toolGovernanceService?: ToolGovernanceService
+        private readonly toolGovernanceService?: ToolGovernanceService,
+        private readonly sessionRepository?: ISessionRepository,
+        private readonly closureIntentDetector: ClosureIntentDetector = new ClosureIntentDetector()
     ){}
 
     async execute(
@@ -78,6 +84,63 @@ export class ProcessAgentResponseUse {
 
             // O repositório já devolve um ChatContext hidratado com o histórico caso exista
             const context = await this.chatRepository.findById(threadId, workspaceId);
+
+            // 1.1 Gestão do Ciclo de Vida da Sessão de Investigação (se sessionRepository configurado)
+            let session: InvestigationSession | null = null;
+            if (this.sessionRepository) {
+                session = await this.sessionRepository.findActiveByThreadId(threadId, workspaceId);
+
+                // Cenário A: Sessão aguardando confirmação do operador
+                if (session && session.status === SessionStatus.AWAITING_CLOSURE_CONFIRMATION) {
+                    const intent = this.closureIntentDetector.detectIntent(userText, true);
+
+                    if (intent === 'CONFIRM_CLOSURE') {
+                        const summary = session.sessionSummary;
+                        session.confirmClosure(summary ?? undefined);
+                        await this.sessionRepository.save(session);
+
+                        const summaryMarkdown = summary ? `\n\n${summary.toMarkdown()}` : '';
+                        const closureMessage = `✅ **Sessão de investigação encerrada com sucesso.**${summaryMarkdown}`;
+
+                        context.addMessage(new Message(crypto.randomUUID(), 'user', userText));
+                        context.addMessage(new Message(crypto.randomUUID(), 'assistant', closureMessage));
+                        await this.chatRepository.save(context);
+                        await chatProvider.sendMessage(threadId, closureMessage);
+                        return;
+                    } else if (intent === 'REJECT_CLOSURE') {
+                        session.cancelClosureProposal();
+                        session.touch();
+                        await this.sessionRepository.save(session);
+                    }
+                } else if (session) {
+                    // Cenário B: Comando explícito de encerramento enviado a qualquer momento (ex: /encerrar)
+                    const intent = this.closureIntentDetector.detectIntent(userText, false);
+                    if (intent === 'CONFIRM_CLOSURE') {
+                        const summary = session.sessionSummary;
+                        session.confirmClosure(summary ?? undefined);
+                        await this.sessionRepository.save(session);
+
+                        const summaryMarkdown = summary ? `\n\n${summary.toMarkdown()}` : '';
+                        const closureMessage = `✅ **Sessão de investigação encerrada com sucesso pelo operador.**${summaryMarkdown}`;
+
+                        context.addMessage(new Message(crypto.randomUUID(), 'user', userText));
+                        context.addMessage(new Message(crypto.randomUUID(), 'assistant', closureMessage));
+                        await this.chatRepository.save(context);
+                        await chatProvider.sendMessage(threadId, closureMessage);
+                        return;
+                    }
+
+                    session.touch();
+                } else {
+                    // Cenário C: Criação de nova sessão para este thread
+                    session = new InvestigationSession({
+                        id: crypto.randomUUID(),
+                        workspaceId,
+                        threadId,
+                        channelId: spaceId,
+                    });
+                }
+            }
 
             // 2. Aplica a regra de negócio: adiciona a nova mensagem do usuário
             context.addMessage(new Message(crypto.randomUUID(), 'user', userText));
@@ -178,9 +241,31 @@ export class ProcessAgentResponseUse {
                 playbookIds: investigationPlan?.playbookIds,
             });
 
-            const responseText = harnessResult.response;
+            let responseText = harnessResult.response;
 
-            // 5. Persiste o histórico atualizado e envia a resposta ao usuário
+            // 5. Avalia emissão de SessionSummary e proposta de encerramento
+            if (this.sessionRepository && session) {
+                if (this.investigationEngine && responseText) {
+                    const extractedSummary = this.investigationEngine.extractSessionSummary(
+                        responseText,
+                        harnessResult.runId,
+                        investigationPlan?.playbookIds
+                    );
+
+                    if (extractedSummary) {
+                        session.setSessionSummary(extractedSummary);
+                        session.proposeClosure();
+
+                        const closurePrompt = '\n\n💡 **Deseja encerrar esta sessão de investigação e confirmar o Resumo Executivo acima?** (Responda *"Sim"* para confirmar ou continue perguntando para aprofundar a análise)';
+                        responseText += closurePrompt;
+                    }
+                }
+
+                session.touch();
+                await this.sessionRepository.save(session);
+            }
+
+            // 6. Persiste o histórico atualizado e envia a resposta ao usuário
             if (responseText) {
                 context.addMessage(new Message(crypto.randomUUID(), 'assistant', responseText));
                 await this.chatRepository.save(context);
