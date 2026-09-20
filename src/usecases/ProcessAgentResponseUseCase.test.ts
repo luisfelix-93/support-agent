@@ -361,6 +361,7 @@ Timeout no gateway de pagamentos externo.
                     isIncident: true,
                 }),
                 extractSessionSummary: vi.fn().mockReturnValue(null),
+                stripSessionSummary: vi.fn().mockImplementation((text: string) => text.replace(/📋\s*RESUMO EXECUTIVO DE SESSÃO[\s\S]*/gi, '').trim()),
             };
         });
 
@@ -438,7 +439,11 @@ Timeout no gateway de pagamentos externo.
             );
             expect(chatProvider.sendMessage).toHaveBeenCalledWith(
                 'thread-sess-2',
-                expect.stringContaining('Deseja encerrar esta sessão de investigação e confirmar o Resumo Executivo acima?')
+                expect.stringContaining('Deseja encerrar esta sessão de investigação?')
+            );
+            expect(chatProvider.sendMessage).not.toHaveBeenCalledWith(
+                'thread-sess-2',
+                expect.stringContaining('RESUMO EXECUTIVO DE SESSÃO')
             );
         });
 

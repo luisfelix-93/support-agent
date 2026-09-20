@@ -275,8 +275,11 @@ export class ProcessAgentResponseUse {
                         session.setSessionSummary(extractedSummary);
                         session.proposeClosure();
 
-                        const closurePrompt = '\n\n💡 **Deseja encerrar esta sessão de investigação e confirmar o Resumo Executivo acima?** (Responda *"Sim"* para confirmar ou continue perguntando para aprofundar a análise)';
-                        responseText += closurePrompt;
+                        // Remove o bloco de resumo executivo da mensagem interativa para que seja enviado exclusivamente após o encerramento da sessão
+                        responseText = this.investigationEngine.stripSessionSummary(responseText);
+
+                        const closurePrompt = '\n\n💡 **Deseja encerrar esta sessão de investigação?** (Responda *"Sim"* para confirmar e gerar o Resumo Executivo, ou continue perguntando para aprofundar a análise)';
+                        responseText = responseText ? `${responseText}${closurePrompt}` : `A análise técnica foi concluída.${closurePrompt}`;
                     }
                 }
 

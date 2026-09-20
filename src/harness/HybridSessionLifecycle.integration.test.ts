@@ -203,10 +203,14 @@ O pool de conexões do banco de dados esgotou após pico inesperado de chamadas.
         expect(activeSession.sessionSummary).not.toBeNull();
         expect(activeSession.sessionSummary?.serviceName).toBe('payments-api');
 
-        // 3. O bot respondeu anexando o convite interativo de encerramento
+        // 3. O bot respondeu anexando o convite interativo de encerramento (sem vazar o resumo no chat durante o fluxo)
         expect(chatProvider.sendMessage).toHaveBeenCalledWith(
             threadId,
-            expect.stringContaining('Deseja encerrar esta sessão de investigação e confirmar o Resumo Executivo acima?')
+            expect.stringContaining('Deseja encerrar esta sessão de investigação?')
+        );
+        expect(chatProvider.sendMessage).not.toHaveBeenCalledWith(
+            threadId,
+            expect.stringContaining('📋 RESUMO EXECUTIVO DE SESSÃO')
         );
 
         // Mensagem 2: Operador confirma o encerramento ("Sim, resolvido, pode encerrar")
@@ -221,10 +225,14 @@ O pool de conexões do banco de dados esgotou após pico inesperado de chamadas.
         // 2. Não chamou o LLM novamente (economia de tokens)
         expect(mockHarness.run).toHaveBeenCalledTimes(1);
 
-        // 3. Enviou mensagem final conclusiva no chat
+        // 3. Enviou mensagem final conclusiva no chat contendo o resumo executivo exclusivamente após o encerramento
         expect(chatProvider.sendMessage).toHaveBeenLastCalledWith(
             threadId,
             expect.stringContaining('Sessão de investigação encerrada com sucesso.')
+        );
+        expect(chatProvider.sendMessage).toHaveBeenLastCalledWith(
+            threadId,
+            expect.stringContaining('📋 RESUMO EXECUTIVO DE SESSÃO')
         );
     });
 

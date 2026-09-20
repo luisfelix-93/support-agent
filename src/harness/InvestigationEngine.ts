@@ -177,4 +177,19 @@ ${playbookPrompts}`;
             return null;
         }
     }
+
+    /**
+     * Remove o bloco de Resumo Executivo (Session Summary) do texto da resposta,
+     * preservando apenas a análise técnica e o diálogo da investigação.
+     */
+    stripSessionSummary(responseText: string): string {
+        if (!responseText) return '';
+        // 1. Remove o bloco delimitado de 📋 RESUMO EXECUTIVO DE SESSÃO até o fechamento ═{5,}
+        let cleaned = responseText.replace(/(?:═{5,}\s*)?📋\s*RESUMO EXECUTIVO DE SESSÃO[\s\S]*═{5,}/gi, '');
+        // 2. Caso não tenha delimitador final, remove a partir do título do resumo até o final do texto
+        cleaned = cleaned.replace(/(?:═{5,}\s*)?📋\s*RESUMO EXECUTIVO DE SESSÃO[\s\S]*/gi, '');
+        // 3. Remove quaisquer linhas residuais de separadores
+        cleaned = cleaned.replace(/═{5,}/g, '');
+        return cleaned.trim();
+    }
 }
