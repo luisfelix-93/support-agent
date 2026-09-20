@@ -65,3 +65,4 @@ node_inspect_*.json
 
 # Clientes
 clients/
+sandbox/

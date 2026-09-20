@@ -105,4 +105,47 @@ Esgotamento do pool de conexões do PostgreSQL devido a transações longas sem 
         expect(summary!.recommendedActions[0]).toBe('Reiniciar pods para liberar conexões travadas');
         expect(summary!.playbooksInvolved).toEqual(['api-error', 'database']);
     });
+
+    it('deve remover o bloco de Session Summary mantendo a análise técnica intacta com stripSessionSummary', () => {
+        const fullResponse = `Identifiquei a falha após analisar os dados.
+
+═══════════════════════════════════════════════════════════
+📋 RESUMO EXECUTIVO DE SESSÃO (SESSION SUMMARY)
+═══════════════════════════════════════════════════════════
+• Run ID: run-999
+• Serviço / Componente: payment-service
+• Janela do Incidente: 14:10 até 14:35
+• Playbooks Ativados: api-error, database
+
+🔍 EVIDÊNCIAS CONSOLIDADAS:
+• Logs:
+  - Error 500
+• Métricas:
+  - active_connections: 100
+
+💡 HIPÓTESE DE CAUSA RAIZ (RCA):
+Esgotamento do pool.
+
+🛠️ AÇÕES RECOMENDADAS:
+1. Reiniciar pods
+═══════════════════════════════════════════════════════════`;
+
+        const stripped = engine.stripSessionSummary(fullResponse);
+        expect(stripped).toBe('Identifiquei a falha após analisar os dados.');
+        expect(stripped).not.toContain('RESUMO EXECUTIVO DE SESSÃO');
+        expect(stripped).not.toContain('═══════════════════════════════════════════════════════════');
+    });
+
+    it('deve retornar string vazia ao fazer strip de resposta que contém apenas o Session Summary', () => {
+        const summaryOnly = `📋 RESUMO EXECUTIVO DE SESSÃO (SESSION SUMMARY)
+• Run ID: run-1
+• Serviço / Componente: auth-service`;
+
+        expect(engine.stripSessionSummary(summaryOnly)).toBe('');
+    });
+
+    it('deve retornar o texto original se não houver Session Summary', () => {
+        const ordinaryText = 'Verifiquei os logs e os pods estão operando normalmente.';
+        expect(engine.stripSessionSummary(ordinaryText)).toBe(ordinaryText);
+    });
 });
