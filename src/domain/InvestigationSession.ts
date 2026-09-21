@@ -12,6 +12,7 @@ export interface InvestigationSessionProps {
     lastInteractionAt?: Date;
     closedAt?: Date | null;
     idleTimeoutMs?: number;
+    warningTimeoutMs?: number;
     evidenceLedger?: EvidenceLedger;
     sessionSummary?: SessionSummary | null;
     metadata?: Record<string, unknown>;
@@ -27,6 +28,7 @@ export class InvestigationSession {
     public lastInteractionAt: Date;
     public closedAt: Date | null;
     public readonly idleTimeoutMs: number;
+    public readonly warningTimeoutMs: number;
     public readonly evidenceLedger: EvidenceLedger;
     public sessionSummary: SessionSummary | null;
     public readonly metadata: Record<string, unknown>;
@@ -42,9 +44,15 @@ export class InvestigationSession {
             throw new Error('O threadId da sessão é obrigatório.');
         }
 
-        const idleTimeout = props.idleTimeoutMs ?? 3_600_000;
+        const idleTimeout = props.idleTimeoutMs ?? 1_800_000;
         if (idleTimeout <= 0) {
             throw new Error('idleTimeoutMs deve ser maior que zero.');
+        }
+
+        const defaultWarningTimeout = Math.min(900_000, Math.floor(idleTimeout / 2));
+        const warningTimeout = props.warningTimeoutMs ?? (defaultWarningTimeout > 0 ? defaultWarningTimeout : 1);
+        if (warningTimeout <= 0) {
+            throw new Error('warningTimeoutMs deve ser maior que zero.');
         }
 
         this.id = props.id.trim();
@@ -56,6 +64,7 @@ export class InvestigationSession {
         this.lastInteractionAt = props.lastInteractionAt ?? new Date(this.startedAt.getTime());
         this.closedAt = props.closedAt ?? null;
         this.idleTimeoutMs = idleTimeout;
+        this.warningTimeoutMs = warningTimeout;
         this.evidenceLedger = props.evidenceLedger ?? new EvidenceLedger();
         this.sessionSummary = props.sessionSummary ?? null;
         this.metadata = props.metadata ? { ...props.metadata } : {};
@@ -117,6 +126,26 @@ export class InvestigationSession {
         }
         const delta = referenceDate.getTime() - this.lastInteractionAt.getTime();
         return delta >= this.idleTimeoutMs;
+    }
+
+    recordWarning(warningDate: Date = new Date()): void {
+        this.metadata.closureWarningSentAt = warningDate.toISOString();
+    }
+
+    isWarningNeeded(referenceDate: Date = new Date()): boolean {
+        if (this.isClosed()) {
+            return false;
+        }
+        const delta = referenceDate.getTime() - this.lastInteractionAt.getTime();
+        if (delta < this.warningTimeoutMs || delta >= this.idleTimeoutMs) {
+            return false;
+        }
+
+        const warningSentAt = this.metadata?.closureWarningSentAt
+            ? new Date(this.metadata.closureWarningSentAt as string).getTime()
+            : 0;
+
+        return warningSentAt < this.lastInteractionAt.getTime();
     }
 
     setSessionSummary(summary: SessionSummary): void {

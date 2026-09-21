@@ -277,6 +277,7 @@ describe('MongoSessionRepository', () => {
             ];
 
             const mockCursor = {
+                sort: vi.fn().mockReturnThis(),
                 limit: vi.fn().mockReturnThis(),
                 toArray: vi.fn().mockResolvedValue(mockDocs),
             };
@@ -290,6 +291,7 @@ describe('MongoSessionRepository', () => {
                 },
                 lastInteractionAt: { $lte: cutoffDate },
             });
+            expect(mockCursor.sort).toHaveBeenCalledWith({ lastInteractionAt: 1 });
             expect(mockCursor.limit).toHaveBeenCalledWith(20);
             expect(results).toHaveLength(2);
             expect(results[0].id).toBe('sess-expired-1');

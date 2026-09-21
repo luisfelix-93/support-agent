@@ -20,6 +20,7 @@ export interface InvestigationSessionDocument {
     lastInteractionAt: Date;
     closedAt: Date | null;
     idleTimeoutMs: number;
+    warningTimeoutMs?: number;
     evidenceLedger: {
         logs: any[];
         metrics: any[];
@@ -93,6 +94,7 @@ export class MongoSessionRepository implements ISessionRepository {
                 },
                 lastInteractionAt: { $lte: cutoffDate },
             })
+            .sort({ lastInteractionAt: 1 })
             .limit(limit);
 
         const docs = await cursor.toArray();
@@ -110,6 +112,7 @@ export class MongoSessionRepository implements ISessionRepository {
             lastInteractionAt: session.lastInteractionAt,
             closedAt: session.closedAt,
             idleTimeoutMs: session.idleTimeoutMs,
+            warningTimeoutMs: session.warningTimeoutMs,
             evidenceLedger: {
                 logs: [...session.evidenceLedger.getLogs()],
                 metrics: [...session.evidenceLedger.getMetrics()],
@@ -176,6 +179,7 @@ export class MongoSessionRepository implements ISessionRepository {
             lastInteractionAt: doc.lastInteractionAt ? new Date(doc.lastInteractionAt) : undefined,
             closedAt: doc.closedAt ? new Date(doc.closedAt) : null,
             idleTimeoutMs: doc.idleTimeoutMs,
+            warningTimeoutMs: doc.warningTimeoutMs,
             evidenceLedger: ledger,
             sessionSummary: summary,
             metadata: doc.metadata,

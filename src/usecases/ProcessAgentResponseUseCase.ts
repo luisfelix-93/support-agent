@@ -155,6 +155,9 @@ export class ProcessAgentResponseUse {
                         workspaceId,
                         threadId,
                         channelId: spaceId,
+                        metadata: {
+                            source: spaceId.startsWith('spaces/') || threadId.startsWith('spaces/') ? 'google' : 'slack',
+                        },
                     });
                     agentSessionsTotal.inc({ workspaceId: session.workspaceId });
                 }

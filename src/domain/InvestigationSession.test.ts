@@ -33,7 +33,8 @@ describe('InvestigationSession', () => {
             expect(session.threadId).toBe('th-abc');
             expect(session.channelId).toBe('chan-alerts');
             expect(session.status).toBe(SessionStatus.ACTIVE);
-            expect(session.idleTimeoutMs).toBe(3600000); // 1 hora padrão
+            expect(session.idleTimeoutMs).toBe(1800000); // 30 minutos padrão
+            expect(session.warningTimeoutMs).toBe(900000); // 15 minutos padrão
             expect(session.isClosed()).toBe(false);
             expect(session.startedAt).toBeInstanceOf(Date);
             expect(session.lastInteractionAt).toBeInstanceOf(Date);
@@ -43,13 +44,15 @@ describe('InvestigationSession', () => {
             expect(session.metadata).toEqual({});
         });
 
-        it('deve permitir configurar idleTimeoutMs customizado', () => {
+        it('deve permitir configurar idleTimeoutMs e warningTimeoutMs customizados', () => {
             const session = new InvestigationSession({
                 ...defaultProps,
-                idleTimeoutMs: 1800000, // 30 min
+                idleTimeoutMs: 1200000, // 20 min
+                warningTimeoutMs: 600000, // 10 min
             });
 
-            expect(session.idleTimeoutMs).toBe(1800000);
+            expect(session.idleTimeoutMs).toBe(1200000);
+            expect(session.warningTimeoutMs).toBe(600000);
         });
 
         it('deve lançar erro se id, workspaceId ou threadId forem vazios', () => {
@@ -188,6 +191,78 @@ describe('InvestigationSession', () => {
             session.confirmClosure();
 
             expect(session.isExpired(now)).toBe(false);
+        });
+    });
+
+    describe('Detecção de Aviso Preventivo por Inatividade (isWarningNeeded)', () => {
+        it('deve retornar false quando o tempo de inatividade for inferior ao warningTimeout (15 min)', () => {
+            const now = new Date('2026-09-18T12:10:00.000Z');
+            const session = new InvestigationSession({
+                ...defaultProps,
+                idleTimeoutMs: 1800000, // 30 min
+                warningTimeoutMs: 900000, // 15 min
+                lastInteractionAt: new Date('2026-09-18T12:00:00.000Z'), // 10 min atrás
+            });
+
+            expect(session.isWarningNeeded(now)).toBe(false);
+        });
+
+        it('deve retornar true quando a inatividade atingir 15 min e aviso ainda não foi enviado', () => {
+            const now = new Date('2026-09-18T12:15:00.000Z');
+            const session = new InvestigationSession({
+                ...defaultProps,
+                idleTimeoutMs: 1800000, // 30 min
+                warningTimeoutMs: 900000, // 15 min
+                lastInteractionAt: new Date('2026-09-18T12:00:00.000Z'), // 15 min atrás
+            });
+
+            expect(session.isWarningNeeded(now)).toBe(true);
+        });
+
+        it('deve retornar false se o aviso já foi registrado após a última interação', () => {
+            const now = new Date('2026-09-18T12:16:00.000Z');
+            const session = new InvestigationSession({
+                ...defaultProps,
+                idleTimeoutMs: 1800000,
+                warningTimeoutMs: 900000,
+                lastInteractionAt: new Date('2026-09-18T12:00:00.000Z'),
+            });
+
+            session.recordWarning(new Date('2026-09-18T12:15:00.000Z'));
+            expect(session.isWarningNeeded(now)).toBe(false);
+        });
+
+        it('deve voltar a retornar true após o operador interagir (touch) e mais 15 min se passarem', () => {
+            const session = new InvestigationSession({
+                ...defaultProps,
+                idleTimeoutMs: 1800000,
+                warningTimeoutMs: 900000,
+                lastInteractionAt: new Date('2026-09-18T12:00:00.000Z'),
+            });
+
+            session.recordWarning(new Date('2026-09-18T12:15:00.000Z'));
+
+            // Operador interage às 12:20
+            session.touch(new Date('2026-09-18T12:20:00.000Z'));
+
+            // Às 12:30 (10 min após interação): ainda não precisa
+            expect(session.isWarningNeeded(new Date('2026-09-18T12:30:00.000Z'))).toBe(false);
+
+            // Às 12:35 (15 min após nova interação): precisa de novo aviso
+            expect(session.isWarningNeeded(new Date('2026-09-18T12:35:00.000Z'))).toBe(true);
+        });
+
+        it('deve retornar false quando o tempo já atingiu o idleTimeout (onde o timeout direto assume)', () => {
+            const now = new Date('2026-09-18T12:35:00.000Z');
+            const session = new InvestigationSession({
+                ...defaultProps,
+                idleTimeoutMs: 1800000, // 30 min
+                warningTimeoutMs: 900000, // 15 min
+                lastInteractionAt: new Date('2026-09-18T12:00:00.000Z'), // 35 min atrás
+            });
+
+            expect(session.isWarningNeeded(now)).toBe(false);
+            expect(session.isExpired(now)).toBe(true);
         });
     });
 
