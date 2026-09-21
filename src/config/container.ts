@@ -235,6 +235,7 @@ if (process.env.START_WORKER !== 'false') {
     queueWorker.start();
     memoryPromotionWorker.start();
     evaluationWorker.start();
+    sessionTimeoutWorker.start();
 }
 
 export const authController = new AuthController(loginUserUseCase);

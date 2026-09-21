@@ -67,6 +67,7 @@ describe('SessionTimeoutSweeper', () => {
         expect(result).toEqual({
             scanned: 0,
             expired: 0,
+            warned: 0,
             errors: 0,
         });
         expect(mockSessionRepo.save).not.toHaveBeenCalled();
@@ -81,7 +82,7 @@ describe('SessionTimeoutSweeper', () => {
             status: SessionStatus.AWAITING_CLOSURE_CONFIRMATION,
             startedAt: new Date('2026-09-18T10:00:00.000Z'),
             lastInteractionAt: new Date('2026-09-18T10:30:00.000Z'), // 1h30 atrás
-            idleTimeoutMs: 3600000, // 1h
+            idleTimeoutMs: 1800000, // 30 min
             sessionSummary: createExistingSummary(),
             metadata: { source: 'slack' },
         });
@@ -93,6 +94,7 @@ describe('SessionTimeoutSweeper', () => {
         expect(result).toEqual({
             scanned: 1,
             expired: 1,
+            warned: 0,
             errors: 0,
         });
 
@@ -117,7 +119,7 @@ describe('SessionTimeoutSweeper', () => {
             status: SessionStatus.ACTIVE,
             startedAt: new Date('2026-09-18T10:00:00.000Z'),
             lastInteractionAt: new Date('2026-09-18T10:45:00.000Z'), // 1h15 atrás
-            idleTimeoutMs: 3600000,
+            idleTimeoutMs: 1800000, // 30 min
         });
         expiredSession.evidenceLedger.addLog({ message: 'Conexão recusada pela porta 5432' });
         expiredSession.evidenceLedger.addMetric({ query: 'db_errors_total', value: 42 });
@@ -134,15 +136,77 @@ describe('SessionTimeoutSweeper', () => {
         expect(mockSessionRepo.save).toHaveBeenCalledWith(expiredSession);
     });
 
-    it('não deve expirar sessões cujo tempo de inatividade ainda não atingiu o timeout configurado', async () => {
+    it('deve enviar aviso de inatividade de 15 minutos e propor encerramento da sessão', async () => {
+        const idleWarningSession = new InvestigationSession({
+            id: 'sess-warn',
+            workspaceId: 'ws-acme',
+            threadId: 'th-warn',
+            status: SessionStatus.ACTIVE,
+            startedAt: new Date('2026-09-18T11:00:00.000Z'),
+            lastInteractionAt: new Date('2026-09-18T11:45:00.000Z'), // exatamente 15 min atrás
+            idleTimeoutMs: 1800000, // 30 min
+            warningTimeoutMs: 900000, // 15 min
+            metadata: { source: 'slack' },
+        });
+
+        vi.mocked(mockSessionRepo.findInactiveSessions).mockResolvedValue([idleWarningSession]);
+
+        const result = await sweeper.sweepExpiredSessions(baseDate);
+
+        expect(result).toEqual({
+            scanned: 1,
+            expired: 0,
+            warned: 1,
+            errors: 0,
+        });
+
+        expect(idleWarningSession.status).toBe(SessionStatus.AWAITING_CLOSURE_CONFIRMATION);
+        expect(idleWarningSession.metadata.closureWarningSentAt).toBe(baseDate.toISOString());
+        expect(mockSessionRepo.save).toHaveBeenCalledWith(idleWarningSession);
+        expect(mockChatProvider.sendMessage).toHaveBeenCalledWith(
+            'th-warn',
+            expect.stringContaining('Não identifiquei novas mensagens nesta thread nos últimos 15 minutos')
+        );
+    });
+
+    it('não deve reenviar o aviso de 15 minutos se o aviso já foi registrado após a última interação', async () => {
+        const warnedSession = new InvestigationSession({
+            id: 'sess-warned',
+            workspaceId: 'ws-acme',
+            threadId: 'th-warned',
+            status: SessionStatus.AWAITING_CLOSURE_CONFIRMATION,
+            lastInteractionAt: new Date('2026-09-18T11:45:00.000Z'),
+            idleTimeoutMs: 1800000,
+            warningTimeoutMs: 900000,
+            metadata: {
+                source: 'slack',
+                closureWarningSentAt: new Date('2026-09-18T11:50:00.000Z').toISOString(),
+            },
+        });
+
+        vi.mocked(mockSessionRepo.findInactiveSessions).mockResolvedValue([warnedSession]);
+
+        const result = await sweeper.sweepExpiredSessions(baseDate);
+
+        expect(result).toEqual({
+            scanned: 1,
+            expired: 0,
+            warned: 0,
+            errors: 0,
+        });
+        expect(mockChatProvider.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('não deve expirar nem avisar sessões cujo tempo de inatividade seja inferior a 15 minutos', async () => {
         const stillActiveSession = new InvestigationSession({
             id: 'sess-3',
             workspaceId: 'ws-acme',
             threadId: 'th-3',
             status: SessionStatus.ACTIVE,
             startedAt: new Date('2026-09-18T11:00:00.000Z'),
-            lastInteractionAt: new Date('2026-09-18T11:45:00.000Z'), // apenas 15 min atrás
-            idleTimeoutMs: 3600000, // 1h
+            lastInteractionAt: new Date('2026-09-18T11:55:00.000Z'), // apenas 5 min atrás
+            idleTimeoutMs: 1800000, // 30 min
+            warningTimeoutMs: 900000, // 15 min
         });
 
         vi.mocked(mockSessionRepo.findInactiveSessions).mockResolvedValue([stillActiveSession]);
@@ -152,6 +216,7 @@ describe('SessionTimeoutSweeper', () => {
         expect(result).toEqual({
             scanned: 1,
             expired: 0,
+            warned: 0,
             errors: 0,
         });
         expect(stillActiveSession.status).toBe(SessionStatus.ACTIVE);
@@ -186,6 +251,7 @@ describe('SessionTimeoutSweeper', () => {
 
         expect(result.scanned).toBe(2);
         expect(result.expired).toBe(2);
+        expect(result.warned).toBe(0);
         expect(result.errors).toBe(0); // Tratamento de notificação resiliente não cancela o encerramento
         expect(sessionFail.status).toBe(SessionStatus.CLOSED_BY_TIMEOUT);
         expect(sessionOk.status).toBe(SessionStatus.CLOSED_BY_TIMEOUT);
@@ -209,6 +275,7 @@ describe('SessionTimeoutSweeper', () => {
         expect(result).toEqual({
             scanned: 1,
             expired: 0,
+            warned: 0,
             errors: 1,
         });
     });
