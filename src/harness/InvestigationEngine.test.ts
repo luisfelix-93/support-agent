@@ -148,4 +148,33 @@ Esgotamento do pool.
         const ordinaryText = 'Verifiquei os logs e os pods estão operando normalmente.';
         expect(engine.stripSessionSummary(ordinaryText)).toBe(ordinaryText);
     });
+
+    it('deve identificar e remover variações naturais do LLM (Title Case, "da sessão", sem emoji, markdown headers)', () => {
+        const variation1 = `Os pods estão saudáveis.
+
+## Resumo Executivo da Sessão
+• Run ID: run-10
+• Serviço / Componente: order-service
+• Janela do Incidente: 10:00`;
+
+        expect(engine.hasSessionSummary(variation1)).toBe(true);
+        expect(engine.stripSessionSummary(variation1)).toBe('Os pods estão saudáveis.');
+
+        const variation2 = `Análise concluída.
+
+RESUMO EXECUTIVO DE SESSÃO
+• Run ID: run-20
+• Causa raiz: Timeout`;
+
+        expect(engine.hasSessionSummary(variation2)).toBe(true);
+        expect(engine.stripSessionSummary(variation2)).toBe('Análise concluída.');
+
+        const variation3 = `Métricas verificadas.
+
+SESSION SUMMARY
+• Run ID: run-30`;
+
+        expect(engine.hasSessionSummary(variation3)).toBe(true);
+        expect(engine.stripSessionSummary(variation3)).toBe('Métricas verificadas.');
+    });
 });

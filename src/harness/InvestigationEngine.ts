@@ -106,12 +106,23 @@ ${playbookPrompts}`;
         };
     }
 
+    private readonly summaryHeaderPattern =
+        '(?:(?:📋\\s*)?(?:##+\\s*)?RESUMO\\s+EXECUTIVO\\s+D[EA]\\s+SESS[AÃ]O(?:\\s*\\(SESSION\\s+SUMMARY\\))?|SESSION\\s+SUMMARY)';
+
+    /**
+     * Verifica se a resposta contém o bloco de Resumo Executivo (Session Summary) de forma tolerante a variações.
+     */
+    hasSessionSummary(responseText: string): boolean {
+        if (!responseText) return false;
+        return new RegExp(this.summaryHeaderPattern, 'i').test(responseText);
+    }
+
     /**
      * Extrai um SessionSummary estruturado a partir da resposta final gerada pelo LLM.
      * Retorna null se a resposta não contiver o bloco de resumo executivo.
      */
     extractSessionSummary(responseText: string, runId: string, playbooksInvolved: string[] = []): SessionSummary | null {
-        if (!responseText || !responseText.includes('RESUMO EXECUTIVO DE SESSÃO')) {
+        if (!responseText || !this.hasSessionSummary(responseText)) {
             return null;
         }
 
@@ -184,10 +195,14 @@ ${playbookPrompts}`;
      */
     stripSessionSummary(responseText: string): string {
         if (!responseText) return '';
-        // 1. Remove o bloco delimitado de 📋 RESUMO EXECUTIVO DE SESSÃO até o fechamento ═{5,}
-        let cleaned = responseText.replace(/(?:═{5,}\s*)?📋\s*RESUMO EXECUTIVO DE SESSÃO[\s\S]*═{5,}/gi, '');
-        // 2. Caso não tenha delimitador final, remove a partir do título do resumo até o final do texto
-        cleaned = cleaned.replace(/(?:═{5,}\s*)?📋\s*RESUMO EXECUTIVO DE SESSÃO[\s\S]*/gi, '');
+        // 1. Remove bloco delimitado com separadores finais ═{5,}
+        const withClosingSep = new RegExp(`(?:═{5,}\\s*)?${this.summaryHeaderPattern}(?:\\s*═{5,})?[\\s\\S]*?═{5,}`, 'gi');
+        let cleaned = responseText.replace(withClosingSep, '');
+
+        // 2. Remove o bloco do resumo até o final da string caso não haja separador de fechamento
+        const toEnd = new RegExp(`(?:═{5,}\\s*)?${this.summaryHeaderPattern}[\\s\\S]*`, 'gi');
+        cleaned = cleaned.replace(toEnd, '');
+
         // 3. Remove quaisquer linhas residuais de separadores
         cleaned = cleaned.replace(/═{5,}/g, '');
         return cleaned.trim();
