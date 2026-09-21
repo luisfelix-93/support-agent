@@ -360,6 +360,7 @@ Timeout no gateway de pagamentos externo.
                     recommendedTools: [],
                     isIncident: true,
                 }),
+                hasSessionSummary: vi.fn().mockImplementation((text: string) => /RESUMO EXECUTIVO/i.test(text)),
                 extractSessionSummary: vi.fn().mockReturnValue(null),
                 stripSessionSummary: vi.fn().mockImplementation((text: string) => text.replace(/📋\s*RESUMO EXECUTIVO DE SESSÃO[\s\S]*/gi, '').trim()),
             };
@@ -443,6 +444,42 @@ Timeout no gateway de pagamentos externo.
             );
             expect(chatProvider.sendMessage).not.toHaveBeenCalledWith(
                 'thread-sess-2',
+                expect.stringContaining('RESUMO EXECUTIVO DE SESSÃO')
+            );
+        });
+
+        it('deve remover incondicionalmente o Session Summary da resposta enviada ao chat mesmo se extractSessionSummary retornar null', async () => {
+            mockInvestigationEngine.extractSessionSummary.mockReturnValue(null);
+
+            const customHarness = {
+                run: vi.fn().mockResolvedValue({
+                    runId: 'run-unparsed',
+                    response: `Análise em andamento dos pods.\n\n${summaryText}`,
+                    iterations: 1,
+                    toolCalls: [],
+                    status: 'completed',
+                    durationMs: 40,
+                }),
+            };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-unparsed', 'Status dos pods', chatProvider);
+
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-sess-unparsed',
+                'Análise em andamento dos pods.'
+            );
+            expect(chatProvider.sendMessage).not.toHaveBeenCalledWith(
+                'thread-sess-unparsed',
                 expect.stringContaining('RESUMO EXECUTIVO DE SESSÃO')
             );
         });

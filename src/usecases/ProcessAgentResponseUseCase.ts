@@ -263,26 +263,40 @@ export class ProcessAgentResponseUse {
             let responseText = harnessResult.response;
 
             // 5. Avalia emissão de SessionSummary e proposta de encerramento
-            if (this.sessionRepository && session) {
-                if (this.investigationEngine && responseText) {
-                    const extractedSummary = this.investigationEngine.extractSessionSummary(
-                        responseText,
-                        harnessResult.runId,
-                        investigationPlan?.playbookIds
-                    );
+            let hadSummary = false;
+            if (this.investigationEngine && responseText) {
+                hadSummary = typeof this.investigationEngine.hasSessionSummary === 'function'
+                    ? this.investigationEngine.hasSessionSummary(responseText)
+                    : false;
+
+                if (this.sessionRepository && session) {
+                    const extractedSummary = typeof this.investigationEngine.extractSessionSummary === 'function'
+                        ? this.investigationEngine.extractSessionSummary(
+                            responseText,
+                            harnessResult.runId,
+                            investigationPlan?.playbookIds
+                        )
+                        : null;
 
                     if (extractedSummary) {
                         session.setSessionSummary(extractedSummary);
                         session.proposeClosure();
-
-                        // Remove o bloco de resumo executivo da mensagem interativa para que seja enviado exclusivamente após o encerramento da sessão
-                        responseText = this.investigationEngine.stripSessionSummary(responseText);
-
-                        const closurePrompt = '\n\n💡 **Deseja encerrar esta sessão de investigação?** (Responda *"Sim"* para confirmar e gerar o Resumo Executivo, ou continue perguntando para aprofundar a análise)';
-                        responseText = responseText ? `${responseText}${closurePrompt}` : `A análise técnica foi concluída.${closurePrompt}`;
                     }
+
+                    session.touch();
+                    await this.sessionRepository.save(session);
                 }
 
+                // Higienização INCONDICIONAL: O resumo executivo NUNCA deve ser emitido no chat durante a investigação ativa
+                if (typeof this.investigationEngine.stripSessionSummary === 'function') {
+                    responseText = this.investigationEngine.stripSessionSummary(responseText);
+                }
+
+                if (hadSummary && session && session.status === SessionStatus.AWAITING_CLOSURE_CONFIRMATION) {
+                    const closurePrompt = '\n\n💡 **Deseja encerrar esta sessão de investigação?** (Responda *"Sim"* para confirmar e gerar o Resumo Executivo, ou continue perguntando para aprofundar a análise)';
+                    responseText = responseText ? `${responseText}${closurePrompt}` : `A análise técnica foi concluída.${closurePrompt}`;
+                }
+            } else if (this.sessionRepository && session) {
                 session.touch();
                 await this.sessionRepository.save(session);
             }

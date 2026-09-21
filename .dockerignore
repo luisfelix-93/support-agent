@@ -1,5 +1,7 @@
 node_modules
 dist
+clients
+sanbox
 coverage
 .git
 .github
