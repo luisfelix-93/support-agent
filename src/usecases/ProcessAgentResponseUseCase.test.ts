@@ -599,6 +599,143 @@ Timeout no gateway de pagamentos externo.
                 expect.stringContaining('Sessão de investigação encerrada com sucesso pelo operador.')
             );
         });
+
+        it('deve encerrar imediatamente ao receber o comando "encerrar" sem barra', async () => {
+            const existingSession = {
+                id: 'sess-cmd-plain',
+                threadId: 'thread-sess-6',
+                workspaceId: 'workspace-abc',
+                status: 'ACTIVE',
+                sessionSummary: null,
+                confirmClosure: vi.fn(),
+                touch: vi.fn(),
+            };
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(existingSession);
+
+            const customHarness = { run: vi.fn() };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-6', 'encerrar', chatProvider);
+
+            expect(existingSession.confirmClosure).toHaveBeenCalled();
+            expect(mockSessionRepo.save).toHaveBeenCalledWith(existingSession);
+            expect(customHarness.run).not.toHaveBeenCalled();
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-sess-6',
+                expect.stringContaining('Sessão de investigação encerrada com sucesso pelo operador.')
+            );
+        });
+
+        it('deve encerrar quando o operador enviar "encerrar a sessão" aguardando confirmação pós-aviso', async () => {
+            const existingSession = {
+                id: 'sess-warn-confirm',
+                threadId: 'thread-sess-7',
+                workspaceId: 'workspace-abc',
+                status: 'AWAITING_CLOSURE_CONFIRMATION',
+                sessionSummary: {
+                    toMarkdown: () => '### Resumo Após Aviso',
+                },
+                confirmClosure: vi.fn(),
+                touch: vi.fn(),
+            };
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(existingSession);
+
+            const customHarness = { run: vi.fn() };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-7', 'encerrar a sessão', chatProvider);
+
+            expect(existingSession.confirmClosure).toHaveBeenCalledWith(existingSession.sessionSummary);
+            expect(mockSessionRepo.save).toHaveBeenCalledWith(existingSession);
+            expect(customHarness.run).not.toHaveBeenCalled();
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-sess-7',
+                expect.stringContaining('Sessão de investigação encerrada com sucesso.')
+            );
+        });
+
+        it('não deve criar nova sessão se o usuário enviar comando de encerramento sem sessão ativa', async () => {
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(null);
+
+            const customHarness = { run: vi.fn() };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-8', '/encerrar', chatProvider);
+
+            expect(mockSessionRepo.save).not.toHaveBeenCalled();
+            expect(customHarness.run).not.toHaveBeenCalled();
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-sess-8',
+                expect.stringContaining('Não há nenhuma sessão de investigação ativa no momento nesta thread.')
+            );
+        });
+
+        it('deve cancelar proposta de encerramento e atualizar timestamp se o operador enviar pergunta técnica neutra', async () => {
+            const existingSession = {
+                id: 'sess-neutral-resume',
+                threadId: 'thread-sess-9',
+                workspaceId: 'workspace-abc',
+                status: 'AWAITING_CLOSURE_CONFIRMATION',
+                cancelClosureProposal: vi.fn(),
+                touch: vi.fn(),
+            };
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(existingSession);
+
+            const customHarness = {
+                run: vi.fn().mockResolvedValue({
+                    runId: 'run-resume',
+                    response: 'Analisando os pods do nginx...',
+                    iterations: 1,
+                    toolCalls: [],
+                    status: 'completed',
+                    durationMs: 50,
+                }),
+            };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-9', 'qual é o status dos pods?', chatProvider);
+
+            expect(existingSession.cancelClosureProposal).toHaveBeenCalled();
+            expect(existingSession.touch).toHaveBeenCalled();
+            expect(mockSessionRepo.save).toHaveBeenCalledWith(existingSession);
+            expect(customHarness.run).toHaveBeenCalled();
+        });
     });
 });
 

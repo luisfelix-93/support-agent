@@ -3,23 +3,33 @@ export type ClosureIntent = 'CONFIRM_CLOSURE' | 'REJECT_CLOSURE' | 'NEUTRAL';
 export class ClosureIntentDetector {
     private readonly explicitCommands = new Set([
         '/encerrar',
+        'encerrar',
         '/close',
+        'close',
         '/finalizar',
-        '/encerrar-sessao',
+        'finalizar',
         '/concluir',
-    ]);
-
-    private readonly explicitPhrases = [
-        'pode encerrar',
+        'concluir',
+        '/fechar',
+        'fechar',
+        '/terminar',
+        'terminar',
+        '/fim',
+        'fim',
+        '/encerrar-sessao',
+        'encerrar-sessao',
         'encerrar sessao',
         'fechar sessao',
-        'fechar chamado',
-        'analise concluida',
-        'problema resolvido',
-        'incidente resolvido',
-        'incidente finalizado',
-        'encerrar investigacao',
-        'concluir analise',
+        'finalizar sessao',
+        'concluir sessao',
+    ]);
+
+    private readonly closurePatterns = [
+        /(?:pode|favor|por\s+favor|quero)?\s*(?:encerrar|fechar|finalizar|concluir|terminar)\s*(?:a\s+|o\s+|da\s+|do\s+|de\s+)?(?:sessao|chamado|investigacao|analise|caso|atendimento|ticket)?/i,
+        /pode\s+(?:encerrar|fechar|finalizar|concluir|terminar)/i,
+        /(?:problema|incidente|analise|caso)\s+(?:resolvido|finalizado|concluido|encerrado)/i,
+        /^(?:resolvido|finalizado|concluido|encerrado)(?:,\s*pode\s+(?:fechar|encerrar))?$/i,
+        /(?:sessao|chamado|investigacao|analise)\s+(?:concluida|encerrada|finalizada)/i,
     ];
 
     private readonly affirmativeTokens = new Set([
@@ -33,9 +43,25 @@ export class ClosureIntentDetector {
         'fechado',
         'confirmo',
         'pode fechar',
+        'pode encerrar',
         'tudo certo',
         'concluido',
+        'concluida',
+        'finalizado',
+        'finalizada',
+        'encerrado',
+        'encerrada',
+        'resolvido',
+        'resolvida',
         'pode gerar o resumo',
+        'encerrar',
+        'fechar',
+        'finalizar',
+        'concluir',
+        'pode',
+        'claro',
+        'exato',
+        'afirmativo',
     ]);
 
     private readonly negativePatterns = [
@@ -45,6 +71,7 @@ export class ClosureIntentDetector {
         'espere',
         'espera',
         'nao encerre',
+        'nao feche',
         'quero continuar',
         'continuar investigando',
         'continuar',
@@ -60,14 +87,14 @@ export class ClosureIntentDetector {
 
         const normalized = this.normalize(message);
 
-        // 1. Verifica comandos explícitos (ex: /encerrar)
+        // 1. Verifica comandos explícitos exatos (ex: /encerrar, encerrar)
         if (this.explicitCommands.has(normalized)) {
             return 'CONFIRM_CLOSURE';
         }
 
-        // 2. Verifica frases explícitas de encerramento em qualquer contexto
-        for (const phrase of this.explicitPhrases) {
-            if (normalized.includes(phrase)) {
+        // 2. Verifica padrões flexíveis de encerramento em qualquer contexto
+        for (const pattern of this.closurePatterns) {
+            if (pattern.test(normalized)) {
                 return 'CONFIRM_CLOSURE';
             }
         }

@@ -118,7 +118,8 @@ export class ProcessAgentResponseUse {
                         await this.chatRepository.save(context);
                         await chatProvider.sendMessage(threadId, closureMessage);
                         return;
-                    } else if (intent === 'REJECT_CLOSURE') {
+                    } else {
+                        // Rejeição ou envio de nova dúvida técnica: desfaz a proposta, atualiza o timestamp e volta para ACTIVE
                         session.cancelClosureProposal();
                         session.touch();
                         await this.sessionRepository.save(session);
@@ -149,6 +150,17 @@ export class ProcessAgentResponseUse {
 
                     session.touch();
                 } else {
+                    // Se não há sessão ativa, verifica se o usuário enviou comando de encerramento
+                    const intent = this.closureIntentDetector.detectIntent(userText, false);
+                    if (intent === 'CONFIRM_CLOSURE') {
+                        const noActiveSessionMessage = 'ℹ️ Não há nenhuma sessão de investigação ativa no momento nesta thread.';
+                        context.addMessage(new Message(crypto.randomUUID(), 'user', userText));
+                        context.addMessage(new Message(crypto.randomUUID(), 'assistant', noActiveSessionMessage));
+                        await this.chatRepository.save(context);
+                        await chatProvider.sendMessage(threadId, noActiveSessionMessage);
+                        return;
+                    }
+
                     // Cenário C: Criação de nova sessão para este thread
                     session = new InvestigationSession({
                         id: crypto.randomUUID(),

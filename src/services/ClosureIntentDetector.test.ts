@@ -11,18 +11,34 @@ describe('ClosureIntentDetector', () => {
     describe('Comandos e Frases Explícitas (Unconditional)', () => {
         const explicitCommands = [
             '/encerrar',
+            'encerrar',
             '/close',
+            'close',
             '/finalizar',
+            'finalizar',
             '/encerrar-sessao',
+            'encerrar-sessao',
             '/concluir',
+            'concluir',
+            '/fechar',
+            'fechar',
             'pode encerrar',
             'encerrar sessão',
+            'encerrar a sessão',
             'fechar sessão',
+            'fechar a sessão',
+            'finalizar a sessão',
+            'concluir a sessão',
             'fechar chamado',
+            'fechar o chamado',
             'análise concluída',
             'problema resolvido',
             'incidente resolvido',
             'pode encerrar a investigação',
+            'pode fechar a sessão',
+            'resolvido',
+            'por favor encerrar',
+            'favor encerrar a sessao',
         ];
 
         it.each(explicitCommands)('deve retornar CONFIRM_CLOSURE para o comando "%s" mesmo sem estar aguardando', (cmd) => {
@@ -33,6 +49,8 @@ describe('ClosureIntentDetector', () => {
         it('deve desconsiderar case e acentos', () => {
             expect(detector.detectIntent('PODE ENCERRAR SESSÃO', false)).toBe('CONFIRM_CLOSURE');
             expect(detector.detectIntent('/FINALIZAR', false)).toBe('CONFIRM_CLOSURE');
+            expect(detector.detectIntent('ENCERRAR', false)).toBe('CONFIRM_CLOSURE');
+            expect(detector.detectIntent('fechar a sessao', false)).toBe('CONFIRM_CLOSURE');
             expect(detector.detectIntent('análise concluida', false)).toBe('CONFIRM_CLOSURE');
         });
     });
