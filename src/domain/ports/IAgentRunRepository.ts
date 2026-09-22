@@ -43,6 +43,7 @@ export interface IAgentRunRepository {
     save(run: AgentRun): Promise<void>;
     findByRunId(runId: string): Promise<AgentRun | null>;
     findByTenant(tenantId: string, options?: FindRunsOptions): Promise<AgentRun[]>;
+    findBySessionId(sessionId: string): Promise<AgentRun[]>;
     aggregateCostByTenant(tenantId?: string, from?: Date, to?: Date): Promise<TenantCostSummary[]>;
     aggregateToolAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<ToolAnalyticsSummary[]>;
     aggregateLLMAnalytics(tenantId?: string, from?: Date, to?: Date): Promise<LLMAnalyticsSummary[]>;

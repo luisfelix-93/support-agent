@@ -38,12 +38,14 @@ describe('AgentRunRepository', () => {
             expect(mockCollection.createIndex).toHaveBeenCalledWith({ runId: 1 }, { unique: true });
             expect(mockCollection.createIndex).toHaveBeenCalledWith({ tenantId: 1, startedAt: -1 });
             expect(mockCollection.createIndex).toHaveBeenCalledWith({ tenantId: 1, status: 1, startedAt: -1 });
+            expect(mockCollection.createIndex).toHaveBeenCalledWith({ workspaceId: 1, sessionId: 1 });
         });
     });
 
     describe('save', () => {
-        it('deve persistir o AgentRun com upsert baseado em runId', async () => {
+        it('deve persistir o AgentRun com upsert baseado em runId incluindo sessionId', async () => {
             const run = new AgentRun('run-123', 'tenant-abc', 'ws-xyz', 'thread-789');
+            run.sessionId = 'session-999';
             run.userMessage = 'Olá mundo';
             run.finalResponse = 'Resposta do agente';
             run.recordLLMCall({
@@ -68,6 +70,7 @@ describe('AgentRunRepository', () => {
                         tenantId: 'tenant-abc',
                         workspaceId: 'ws-xyz',
                         threadId: 'thread-789',
+                        sessionId: 'session-999',
                         status: 'completed',
                         totalTokens: 225,
                         costUsd: 0.001125,
@@ -84,12 +87,13 @@ describe('AgentRunRepository', () => {
     });
 
     describe('findByRunId', () => {
-        it('deve retornar AgentRun quando encontrado', async () => {
+        it('deve retornar AgentRun quando encontrado incluindo sessionId', async () => {
             mockCollection.findOne.mockResolvedValueOnce({
                 runId: 'run-123',
                 tenantId: 'tenant-abc',
                 workspaceId: 'ws-xyz',
                 threadId: 'thread-789',
+                sessionId: 'session-999',
                 status: 'completed',
                 iterations: 2,
                 toolCalls: [],
@@ -105,6 +109,7 @@ describe('AgentRunRepository', () => {
             expect(mockCollection.findOne).toHaveBeenCalledWith({ runId: 'run-123' });
             expect(result).toBeInstanceOf(AgentRun);
             expect(result?.id).toBe('run-123');
+            expect(result?.sessionId).toBe('session-999');
             expect(result?.totalTokens).toBe(500);
             expect(result?.costUsd).toBe(0.002);
         });
@@ -115,6 +120,54 @@ describe('AgentRunRepository', () => {
             const result = await repository.findByRunId('run-non-existent');
 
             expect(result).toBeNull();
+        });
+    });
+
+    describe('findBySessionId', () => {
+        it('deve buscar runs vinculados a uma sessão ordenados por startedAt ascendente', async () => {
+            const mockCursor = {
+                sort: vi.fn().mockReturnThis(),
+                toArray: vi.fn().mockResolvedValueOnce([
+                    {
+                        runId: 'run-1',
+                        tenantId: 'tenant-abc',
+                        workspaceId: 'ws-xyz',
+                        threadId: 'thread-1',
+                        sessionId: 'session-100',
+                        status: 'completed',
+                        totalTokens: 150,
+                    },
+                    {
+                        runId: 'run-2',
+                        tenantId: 'tenant-abc',
+                        workspaceId: 'ws-xyz',
+                        threadId: 'thread-1',
+                        sessionId: 'session-100',
+                        status: 'completed',
+                        totalTokens: 300,
+                    }
+                ]),
+            };
+
+            mockCollection.find.mockReturnValue(mockCursor);
+
+            const results = await repository.findBySessionId('session-100');
+
+            expect(mockCollection.find).toHaveBeenCalledWith({ sessionId: 'session-100' });
+            expect(mockCursor.sort).toHaveBeenCalledWith({ startedAt: 1 });
+            expect(results).toHaveLength(2);
+            expect(results[0]).toBeInstanceOf(AgentRun);
+            expect(results[0].sessionId).toBe('session-100');
+            expect(results[1].sessionId).toBe('session-100');
+        });
+
+        it('deve retornar array vazio caso sessionId seja vazio ou espaços', async () => {
+            const resultsEmpty = await repository.findBySessionId('');
+            const resultsSpaces = await repository.findBySessionId('   ');
+
+            expect(resultsEmpty).toEqual([]);
+            expect(resultsSpaces).toEqual([]);
+            expect(mockCollection.find).not.toHaveBeenCalled();
         });
     });
 

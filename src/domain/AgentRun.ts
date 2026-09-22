@@ -22,6 +22,7 @@ export class AgentRun {
     public finalResponse?: string;
     public userMessage?: string;
     public playbookIds?: string[];
+    public sessionId?: string;
 
     constructor(
         public readonly id: string,
@@ -33,8 +34,11 @@ export class AgentRun {
         public toolCalls: ToolCallRecord[] = [],
         public readonly startedAt: Date = new Date(),
         public completedAt?: Date,
-        public error?: string
-    ) {}
+        public error?: string,
+        sessionId?: string
+    ) {
+        this.sessionId = sessionId;
+    }
 
     finish(status: AgentRunStatus, error?: string): void {
         this.status = status;
