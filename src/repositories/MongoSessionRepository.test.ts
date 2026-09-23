@@ -95,6 +95,11 @@ describe('MongoSessionRepository', () => {
                         idleTimeoutMs: 3600000,
                         metadata: { priority: 'P1' },
                         sessionSummary: null,
+                        promptTokens: 0,
+                        completionTokens: 0,
+                        totalTokens: 0,
+                        estimatedCostUsd: 0,
+                        turnCount: 0,
                         evidenceLedger: {
                             logs: [{ message: '502 Bad Gateway', level: 'error' }],
                             metrics: [{ query: 'http_requests_total', value: 500 }],
@@ -102,6 +107,37 @@ describe('MongoSessionRepository', () => {
                             infrastructure: [{ component: 'k8s-pod', status: 'CrashLoopBackOff' }],
                             database: [{ metricOrQuery: 'active_connections', value: 98 }],
                         },
+                    }),
+                },
+                { upsert: true }
+            );
+        });
+
+        it('deve persistir os contadores de tokens atualizados acumulados na sessão', async () => {
+            const session = new InvestigationSession({
+                id: 'sess-tokens',
+                workspaceId: 'ws-acme',
+                threadId: 'th-tokens',
+            });
+            session.recordTokenUsage({
+                promptTokens: 350,
+                completionTokens: 150,
+                totalTokens: 500,
+                costUsd: 0.005,
+            });
+
+            await repository.save(session);
+
+            expect(mockCollection.updateOne).toHaveBeenCalledWith(
+                { id: 'sess-tokens' },
+                {
+                    $set: expect.objectContaining({
+                        id: 'sess-tokens',
+                        promptTokens: 350,
+                        completionTokens: 150,
+                        totalTokens: 500,
+                        estimatedCostUsd: 0.005,
+                        turnCount: 1,
                     }),
                 },
                 { upsert: true }
@@ -181,6 +217,11 @@ describe('MongoSessionRepository', () => {
                     playbooksInvolved: ['kubernetes'],
                 },
                 metadata: { cluster: 'us-east-1' },
+                promptTokens: 1200,
+                completionTokens: 300,
+                totalTokens: 1500,
+                estimatedCostUsd: 0.015,
+                turnCount: 4,
             };
 
             mockCollection.findOne.mockResolvedValue(mockDoc);
@@ -198,6 +239,11 @@ describe('MongoSessionRepository', () => {
             expect(session!.sessionSummary).toBeInstanceOf(SessionSummary);
             expect(session!.sessionSummary!.rootCauseHypothesis).toBe('Memory leak in batch processing');
             expect(session!.metadata).toEqual({ cluster: 'us-east-1' });
+            expect(session!.promptTokens).toBe(1200);
+            expect(session!.completionTokens).toBe(300);
+            expect(session!.totalTokens).toBe(1500);
+            expect(session!.estimatedCostUsd).toBe(0.015);
+            expect(session!.turnCount).toBe(4);
         });
     });
 

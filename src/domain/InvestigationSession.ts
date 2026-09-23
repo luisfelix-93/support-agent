@@ -16,6 +16,11 @@ export interface InvestigationSessionProps {
     evidenceLedger?: EvidenceLedger;
     sessionSummary?: SessionSummary | null;
     metadata?: Record<string, unknown>;
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    estimatedCostUsd?: number;
+    turnCount?: number;
 }
 
 export class InvestigationSession {
@@ -32,6 +37,11 @@ export class InvestigationSession {
     public readonly evidenceLedger: EvidenceLedger;
     public sessionSummary: SessionSummary | null;
     public readonly metadata: Record<string, unknown>;
+    public promptTokens: number;
+    public completionTokens: number;
+    public totalTokens: number;
+    public estimatedCostUsd: number;
+    public turnCount: number;
 
     constructor(props: InvestigationSessionProps) {
         if (!props.id || props.id.trim() === '') {
@@ -68,6 +78,11 @@ export class InvestigationSession {
         this.evidenceLedger = props.evidenceLedger ?? new EvidenceLedger();
         this.sessionSummary = props.sessionSummary ?? null;
         this.metadata = props.metadata ? { ...props.metadata } : {};
+        this.promptTokens = props.promptTokens ?? 0;
+        this.completionTokens = props.completionTokens ?? 0;
+        this.totalTokens = props.totalTokens ?? 0;
+        this.estimatedCostUsd = props.estimatedCostUsd ?? 0;
+        this.turnCount = props.turnCount ?? 0;
     }
 
     isClosed(): boolean {
@@ -81,6 +96,27 @@ export class InvestigationSession {
         if (this.isClosed()) {
             throw new Error('Não é possível interagir com uma sessão encerrada.');
         }
+        this.lastInteractionAt = interactionTime;
+    }
+
+    recordTokenUsage(
+        usage: {
+            promptTokens: number;
+            completionTokens: number;
+            totalTokens: number;
+            costUsd: number;
+        },
+        interactionTime: Date = new Date()
+    ): void {
+        if (this.isClosed()) {
+            throw new Error('Não é possível registrar tokens em uma sessão encerrada.');
+        }
+        this.promptTokens += Math.max(0, usage.promptTokens || 0);
+        this.completionTokens += Math.max(0, usage.completionTokens || 0);
+        this.totalTokens += Math.max(0, usage.totalTokens || 0);
+        const addedCost = Math.max(0, usage.costUsd || 0);
+        this.estimatedCostUsd = Math.round((this.estimatedCostUsd + addedCost) * 1_000_000) / 1_000_000;
+        this.turnCount += 1;
         this.lastInteractionAt = interactionTime;
     }
 

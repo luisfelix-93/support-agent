@@ -40,41 +40,41 @@
 **Branch:** `feature/session-token-accounting`  
 **Responsável:** `backend-specialist`  
 **Depende de:** Sub-Fase 8A  
-**Status:** ⏳ Pendente  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Atualizar entidade `InvestigationSession` (`src/domain/InvestigationSession.ts`):
-  - [ ] Adicionar propriedades de contadores à interface `InvestigationSessionProps`:
+- [x] Atualizar entidade `InvestigationSession` (`src/domain/InvestigationSession.ts`):
+  - [x] Adicionar propriedades de contadores à interface `InvestigationSessionProps`:
     - `promptTokens?: number;`
     - `completionTokens?: number;`
     - `totalTokens?: number;`
     - `estimatedCostUsd?: number;`
     - `turnCount?: number;`
-  - [ ] Inicializar contadores na classe (padrão 0):
+  - [x] Inicializar contadores na classe (padrão 0):
     - `public promptTokens: number;`
     - `public completionTokens: number;`
     - `public totalTokens: number;`
     - `public estimatedCostUsd: number;`
     - `public turnCount: number;`
-  - [ ] Adicionar método `recordTokenUsage(usage: { promptTokens: number; completionTokens: number; totalTokens: number; costUsd: number }): void`
+  - [x] Adicionar método `recordTokenUsage(usage: { promptTokens: number; completionTokens: number; totalTokens: number; costUsd: number }): void`
     - Valida que a sessão não está fechada
     - Incrementa os contadores de tokens e custo acumulado
     - Incrementa `turnCount`
     - Atualiza `lastInteractionAt`
-- [ ] Atualizar `MongoSessionRepository` (`src/repositories/MongoSessionRepository.ts`):
-  - [ ] Atualizar `InvestigationSessionDocument` com os novos campos de contadores
-  - [ ] Mapear campos em `toDocument()` e `toDomain()`
+- [x] Atualizar `MongoSessionRepository` (`src/repositories/MongoSessionRepository.ts`):
+  - [x] Atualizar `InvestigationSessionDocument` com os novos campos de contadores
+  - [x] Mapear campos em `toDocument()` e `toDomain()`
 
 ### Testes
-- [ ] Atualizar `src/domain/InvestigationSession.test.ts`:
+- [x] Atualizar `src/domain/InvestigationSession.test.ts`:
   - Testar chamada `recordTokenUsage` acumulando turnos sequenciais
   - Testar bloqueio de registro de tokens em sessões fechadas
   - Testar valores padrão zerados
-- [ ] Atualizar `src/repositories/MongoSessionRepository.test.ts` validando salvamento e recuperação dos contadores
+- [x] Atualizar `src/repositories/MongoSessionRepository.test.ts` validando salvamento e recuperação dos contadores
 
 ### Verificação
-- [ ] `npm test` passa sem regressões
-- [ ] `npm run build` compila com 0 erros TypeScript strict
+- [x] `npm test` passa sem regressões (91/91 arquivos, 670/670 testes aprovados)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 
