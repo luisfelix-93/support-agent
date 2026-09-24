@@ -83,12 +83,12 @@
 **Branch:** `feature/session-token-accounting`  
 **Responsável:** `backend-specialist`  
 **Depende de:** Sub-Fase 8B  
-**Status:** ⏳ Pendente  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Atualizar portas e contratos do Harness (`src/domain/ports/IAgentHarness.ts`):
-  - [ ] Em `AgentRunInput`, adicionar `sessionId?: string`
-  - [ ] Em `AgentRunResult`, adicionar objeto estruturado de tokens:
+- [x] Atualizar portas e contratos do Harness (`src/domain/ports/IAgentHarness.ts`):
+  - [x] Em `AgentRunInput`, adicionar `sessionId?: string`
+  - [x] Em `AgentRunResult`, adicionar objeto estruturado de tokens:
     ```typescript
     tokens?: {
         inputTokens: number;
@@ -97,12 +97,12 @@
         costUsd: number;
     };
     ```
-- [ ] Atualizar `AgentHarness` (`src/harness/AgentHarness.ts`):
-  - [ ] Passar `input.sessionId` para a instância `AgentRun`
-  - [ ] Preencher `tokens` no retorno de sucesso e de erro com os valores acumulados em `run`
-- [ ] Atualizar `ProcessAgentResponseUseCase` (`src/usecases/ProcessAgentResponseUseCase.ts`):
-  - [ ] Passar `sessionId: session?.id` ao invocar `this.harness.run(...)`
-  - [ ] Após o retorno do harness, se houver `session` ativa e `harnessResult.tokens`, registrar tokens:
+- [x] Atualizar `AgentHarness` (`src/harness/AgentHarness.ts`):
+  - [x] Passar `input.sessionId` para a instância `AgentRun`
+  - [x] Preencher `tokens` no retorno de sucesso e de erro com os valores acumulados em `run`
+- [x] Atualizar `ProcessAgentResponseUseCase` (`src/usecases/ProcessAgentResponseUseCase.ts`):
+  - [x] Passar `sessionId: session?.id` ao invocar `this.harness.run(...)`
+  - [x] Após o retorno do harness, se houver `session` ativa e `harnessResult.tokens`, registrar tokens:
     ```typescript
     session.recordTokenUsage({
         promptTokens: harnessResult.tokens.inputTokens,
@@ -111,21 +111,21 @@
         costUsd: harnessResult.tokens.costUsd,
     });
     ```
-  - [ ] Garantir que a persistência `this.sessionRepository.save(session)` ocorra com os contadores atualizados
+  - [x] Garantir que a persistência `this.sessionRepository.save(session)` ocorra com os contadores atualizados
 
 ### Testes
-- [ ] Atualizar `src/harness/AgentHarness.test.ts` testando retorno de `tokens` e atribuição de `sessionId`
-- [ ] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts`:
+- [x] Atualizar `src/harness/AgentHarness.test.ts` testando retorno de `tokens` e atribuição de `sessionId`
+- [x] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts`:
   - Testar que os tokens retornados pelo harness são acumulados na sessão ativa
   - Testar que a sessão é salva com os tokens atualizados
 
 ### Verificação
-- [ ] `npm test` passa sem regressões
-- [ ] `npm run build` compila com 0 erros TypeScript strict
+- [x] `npm test` passa sem regressões (91/91 arquivos, 672/672 testes aprovados)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 
-## Sub-Fase 8D (Sprint 8.4): Enriquecimento do `SessionSummary` & Métricas Prometheus
+## Sub-Fase 8D (Sprint 8.4): Exposição de Tokens por Sessão na API & Métricas Prometheus
 
 **Branch:** `feature/session-token-accounting`  
 **Responsável:** `backend-specialist`  
@@ -133,20 +133,30 @@
 **Status:** ⏳ Pendente  
 
 ### Implementação
-- [ ] Atualizar `SessionSummary` (`src/domain/workflows/SessionSummary.ts`):
-  - [ ] Adicionar campos opcionais `totalTokens?: number` e `estimatedCostUsd?: number`
-  - [ ] Atualizar `toMarkdown()` para incluir seção visual `### 💰 Consumo de Recursos & Investimento` com tokens e custo aproximado em USD
+- [ ] Atualizar `RunAnalyticsService` (`src/services/RunAnalyticsService.ts`):
+  - [ ] Injetar `ISessionRepository` no construtor
+  - [ ] Implementar método `listRunsBySession(sessionId: string): Promise<AgentRun[]>`
+  - [ ] Implementar método `getSessionAccounting(sessionId: string): Promise<SessionAccountingSummary | null>`
+- [ ] Atualizar `AgentRunController` (`src/controllers/AgentRunController.ts`):
+  - [ ] Suportar query param opcional `sessionId` no método `list()`
+  - [ ] Implementar método `getSessionAccounting(req, res)`
+- [ ] Atualizar rotas em `agentRunRouter` (`src/api/agentRunRouter.ts`):
+  - [ ] Adicionar rota `GET /api/runs/session/:sessionId` protegida com `authMiddleware`, `tenantRateLimiter`, `requireRole(ADMIN)` e `auditLogger`
+- [ ] Atualizar injeção de dependência em `src/config/container.ts`:
+  - [ ] Passar `sessionRepository` ao instanciar `runAnalyticsService`
 - [ ] Atualizar métricas do Prometheus (`src/infrastructure/metrics/AgentMetrics.ts`):
   - [ ] Criar `agentSessionTokensTotal`: Counter (labels: `workspaceId`, `status`, `tokenType`)
   - [ ] Criar `agentSessionCostUsdTotal`: Counter (labels: `workspaceId`, `status`)
 - [ ] Atualizar encerramento de sessão em `ProcessAgentResponseUseCase` e `SessionTimeoutSweeper`:
-  - [ ] Ao encerrar sessão (por usuário ou por timeout), registrar os tokens e custo nas métricas Prometheus
-  - [ ] Injetar os contadores de tokens da sessão no `SessionSummary` gerado
+  - [ ] Registrar tokens acumulados e custo estimado nas métricas Prometheus ao fechar a sessão (por operador ou por timeout)
+  - [ ] Manter o `SessionSummary` limpo no chat, sem adicionar blocos de custo/tokens
 
 ### Testes
-- [ ] Atualizar `src/domain/workflows/SessionSummary.test.ts` validando formatação de tokens e custo no markdown
-- [ ] Atualizar `src/services/SessionTimeoutSweeper.test.ts` validando emissão de métricas e preservação de tokens no encerramento por timeout
-- [ ] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts` validando emissão de métricas no fechamento pelo usuário
+- [ ] Atualizar `src/services/RunAnalyticsService.test.ts` cobrindo `listRunsBySession` e `getSessionAccounting`
+- [ ] Atualizar `src/controllers/AgentRunController.test.ts` cobrindo o filtro `sessionId` e `getSessionAccounting`
+- [ ] Atualizar `src/api/agentRunRouter.test.ts` testando o endpoint `GET /api/runs/session/:sessionId`
+- [ ] Atualizar `src/services/SessionTimeoutSweeper.test.ts` validando emissão de métricas de tokens no encerramento por timeout
+- [ ] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts` validando emissão de métricas de tokens no encerramento pelo usuário
 
 ### Verificação
 - [ ] `npm test` passa sem regressões
@@ -165,13 +175,15 @@
 - [ ] Atualizar `src/harness/HybridSessionLifecycle.integration.test.ts`:
   - [ ] Simular múltiplos turnos na sessão com consumo cumulativo de tokens
   - [ ] Verificar que cada `AgentRun` no repositório aponta para o `sessionId` correspondente
-  - [ ] Validar que ao fechar a sessão, o `SessionSummary` final contém os totais consolidados de tokens e custo
+  - [ ] Validar que a consulta de contabilidade por sessão retorna os totais acumulados com precisão
 - [ ] Executar suíte completa de testes e validação estática:
   - [ ] `npm test`
   - [ ] `npm run test:integration`
   - [ ] `npm run build`
+- [ ] Atualizar documentação de APIs em `docs/API_FRONTEND.md`:
+  - [ ] Documentar o query param `sessionId` em `GET /api/runs`
+  - [ ] Documentar o novo endpoint `GET /api/runs/session/:sessionId`
 - [ ] Criar documento de consolidação da fase: `docs/phase8-summary.md`
-- [ ] Atualizar documentação de arquitetura e APIs (`docs/API_FRONTEND.md` se aplicável)
 
 ---
 

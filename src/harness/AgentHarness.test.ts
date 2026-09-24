@@ -68,6 +68,7 @@ describe('AgentHarness', () => {
             save: vi.fn().mockResolvedValue(undefined),
             findByRunId: vi.fn().mockResolvedValue(null),
             findByTenant: vi.fn().mockResolvedValue([]),
+            findBySessionId: vi.fn().mockResolvedValue([]),
             aggregateCostByTenant: vi.fn().mockResolvedValue([]),
             aggregateToolAnalytics: vi.fn().mockResolvedValue([]),
             aggregateLLMAnalytics: vi.fn().mockResolvedValue([]),
@@ -100,6 +101,8 @@ describe('AgentHarness', () => {
         expect(result.response).toBe('Olá! Sou seu agente de suporte.');
         expect(result.iterations).toBe(0);
         expect(result.toolCalls).toHaveLength(0);
+        expect(result.tokens).toBeDefined();
+        expect(result.tokens?.totalTokens).toBeGreaterThanOrEqual(0);
     });
 
     it('deve salvar resposta no shortTermMemory se fornecido', async () => {
@@ -511,5 +514,53 @@ describe('AgentHarness', () => {
         expect(mocks.agentRunRepository.save).toHaveBeenCalledTimes(1);
         const savedRun = vi.mocked(mocks.agentRunRepository.save).mock.calls[0][0];
         expect(savedRun.playbookIds).toEqual(['api-error', 'latency']);
+    });
+
+    it('deve vincular sessionId ao AgentRun e retornar tokens acumulados no AgentRunResult', async () => {
+        const mocks = makeMocks();
+        vi.mocked(mocks.llmProvider.generateResponse).mockResolvedValueOnce({
+            type: 'text',
+            content: 'Análise concluída com sucesso.',
+            usage: {
+                inputTokens: 150,
+                outputTokens: 50,
+                totalTokens: 200,
+            }
+        });
+
+        const harness = new AgentHarness(
+            contextAssembler,
+            mocks.shortTermMemory,
+            undefined,
+            mocks.memoryRepository,
+            mocks.queueService,
+            mocks.embeddingProvider,
+            mocks.agentRunRepository
+        );
+        const context = new ChatContext('thread-sess-1', 'ws-1');
+
+        const result = await harness.run({
+            tenantId: 'tenant-1',
+            workspaceId: 'ws-1',
+            threadId: 'thread-sess-1',
+            sessionId: 'sess-abc-999',
+            userMessage: 'Investigar latency',
+            context,
+            llmProvider: mocks.llmProvider,
+            mcpClient: mocks.mcpClient,
+        });
+
+        expect(result.status).toBe('completed');
+        expect(result.tokens).toEqual({
+            inputTokens: 150,
+            outputTokens: 50,
+            totalTokens: 200,
+            costUsd: expect.any(Number),
+        });
+
+        expect(mocks.agentRunRepository.save).toHaveBeenCalledTimes(1);
+        const savedRun = vi.mocked(mocks.agentRunRepository.save).mock.calls[0][0];
+        expect(savedRun.sessionId).toBe('sess-abc-999');
+        expect(savedRun.totalTokens).toBe(200);
     });
 });

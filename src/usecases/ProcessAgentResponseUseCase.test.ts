@@ -736,6 +736,64 @@ Timeout no gateway de pagamentos externo.
             expect(mockSessionRepo.save).toHaveBeenCalledWith(existingSession);
             expect(customHarness.run).toHaveBeenCalled();
         });
+
+        it('deve repassar sessionId ao harness e acumular tokens retornados na sessão ativa', async () => {
+            const activeSession = {
+                id: 'sess-tokens-active',
+                workspaceId: 'workspace-abc',
+                threadId: 'thread-sess-10',
+                status: 'ACTIVE',
+                recordTokenUsage: vi.fn(),
+                touch: vi.fn(),
+            };
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(activeSession);
+
+            const customHarness = {
+                run: vi.fn().mockResolvedValue({
+                    runId: 'run-tok-1',
+                    response: 'Análise de métricas realizada.',
+                    iterations: 1,
+                    toolCalls: [],
+                    status: 'completed',
+                    durationMs: 40,
+                    tokens: {
+                        inputTokens: 250,
+                        outputTokens: 75,
+                        totalTokens: 325,
+                        costUsd: 0.00325,
+                    },
+                }),
+            };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-10', 'Verificar latência alta', chatProvider);
+
+            expect(customHarness.run).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    sessionId: 'sess-tokens-active',
+                    threadId: 'thread-sess-10',
+                    workspaceId: 'workspace-abc',
+                })
+            );
+
+            expect(activeSession.recordTokenUsage).toHaveBeenCalledWith({
+                promptTokens: 250,
+                completionTokens: 75,
+                totalTokens: 325,
+                costUsd: 0.00325,
+            });
+
+            expect(mockSessionRepo.save).toHaveBeenCalledWith(activeSession);
+        });
     });
 });
 

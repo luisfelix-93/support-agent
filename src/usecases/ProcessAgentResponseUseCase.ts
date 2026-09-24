@@ -266,6 +266,7 @@ export class ProcessAgentResponseUse {
                 tenantId: tenant.workspaceId,
                 workspaceId,
                 threadId,
+                sessionId: session?.id,
                 userMessage: userText,
                 context,
                 llmProvider,
@@ -274,6 +275,18 @@ export class ProcessAgentResponseUse {
                 systemInstructions: investigationPlan?.systemInstructions,
                 playbookIds: investigationPlan?.playbookIds,
             });
+
+            // Registra os tokens consumidos pelo turno na sessão ativa
+            if (session && harnessResult.tokens) {
+                session.recordTokenUsage({
+                    promptTokens: harnessResult.tokens.inputTokens,
+                    completionTokens: harnessResult.tokens.outputTokens,
+                    totalTokens: harnessResult.tokens.totalTokens,
+                    costUsd: harnessResult.tokens.costUsd,
+                });
+            } else if (session) {
+                session.touch();
+            }
 
             let responseText = harnessResult.response;
 
@@ -298,7 +311,6 @@ export class ProcessAgentResponseUse {
                         session.proposeClosure();
                     }
 
-                    session.touch();
                     await this.sessionRepository.save(session);
                 }
 
@@ -312,7 +324,6 @@ export class ProcessAgentResponseUse {
                     responseText = responseText ? `${responseText}${closurePrompt}` : `A análise técnica foi concluída.${closurePrompt}`;
                 }
             } else if (this.sessionRepository && session) {
-                session.touch();
                 await this.sessionRepository.save(session);
             }
 

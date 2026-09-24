@@ -17,6 +17,7 @@ export interface AgentRunInput {
     systemInstructions?: string;
     playbookIds?: string[];
     evidenceLedger?: EvidenceLedger;
+    sessionId?: string;
 }
 
 export interface AgentRunResult {
@@ -28,6 +29,12 @@ export interface AgentRunResult {
     durationMs: number;
     error?: string;
     playbookIds?: string[];
+    tokens?: {
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+        costUsd: number;
+    };
 }
 
 export interface IAgentHarness {
