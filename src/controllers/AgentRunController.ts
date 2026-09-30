@@ -36,13 +36,30 @@ export class AgentRunController {
 
     /**
      * GET /api/runs?tenantId=X&status=completed&from=...&to=...&limit=20&offset=0
-     * Lista execuções paginadas filtradas por tenant.
+     * ou GET /api/runs?sessionId=Y
+     * Lista execuções paginadas filtradas por tenant ou associadas a uma sessão.
      */
     async list(req: Request, res: Response): Promise<void> {
-        const { tenantId, status, from, to, limit, offset } = req.query;
+        const { tenantId, sessionId, status, from, to, limit, offset } = req.query;
+
+        if (sessionId && typeof sessionId === 'string' && sessionId.trim() !== '') {
+            try {
+                const runs = await this.runAnalyticsService.listRunsBySession(sessionId.trim());
+                res.status(200).json({
+                    success: true,
+                    data: runs,
+                    count: runs.length,
+                });
+                return;
+            } catch (error) {
+                log.error({ err: error, sessionId }, 'Erro ao listar execuções por sessionId.');
+                res.status(500).json({ error: 'Erro interno ao listar execuções por sessão.' });
+                return;
+            }
+        }
 
         if (!tenantId || typeof tenantId !== 'string' || tenantId.trim() === '') {
-            res.status(400).json({ error: 'O query parameter tenantId é obrigatório.' });
+            res.status(400).json({ error: 'O query parameter tenantId ou sessionId é obrigatório.' });
             return;
         }
 
@@ -73,6 +90,32 @@ export class AgentRunController {
                 return;
             }
             res.status(500).json({ error: 'Erro interno ao listar execuções.' });
+        }
+    }
+
+    /**
+     * GET /api/runs/session/:sessionId
+     * Retorna contabilidade consolidada de tokens e custos para a sessão informada.
+     */
+    async getSessionAccounting(req: Request, res: Response): Promise<void> {
+        const sessionId = Array.isArray(req.params.sessionId) ? req.params.sessionId[0] : req.params.sessionId;
+
+        if (!sessionId || sessionId.trim() === '') {
+            res.status(400).json({ error: 'O parâmetro sessionId é obrigatório.' });
+            return;
+        }
+
+        try {
+            const summary = await this.runAnalyticsService.getSessionAccounting(sessionId.trim());
+            if (!summary) {
+                res.status(404).json({ error: 'Sessão de investigação não encontrada.' });
+                return;
+            }
+
+            res.status(200).json({ success: true, data: summary });
+        } catch (error) {
+            log.error({ err: error, sessionId }, 'Erro ao buscar contabilidade da sessão.');
+            res.status(500).json({ error: 'Erro interno ao buscar contabilidade da sessão.' });
         }
     }
 

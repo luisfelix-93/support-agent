@@ -75,3 +75,48 @@ export const agentSessionDurationSeconds = new client.Histogram({
     registers: [metricsRegister],
 });
 
+export const agentSessionTokensTotal = new client.Counter({
+    name: 'agent_session_tokens_total',
+    help: 'Total de tokens consumidos em sessões de investigação por workspace, status e tipo de token.',
+    labelNames: ['workspaceId', 'status', 'tokenType'],
+    registers: [metricsRegister],
+});
+
+export const agentSessionCostUsdTotal = new client.Counter({
+    name: 'agent_session_cost_usd_total',
+    help: 'Custo total estimado em USD de sessões de investigação por workspace e status.',
+    labelNames: ['workspaceId', 'status'],
+    registers: [metricsRegister],
+});
+
+export interface SessionMetricsInput {
+    workspaceId: string;
+    status: string;
+    closedAt?: Date | null;
+    startedAt: Date;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+}
+
+export function recordSessionClosureMetrics(session: SessionMetricsInput, reason: 'user' | 'timeout'): void {
+    agentSessionsClosedTotal.inc({ workspaceId: session.workspaceId, reason });
+    if (session.closedAt) {
+        const durationSec = Math.max(0, (session.closedAt.getTime() - session.startedAt.getTime()) / 1000);
+        agentSessionDurationSeconds.observe({ workspaceId: session.workspaceId, reason }, durationSec);
+    }
+    if (session.promptTokens > 0) {
+        agentSessionTokensTotal.inc({ workspaceId: session.workspaceId, status: session.status, tokenType: 'prompt' }, session.promptTokens);
+    }
+    if (session.completionTokens > 0) {
+        agentSessionTokensTotal.inc({ workspaceId: session.workspaceId, status: session.status, tokenType: 'completion' }, session.completionTokens);
+    }
+    if (session.totalTokens > 0) {
+        agentSessionTokensTotal.inc({ workspaceId: session.workspaceId, status: session.status, tokenType: 'total' }, session.totalTokens);
+    }
+    if (session.estimatedCostUsd > 0) {
+        agentSessionCostUsdTotal.inc({ workspaceId: session.workspaceId, status: session.status }, session.estimatedCostUsd);
+    }
+}
+

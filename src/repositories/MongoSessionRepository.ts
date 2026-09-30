@@ -30,6 +30,11 @@ export interface InvestigationSessionDocument {
     };
     sessionSummary: any | null;
     metadata: Record<string, unknown>;
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    estimatedCostUsd?: number;
+    turnCount?: number;
     updatedAt: Date;
 }
 
@@ -132,6 +137,11 @@ export class MongoSessionRepository implements ISessionRepository {
                   }
                 : null,
             metadata: session.metadata,
+            promptTokens: session.promptTokens,
+            completionTokens: session.completionTokens,
+            totalTokens: session.totalTokens,
+            estimatedCostUsd: session.estimatedCostUsd,
+            turnCount: session.turnCount,
             updatedAt: new Date(),
         };
     }
@@ -183,6 +193,11 @@ export class MongoSessionRepository implements ISessionRepository {
             evidenceLedger: ledger,
             sessionSummary: summary,
             metadata: doc.metadata,
+            promptTokens: doc.promptTokens ?? 0,
+            completionTokens: doc.completionTokens ?? 0,
+            totalTokens: doc.totalTokens ?? 0,
+            estimatedCostUsd: doc.estimatedCostUsd ?? 0,
+            turnCount: doc.turnCount ?? 0,
         });
 
         return session;

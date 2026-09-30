@@ -188,7 +188,7 @@ export const chatConfigController = new ChatConfigController(
 );
 export const aggregationService = new AggregationService(evaluationRepository);
 export const evaluationController = new EvaluationController(evaluationRepository, aggregationService);
-export const runAnalyticsService = new RunAnalyticsService(agentRunRepository);
+export const runAnalyticsService = new RunAnalyticsService(agentRunRepository, sessionRepository);
 export const agentRunController = new AgentRunController(runAnalyticsService);
 export const memoryController = new MemoryController(
     memoryRepository,

@@ -19,8 +19,7 @@ import { SessionStatus } from "../domain/SessionStatus.js";
 import { ClosureIntentDetector } from "../services/ClosureIntentDetector.js";
 import {
     agentSessionsTotal,
-    agentSessionsClosedTotal,
-    agentSessionDurationSeconds,
+    recordSessionClosureMetrics,
 } from "../infrastructure/metrics/AgentMetrics.js";
 import { logger } from "../config/logger.js";
 
@@ -104,11 +103,7 @@ export class ProcessAgentResponseUse {
                         session.confirmClosure(summary ?? undefined);
                         await this.sessionRepository.save(session);
 
-                        agentSessionsClosedTotal.inc({ workspaceId: session.workspaceId, reason: 'user' });
-                        if (session.closedAt) {
-                            const durationSec = Math.max(0, (session.closedAt.getTime() - session.startedAt.getTime()) / 1000);
-                            agentSessionDurationSeconds.observe({ workspaceId: session.workspaceId, reason: 'user' }, durationSec);
-                        }
+                        recordSessionClosureMetrics(session, 'user');
 
                         const summaryMarkdown = summary ? `\n\n${summary.toMarkdown()}` : '';
                         const closureMessage = `✅ **Sessão de investigação encerrada com sucesso.**${summaryMarkdown}`;
@@ -132,11 +127,7 @@ export class ProcessAgentResponseUse {
                         session.confirmClosure(summary ?? undefined);
                         await this.sessionRepository.save(session);
 
-                        agentSessionsClosedTotal.inc({ workspaceId: session.workspaceId, reason: 'user' });
-                        if (session.closedAt) {
-                            const durationSec = Math.max(0, (session.closedAt.getTime() - session.startedAt.getTime()) / 1000);
-                            agentSessionDurationSeconds.observe({ workspaceId: session.workspaceId, reason: 'user' }, durationSec);
-                        }
+                        recordSessionClosureMetrics(session, 'user');
 
                         const summaryMarkdown = summary ? `\n\n${summary.toMarkdown()}` : '';
                         const closureMessage = `✅ **Sessão de investigação encerrada com sucesso pelo operador.**${summaryMarkdown}`;
@@ -266,6 +257,7 @@ export class ProcessAgentResponseUse {
                 tenantId: tenant.workspaceId,
                 workspaceId,
                 threadId,
+                sessionId: session?.id,
                 userMessage: userText,
                 context,
                 llmProvider,
@@ -274,6 +266,18 @@ export class ProcessAgentResponseUse {
                 systemInstructions: investigationPlan?.systemInstructions,
                 playbookIds: investigationPlan?.playbookIds,
             });
+
+            // Registra os tokens consumidos pelo turno na sessão ativa
+            if (session && harnessResult.tokens) {
+                session.recordTokenUsage({
+                    promptTokens: harnessResult.tokens.inputTokens,
+                    completionTokens: harnessResult.tokens.outputTokens,
+                    totalTokens: harnessResult.tokens.totalTokens,
+                    costUsd: harnessResult.tokens.costUsd,
+                });
+            } else if (session) {
+                session.touch();
+            }
 
             let responseText = harnessResult.response;
 
@@ -298,7 +302,6 @@ export class ProcessAgentResponseUse {
                         session.proposeClosure();
                     }
 
-                    session.touch();
                     await this.sessionRepository.save(session);
                 }
 
@@ -312,7 +315,6 @@ export class ProcessAgentResponseUse {
                     responseText = responseText ? `${responseText}${closurePrompt}` : `A análise técnica foi concluída.${closurePrompt}`;
                 }
             } else if (this.sessionRepository && session) {
-                session.touch();
                 await this.sessionRepository.save(session);
             }
 

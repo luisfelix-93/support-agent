@@ -45,6 +45,18 @@ router.get('/runs/analytics/llm',
 );
 
 /**
+ * GET /api/runs/session/:sessionId
+ * Retorna contabilidade consolidada de tokens e custos de uma sessão de investigação.
+ */
+router.get('/runs/session/:sessionId',
+    authMiddleware,
+    tenantRateLimiter,
+    requireRole(Role.ADMIN),
+    auditLogger('runs-get-session-accounting'),
+    (req, res) => agentRunController.getSessionAccounting(req, res)
+);
+
+/**
  * GET /api/runs/:runId
  * Retorna os detalhes completos de uma execução específica.
  */

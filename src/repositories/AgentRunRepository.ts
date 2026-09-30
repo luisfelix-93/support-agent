@@ -19,6 +19,7 @@ export interface AgentRunDocument {
     tenantId: string;
     workspaceId: string;
     threadId: string;
+    sessionId?: string;
     status: AgentRunStatus;
     iterations: number;
     toolCalls: ToolCallRecord[];
@@ -46,6 +47,7 @@ export class AgentRunRepository implements IAgentRunRepository {
         await this.collection.createIndex({ runId: 1 }, { unique: true });
         await this.collection.createIndex({ tenantId: 1, startedAt: -1 });
         await this.collection.createIndex({ tenantId: 1, status: 1, startedAt: -1 });
+        await this.collection.createIndex({ workspaceId: 1, sessionId: 1 });
     }
 
     async save(run: AgentRun): Promise<void> {
@@ -85,6 +87,17 @@ export class AgentRunRepository implements IAgentRunRepository {
             .sort({ startedAt: -1 })
             .skip(skip)
             .limit(limit)
+            .toArray();
+        return docs.map(doc => this.toDomain(doc));
+    }
+
+    async findBySessionId(sessionId: string): Promise<AgentRun[]> {
+        if (!sessionId || sessionId.trim() === '') {
+            return [];
+        }
+        const docs = await this.collection
+            .find({ sessionId: sessionId.trim() })
+            .sort({ startedAt: 1 })
             .toArray();
         return docs.map(doc => this.toDomain(doc));
     }
@@ -252,6 +265,7 @@ export class AgentRunRepository implements IAgentRunRepository {
             tenantId: run.tenantId,
             workspaceId: run.workspaceId,
             threadId: run.threadId,
+            sessionId: run.sessionId,
             status: run.status,
             iterations: run.iterations,
             toolCalls: run.toolCalls,
@@ -294,6 +308,7 @@ export class AgentRunRepository implements IAgentRunRepository {
         run.agentVersion = doc.agentVersion ?? '1.0.0';
         run.finalResponse = doc.finalResponse;
         run.userMessage = doc.userMessage;
+        run.sessionId = doc.sessionId;
         return run;
     }
 }

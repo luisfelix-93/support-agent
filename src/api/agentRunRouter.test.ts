@@ -6,6 +6,7 @@ import { Role } from '../domain/Role.js';
 vi.mock('../config/container.js', () => ({
     agentRunController: {
         getById: vi.fn((req, res) => res.status(200).json({ runId: req.params.runId })),
+        getSessionAccounting: vi.fn((req, res) => res.status(200).json({ sessionId: req.params.sessionId, success: true })),
         list: vi.fn((req, res) => res.status(200).json({ tenantId: req.query.tenantId, items: [] })),
         getCostAnalytics: vi.fn((req, res) => res.status(200).json({ success: true, type: 'cost' })),
         getToolAnalytics: vi.fn((req, res) => res.status(200).json({ success: true, type: 'tools' })),
@@ -130,6 +131,17 @@ describe('agentRunRouter (Integration with authMiddleware & requireRole)', () =>
 
             expect(res.status).toBe(200);
             expect(agentRunController.getLLMAnalytics).toHaveBeenCalled();
+        });
+
+        it('GET /api/runs/session/:sessionId deve chamar getSessionAccounting com o parâmetro correto', async () => {
+            const res = await fetch(`${baseUrl}/runs/session/sess-xyz-123`, {
+                headers: { Authorization: 'Bearer valid-admin-token' },
+            });
+
+            expect(res.status).toBe(200);
+            expect(agentRunController.getSessionAccounting).toHaveBeenCalled();
+            const body = await res.json();
+            expect(body.sessionId).toBe('sess-xyz-123');
         });
 
         it('GET /api/runs/:runId deve chamar getById com o parâmetro correto', async () => {

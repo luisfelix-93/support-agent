@@ -10,6 +10,10 @@ import { ChatContext } from '../domain/ChatContext.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
 import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
+import {
+    agentSessionTokensTotal,
+    agentSessionCostUsdTotal,
+} from '../infrastructure/metrics/AgentMetrics.js';
 
 // Mock do LLMFactory para não instanciar adaptadores reais
 vi.mock('../infrastructure/llm/LLMFactory.js', () => ({
@@ -735,6 +739,120 @@ Timeout no gateway de pagamentos externo.
             expect(existingSession.touch).toHaveBeenCalled();
             expect(mockSessionRepo.save).toHaveBeenCalledWith(existingSession);
             expect(customHarness.run).toHaveBeenCalled();
+        });
+
+        it('deve repassar sessionId ao harness e acumular tokens retornados na sessão ativa', async () => {
+            const activeSession = {
+                id: 'sess-tokens-active',
+                workspaceId: 'workspace-abc',
+                threadId: 'thread-sess-10',
+                status: 'ACTIVE',
+                recordTokenUsage: vi.fn(),
+                touch: vi.fn(),
+            };
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(activeSession);
+
+            const customHarness = {
+                run: vi.fn().mockResolvedValue({
+                    runId: 'run-tok-1',
+                    response: 'Análise de métricas realizada.',
+                    iterations: 1,
+                    toolCalls: [],
+                    status: 'completed',
+                    durationMs: 40,
+                    tokens: {
+                        inputTokens: 250,
+                        outputTokens: 75,
+                        totalTokens: 325,
+                        costUsd: 0.00325,
+                    },
+                }),
+            };
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                customHarness as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-10', 'Verificar latência alta', chatProvider);
+
+            expect(customHarness.run).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    sessionId: 'sess-tokens-active',
+                    threadId: 'thread-sess-10',
+                    workspaceId: 'workspace-abc',
+                })
+            );
+
+            expect(activeSession.recordTokenUsage).toHaveBeenCalledWith({
+                promptTokens: 250,
+                completionTokens: 75,
+                totalTokens: 325,
+                costUsd: 0.00325,
+            });
+
+            expect(mockSessionRepo.save).toHaveBeenCalledWith(activeSession);
+        });
+
+        it('deve emitir métricas Prometheus de tokens e custos ao encerrar sessão pelo usuário', async () => {
+            const tokensSpy = vi.spyOn(agentSessionTokensTotal, 'inc');
+            const costSpy = vi.spyOn(agentSessionCostUsdTotal, 'inc');
+
+            const closingSession = {
+                id: 'sess-close-metrics',
+                threadId: 'thread-sess-metrics',
+                workspaceId: 'workspace-abc',
+                status: 'AWAITING_CLOSURE_CONFIRMATION',
+                startedAt: new Date(Date.now() - 300_000),
+                closedAt: new Date(),
+                promptTokens: 1200,
+                completionTokens: 400,
+                totalTokens: 1600,
+                estimatedCostUsd: 0.02,
+                sessionSummary: {
+                    toMarkdown: () => '### Resumo Operacional',
+                },
+                confirmClosure: vi.fn(),
+            };
+            closingSession.confirmClosure.mockImplementation(() => {
+                closingSession.status = 'closed';
+            });
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(closingSession);
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                { run: vi.fn() } as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-metrics', 'Sim, encerrar', chatProvider);
+
+            expect(closingSession.confirmClosure).toHaveBeenCalled();
+            expect(tokensSpy).toHaveBeenCalledWith(
+                { workspaceId: 'workspace-abc', status: 'closed', tokenType: 'prompt' },
+                1200
+            );
+            expect(tokensSpy).toHaveBeenCalledWith(
+                { workspaceId: 'workspace-abc', status: 'closed', tokenType: 'completion' },
+                400
+            );
+            expect(tokensSpy).toHaveBeenCalledWith(
+                { workspaceId: 'workspace-abc', status: 'closed', tokenType: 'total' },
+                1600
+            );
+            expect(costSpy).toHaveBeenCalledWith(
+                { workspaceId: 'workspace-abc', status: 'closed' },
+                0.02
+            );
         });
     });
 });

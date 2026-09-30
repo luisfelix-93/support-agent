@@ -42,6 +42,11 @@ describe('InvestigationSession', () => {
             expect(session.sessionSummary).toBeNull();
             expect(session.evidenceLedger).toBeInstanceOf(EvidenceLedger);
             expect(session.metadata).toEqual({});
+            expect(session.promptTokens).toBe(0);
+            expect(session.completionTokens).toBe(0);
+            expect(session.totalTokens).toBe(0);
+            expect(session.estimatedCostUsd).toBe(0);
+            expect(session.turnCount).toBe(0);
         });
 
         it('deve permitir configurar idleTimeoutMs e warningTimeoutMs customizados', () => {
@@ -291,6 +296,100 @@ describe('InvestigationSession', () => {
 
             expect(() => session.setSessionSummary(createMockSummary()))
                 .toThrow('Não é possível modificar o resumo de uma sessão já encerrada.');
+        });
+    });
+
+    describe('Contabilidade e Gestão de Tokens (recordTokenUsage)', () => {
+        it('deve acumular tokens e custo através de múltiplos turnos sequenciais', () => {
+            const session = new InvestigationSession(defaultProps);
+            const t1 = new Date('2026-09-22T10:00:00.000Z');
+            const t2 = new Date('2026-09-22T10:05:00.000Z');
+
+            session.recordTokenUsage({
+                promptTokens: 100,
+                completionTokens: 50,
+                totalTokens: 150,
+                costUsd: 0.0015,
+            }, t1);
+
+            expect(session.promptTokens).toBe(100);
+            expect(session.completionTokens).toBe(50);
+            expect(session.totalTokens).toBe(150);
+            expect(session.estimatedCostUsd).toBe(0.0015);
+            expect(session.turnCount).toBe(1);
+            expect(session.lastInteractionAt).toEqual(t1);
+
+            session.recordTokenUsage({
+                promptTokens: 200,
+                completionTokens: 80,
+                totalTokens: 280,
+                costUsd: 0.0028,
+            }, t2);
+
+            expect(session.promptTokens).toBe(300);
+            expect(session.completionTokens).toBe(130);
+            expect(session.totalTokens).toBe(430);
+            expect(session.estimatedCostUsd).toBe(0.0043);
+            expect(session.turnCount).toBe(2);
+            expect(session.lastInteractionAt).toEqual(t2);
+        });
+
+        it('deve ignorar valores negativos e arredondar custo defensivamente', () => {
+            const session = new InvestigationSession(defaultProps);
+
+            session.recordTokenUsage({
+                promptTokens: -10,
+                completionTokens: 50,
+                totalTokens: 50,
+                costUsd: -0.05,
+            });
+
+            expect(session.promptTokens).toBe(0);
+            expect(session.completionTokens).toBe(50);
+            expect(session.totalTokens).toBe(50);
+            expect(session.estimatedCostUsd).toBe(0);
+            expect(session.turnCount).toBe(1);
+        });
+
+        it('deve lançar erro ao tentar registrar tokens em sessão encerrada pelo usuário', () => {
+            const session = new InvestigationSession(defaultProps);
+            session.confirmClosure();
+
+            expect(() => session.recordTokenUsage({
+                promptTokens: 100,
+                completionTokens: 50,
+                totalTokens: 150,
+                costUsd: 0.001,
+            })).toThrow('Não é possível registrar tokens em uma sessão encerrada.');
+        });
+
+        it('deve lançar erro ao tentar registrar tokens em sessão encerrada por timeout', () => {
+            const session = new InvestigationSession(defaultProps);
+            session.expireByTimeout();
+
+            expect(() => session.recordTokenUsage({
+                promptTokens: 100,
+                completionTokens: 50,
+                totalTokens: 150,
+                costUsd: 0.001,
+            })).toThrow('Não é possível registrar tokens em uma sessão encerrada.');
+        });
+
+        it('deve permitir instanciar sessão com contadores já populados', () => {
+            const session = new InvestigationSession({
+                ...defaultProps,
+                promptTokens: 500,
+                completionTokens: 250,
+                totalTokens: 750,
+                estimatedCostUsd: 0.0125,
+                turnCount: 3,
+            });
+
+            expect(session.promptTokens).toBe(500);
+            expect(session.completionTokens).toBe(250);
+            expect(session.totalTokens).toBe(750);
+            expect(session.estimatedCostUsd).toBe(0.0125);
+            expect(session.turnCount).toBe(3);
         });
     });
 });

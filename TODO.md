@@ -1,189 +1,200 @@
-# TODO — Fase 7: Ciclo de Vida Híbrido de Sessão de Investigação (Session Lifecycle)
+# TODO — Fase 8: Contabilidade e Gestão de Tokens por Sessão (Session Token Accounting)
 
-> Checklist operacional de implementação organizado por sprints/sub-fases para acompanhamento contínuo da Fase 7.  
+> Checklist operacional de implementação organizado por sprints/sub-fases para acompanhamento contínuo da Fase 8 (Opção C).  
 > Marque `[x]` conforme cada item for concluído.  
-> Plano de referência: [session-lifecycle.md](session-lifecycle.md) | Roadmap: [roadmap.md](docs/roadmap.md)  
-> Fase anterior: [Fase 6 Concluída](docs/phase6-summary.md)  
+> Plano de referência: [session-token-accounting.md](session-token-accounting.md) | Roadmap: [roadmap.md](docs/roadmap.md)  
+> Fase anterior: [Fase 7 Concluída](docs/phase7-summary.md)  
 
 ---
 
-## Sub-Fase 7A (Sprint 7.1): Core Domain & Entidade `InvestigationSession`
+## Sub-Fase 8A (Sprint 8.1): Associação de Sessão em `AgentRun` & Persistência
 
-**Branch:** `feature/session-lifecycle`  
-**Responsável:** `backend-specialist`  
+**Branch:** `feature/session-token-accounting`  
+**Responsável:** `backend-specialist` / `database-architect`  
 **Status:** ✅ Concluída  
 
 ### Implementação
-- [x] Criar branch dedicada `feature/session-lifecycle`
-- [x] Definir enum de status em `src/domain/SessionStatus.ts`:
-  - [x] `ACTIVE`, `AWAITING_CLOSURE_CONFIRMATION`, `CLOSED_BY_USER`, `CLOSED_BY_TIMEOUT`
-- [x] Criar entidade de domínio `InvestigationSession` em `src/domain/InvestigationSession.ts`:
-  - [x] Campos: `id`, `workspaceId`, `threadId`, `channelId`, `status`, `startedAt`, `lastInteractionAt`, `closedAt`, `idleTimeoutMs`, `evidenceLedger`, `sessionSummary`, `metadata`
-  - [x] Método `touch()`: atualiza `lastInteractionAt` e valida que a sessão está ativa
-  - [x] Método `proposeClosure()`: transita `ACTIVE` -> `AWAITING_CLOSURE_CONFIRMATION`
-  - [x] Método `confirmClosure(summary?: SessionSummary)`: transita para `CLOSED_BY_USER` e define `closedAt`
-  - [x] Método `cancelClosureProposal()`: reverte de `AWAITING_CLOSURE_CONFIRMATION` de volta para `ACTIVE`
-  - [x] Método `expireByTimeout(summary?: SessionSummary)`: transita para `CLOSED_BY_TIMEOUT` e define `closedAt`
-  - [x] Método `isExpired(referenceDate?: Date)`: cálculo defensivo de `(referenceDate - lastInteractionAt) >= idleTimeoutMs`
+- [x] Criar branch dedicada `feature/session-token-accounting` a partir de `dev`
+- [x] Atualizar entidade `AgentRun` (`src/domain/AgentRun.ts`):
+  - [x] Adicionar propriedade opcional `public sessionId?: string;`
+  - [x] Atualizar construtor / factory para aceitar `sessionId?: string`
+- [x] Atualizar repositório MongoDB `AgentRunRepository` (`src/repositories/AgentRunRepository.ts`):
+  - [x] Atualizar interface `AgentRunDocument` com campo `sessionId?: string`
+  - [x] Persistir `sessionId` no método `save()`
+  - [x] Mapear `sessionId` no método `toDomain()`
+  - [x] Adicionar índice composto `{ workspaceId: 1, sessionId: 1 }`
+  - [x] Criar método `findBySessionId(sessionId: string): Promise<AgentRun[]>` na interface `IAgentRunRepository` e na implementação
 
 ### Testes
-- [x] Criar `src/domain/InvestigationSession.test.ts`:
-  - [x] Testar instanciação com valores padrão (timeout padrão de 1 hora = 3.600.000 ms)
-  - [x] Testar ciclo completo de transições de estado válidas
-  - [x] Testar bloqueio de transições inválidas (ex: tentar reativar sessão fechada)
-  - [x] Testar verificação de expiração por inatividade com datas mockadas
-  - [x] Testar atualização de timestamps ao executar `touch()`
+- [x] Atualizar `src/domain/AgentRun.test.ts` com testes unitários para `sessionId`
+- [x] Atualizar `src/repositories/AgentRunRepository.test.ts` testando persistência e busca com `findBySessionId`
 
 ### Verificação
-- [x] `npm test` passa sem regressões (86/86 arquivos, 556/556 testes aprovados)
+- [x] `npm test` passa sem regressões (91/91 arquivos, 664/664 testes aprovados)
 - [x] `npm run build` compila com 0 erros TypeScript strict
 
-
 ---
 
-## Sub-Fase 7B (Sprint 7.2): Persistência MongoDB & `ISessionRepository`
+## Sub-Fase 8B (Sprint 8.2): Ledger de Tokens & Contabilidade em `InvestigationSession`
 
-**Branch:** `feature/session-lifecycle`  
-**Responsável:** `database-architect` / `backend-specialist`  
-**Depende de:** ✅ Sub-Fase 7A concluída  
-**Status:** ✅ Concluída  
-
-### Implementação
-- [x] Criar contrato em `src/domain/ports/ISessionRepository.ts`:
-  - [x] `save(session: InvestigationSession): Promise<void>`
-  - [x] `findById(id: string): Promise<InvestigationSession | null>`
-  - [x] `findActiveByThreadId(threadId: string, workspaceId: string): Promise<InvestigationSession | null>`
-  - [x] `findInactiveSessions(cutoffDate: Date, limit?: number): Promise<InvestigationSession[]>`
-- [x] Implementar repositório `MongoSessionRepository` em `src/repositories/MongoSessionRepository.ts`:
-  - [x] Collection `investigation_sessions`
-  - [x] Mapeamento bidirecional entre documentos MongoDB e a entidade `InvestigationSession`
-  - [x] Serialização e deserialização do `EvidenceLedger` e `SessionSummary`
-  - [x] Criação de índices: `{ id: 1 }` (único), `{ workspaceId: 1, threadId: 1, status: 1 }` e `{ status: 1, lastInteractionAt: 1 }`
-
-### Testes
-- [x] Criar `src/repositories/MongoSessionRepository.test.ts` (8 testes unitários):
-  - [x] Testar criação e atualização de sessão com upsert
-  - [x] Testar busca de sessão ativa por `threadId` e isolamento multi-workspace
-  - [x] Testar consulta `findInactiveSessions` filtrando sessões ativas com `lastInteractionAt <= cutoffDate`
-  - [x] Testar hidratação correta de `EvidenceLedger` e `SessionSummary`
-
-### Verificação
-- [x] `npm test` passa sem falhas (87/87 arquivos, 564/564 testes aprovados)
-- [x] `npm run build` compila limpo (TypeScript strict 0 erros)
-
-
----
-
-## Sub-Fase 7C (Sprint 7.3): Detecção Conversacional & Proposta Ativa de Encerramento
-
-**Branch:** `feature/session-lifecycle`  
+**Branch:** `feature/session-token-accounting`  
 **Responsável:** `backend-specialist`  
-**Depende de:** ✅ Sub-Fase 7B concluída  
+**Depende de:** Sub-Fase 8A  
 **Status:** ✅ Concluída  
 
 ### Implementação
-- [x] Criar serviço `src/services/ClosureIntentDetector.ts`:
-  - [x] Detecção de respostas afirmativas ("sim", "pode encerrar", "fechar", "resolvido", "concluído")
-  - [x] Detecção de respostas de continuação ("não", "quero ver mais", "ainda não", perguntas adicionais)
-  - [x] Reconhecimento de comando explícito (`/encerrar`, `/close`, `/finalizar`)
-- [x] Integrar fluxo no `ProcessAgentResponseUseCase.ts`:
-  - [x] Proposta de encerramento ao entregar hipótese de causa raiz/ações recomendadas com `SessionSummary`
-  - [x] Tratamento quando a sessão está em `AWAITING_CLOSURE_CONFIRMATION`
-  - [x] Emissão do `SessionSummary` formatado ao confirmar o fechamento sem re-execução desnecessária de LLM
-  - [x] Associação da `InvestigationSession` durante a execução da mensagem
-  - [x] Registro do `MongoSessionRepository` em `src/config/container.ts`
+- [x] Atualizar entidade `InvestigationSession` (`src/domain/InvestigationSession.ts`):
+  - [x] Adicionar propriedades de contadores à interface `InvestigationSessionProps`:
+    - `promptTokens?: number;`
+    - `completionTokens?: number;`
+    - `totalTokens?: number;`
+    - `estimatedCostUsd?: number;`
+    - `turnCount?: number;`
+  - [x] Inicializar contadores na classe (padrão 0):
+    - `public promptTokens: number;`
+    - `public completionTokens: number;`
+    - `public totalTokens: number;`
+    - `public estimatedCostUsd: number;`
+    - `public turnCount: number;`
+  - [x] Adicionar método `recordTokenUsage(usage: { promptTokens: number; completionTokens: number; totalTokens: number; costUsd: number }): void`
+    - Valida que a sessão não está fechada
+    - Incrementa os contadores de tokens e custo acumulado
+    - Incrementa `turnCount`
+    - Atualiza `lastInteractionAt`
+- [x] Atualizar `MongoSessionRepository` (`src/repositories/MongoSessionRepository.ts`):
+  - [x] Atualizar `InvestigationSessionDocument` com os novos campos de contadores
+  - [x] Mapear campos em `toDocument()` e `toDomain()`
 
 ### Testes
-- [x] Criar `src/services/ClosureIntentDetector.test.ts` (47 testes unitários):
-  - [x] Testar detecção de confirmações explícitas e comandos
-  - [x] Testar detecção de continuação da investigação
-  - [x] Testar neutralidade diante de mensagens genéricas
-- [x] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts` (15 testes):
-  - [x] Testar transição de sessão com confirmação pelo usuário
-  - [x] Testar continuidade da investigação quando o usuário rejeita o encerramento
-  - [x] Testar criação e persistência de nova sessão no primeiro contato
-  - [x] Testar encerramento imediato via comando `/encerrar`
+- [x] Atualizar `src/domain/InvestigationSession.test.ts`:
+  - Testar chamada `recordTokenUsage` acumulando turnos sequenciais
+  - Testar bloqueio de registro de tokens em sessões fechadas
+  - Testar valores padrão zerados
+- [x] Atualizar `src/repositories/MongoSessionRepository.test.ts` validando salvamento e recuperação dos contadores
 
 ### Verificação
-- [x] `npm test` passa com 100% de sucesso (88/88 arquivos, 616/616 testes aprovados)
-- [x] `npm run build` compila sem erros (TypeScript strict 0 erros)
-
+- [x] `npm test` passa sem regressões (91/91 arquivos, 670/670 testes aprovados)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 
-## Sub-Fase 7D (Sprint 7.4): Sweeper de Inatividade & Background Job
+## Sub-Fase 8C (Sprint 8.3): Propagação de Tokens no `AgentHarness` & `ProcessAgentResponseUseCase`
 
-**Branch:** `feature/session-lifecycle`  
+**Branch:** `feature/session-token-accounting`  
 **Responsável:** `backend-specialist`  
-**Depende de:** ✅ Sub-Fase 7C concluída  
+**Depende de:** Sub-Fase 8B  
 **Status:** ✅ Concluída  
 
 ### Implementação
-- [x] Criar serviço `src/services/SessionTimeoutSweeper.ts`:
-  - [x] Método `sweepExpiredSessions(referenceDate?: Date, limit?: number): Promise<SweepResult>`
-  - [x] Transição para `CLOSED_BY_TIMEOUT` com timestamp exato
-  - [x] Compilação automática de `SessionSummary` a partir do `EvidenceLedger` da sessão
-  - [x] Persistência da sessão encerrada no repositório
-  - [x] Notificação resiliente na thread via `ChatProviderFactory` e persistência no `ChatRepository`
-- [x] Criar worker `src/infrastructure/queue/SessionTimeoutWorker.ts`:
-  - [x] Agendamento periódico seguro com `setInterval` e `.unref()`
-  - [x] Método `triggerNow()` para execução manual sob demanda
-  - [x] Tratamento de erros e controle de concorrência (`isBusy`)
-  - [x] Registro do `sessionTimeoutSweeper` e `sessionTimeoutWorker` em `src/config/container.ts`
+- [x] Atualizar portas e contratos do Harness (`src/domain/ports/IAgentHarness.ts`):
+  - [x] Em `AgentRunInput`, adicionar `sessionId?: string`
+  - [x] Em `AgentRunResult`, adicionar objeto estruturado de tokens:
+    ```typescript
+    tokens?: {
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+        costUsd: number;
+    };
+    ```
+- [x] Atualizar `AgentHarness` (`src/harness/AgentHarness.ts`):
+  - [x] Passar `input.sessionId` para a instância `AgentRun`
+  - [x] Preencher `tokens` no retorno de sucesso e de erro com os valores acumulados em `run`
+- [x] Atualizar `ProcessAgentResponseUseCase` (`src/usecases/ProcessAgentResponseUseCase.ts`):
+  - [x] Passar `sessionId: session?.id` ao invocar `this.harness.run(...)`
+  - [x] Após o retorno do harness, se houver `session` ativa e `harnessResult.tokens`, registrar tokens:
+    ```typescript
+    session.recordTokenUsage({
+        promptTokens: harnessResult.tokens.inputTokens,
+        completionTokens: harnessResult.tokens.outputTokens,
+        totalTokens: harnessResult.tokens.totalTokens,
+        costUsd: harnessResult.tokens.costUsd,
+    });
+    ```
+  - [x] Garantir que a persistência `this.sessionRepository.save(session)` ocorra com os contadores atualizados
 
 ### Testes
-- [x] Criar `src/services/SessionTimeoutSweeper.test.ts` (6 testes unitários):
-  - [x] Testar identificação e encerramento em lote de sessões inativas
-  - [x] Testar envio de mensagem de encerramento com `SessionSummary`
-  - [x] Testar compilação automática a partir de evidências do `EvidenceLedger`
-  - [x] Testar respeito ao tempo de inatividade configurado (não fecha sessões recentes)
-  - [x] Testar tolerância resiliente caso o envio ao chat falhe
-- [x] Criar `src/infrastructure/queue/SessionTimeoutWorker.test.ts` (5 testes unitários)
+- [x] Atualizar `src/harness/AgentHarness.test.ts` testando retorno de `tokens` e atribuição de `sessionId`
+- [x] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts`:
+  - Testar que os tokens retornados pelo harness são acumulados na sessão ativa
+  - Testar que a sessão é salva com os tokens atualizados
 
 ### Verificação
-- [x] `npm test` passa sem erros (90/90 arquivos, 627/627 testes aprovados)
-- [x] `npm run build` compila limpo (TypeScript strict 0 erros)
-
+- [x] `npm test` passa sem regressões (91/91 arquivos, 672/672 testes aprovados)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 
-## Sub-Fase 7E (Sprint 7.5): Integração E2E, Métricas & Fechamento de Fase
+## Sub-Fase 8D (Sprint 8.4): Exposição de Tokens por Sessão na API & Métricas Prometheus
 
-**Branch:** `feature/session-lifecycle`  
-**Responsável:** `qa-automation-engineer` / `project-planner`  
-**Depende de:** ✅ Sub-Fase 7D concluída  
+**Branch:** `feature/session-token-accounting`  
+**Responsável:** `backend-specialist`  
+**Depende de:** Sub-Fase 8C  
 **Status:** ✅ Concluída  
 
 ### Implementação
-- [x] Criar teste de integração E2E em `src/harness/HybridSessionLifecycle.integration.test.ts`:
-  - [x] Cenário 1: Fechamento Conversacional Ativo (Início -> Investigação -> Proposta -> Confirmação -> SessionSummary -> Fechado)
-  - [x] Cenário 2: Fechamento por Inatividade (Início -> Investigação -> Abandono de 1h -> Sweeper -> SessionSummary -> Fechado)
-- [x] Adicionar métricas Prometheus em `src/infrastructure/metrics/AgentMetrics.ts`:
-  - [x] `agent_sessions_total` (contador)
-  - [x] `agent_sessions_closed_total` (labels: `reason="user|timeout"`)
-  - [x] `agent_session_duration_seconds` (histograma)
-- [x] Atualizar documentações:
-  - [x] Atualizar `features.md` com a Seção 11 detalhada e índice geral
-  - [x] Atualizar `docs/roadmap.md` adicionando a Fase 7 detalhada e tabela de priorização
-  - [x] Atualizar `architecture.md` com a máquina de estados do ciclo de vida da sessão
-  - [x] Criar `docs/phase7-summary.md`
+- [x] Atualizar `RunAnalyticsService` (`src/services/RunAnalyticsService.ts`):
+  - [x] Injetar `ISessionRepository` no construtor
+  - [x] Implementar método `listRunsBySession(sessionId: string): Promise<AgentRun[]>`
+  - [x] Implementar método `getSessionAccounting(sessionId: string): Promise<SessionAccountingSummary | null>`
+- [x] Atualizar `AgentRunController` (`src/controllers/AgentRunController.ts`):
+  - [x] Suportar query param opcional `sessionId` no método `list()`
+  - [x] Implementar método `getSessionAccounting(req, res)`
+- [x] Atualizar rotas em `agentRunRouter` (`src/api/agentRunRouter.ts`):
+  - [x] Adicionar rota `GET /api/runs/session/:sessionId` protegida com `authMiddleware`, `tenantRateLimiter`, `requireRole(ADMIN)` e `auditLogger`
+- [x] Atualizar injeção de dependência em `src/config/container.ts`:
+  - [x] Passar `sessionRepository` ao instanciar `runAnalyticsService`
+- [x] Atualizar métricas do Prometheus (`src/infrastructure/metrics/AgentMetrics.ts`):
+  - [x] Criar `agentSessionTokensTotal`: Counter (labels: `workspaceId`, `status`, `tokenType`)
+  - [x] Criar `agentSessionCostUsdTotal`: Counter (labels: `workspaceId`, `status`)
+  - [x] Criar helper `recordSessionClosureMetrics`
+- [x] Atualizar encerramento de sessão em `ProcessAgentResponseUseCase` e `SessionTimeoutSweeper`:
+  - [x] Registrar tokens acumulados e custo estimado nas métricas Prometheus ao fechar a sessão (por operador ou por timeout)
+  - [x] Manter o `SessionSummary` limpo no chat, sem adicionar blocos de custo/tokens
 
-### Verificação Final
-- [x] `npm test` — 100% dos testes aprovados (91/91 arquivos, 629/629 testes)
-- [x] `npm run test:integration` — 100% dos testes de integração passando (10/10 arquivos, 40/40 testes)
-- [x] `npm run build` — 0 erros de compilação TypeScript strict
+### Testes
+- [x] Atualizar `src/services/RunAnalyticsService.test.ts` cobrindo `listRunsBySession` e `getSessionAccounting`
+- [x] Atualizar `src/controllers/AgentRunController.test.ts` cobrindo o filtro `sessionId` e `getSessionAccounting`
+- [x] Atualizar `src/api/agentRunRouter.test.ts` testando o endpoint `GET /api/runs/session/:sessionId`
+- [x] Atualizar `src/services/SessionTimeoutSweeper.test.ts` validando emissão de métricas de tokens no encerramento por timeout
+- [x] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts` validando emissão de métricas de tokens no encerramento pelo usuário
+
+### Verificação
+- [x] `npm test` passa sem regressões (91/91 arquivos, 689/689 testes aprovados)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 
-## Definition of Done (Fase 7 Completa)
+## Sub-Fase 8E (Sprint 8.5): Testes de Integração E2E, Validação & Documentação
 
-- [x] Todas as sub-fases (7A a 7E) concluídas e testadas
-- [x] Máquina de estados de `InvestigationSession` robusta com isolamento multi-tenant
-- [x] Fechamento ativo conversacional funcionando fluidamente no chat
-- [x] Sweeper de inatividade encerrando sessões órfãs após 1 hora de inatividade
-- [x] `SessionSummary` gerado e entregue confiavelmente em ambos os caminhos de fechamento
-- [x] Métricas de sessões integradas ao Prometheus
-- [x] Suíte de testes automatizados com 100% de aprovação e sem regressões
+**Branch:** `feature/session-token-accounting`  
+**Responsável:** `qa-engineer` / `backend-specialist`  
+**Depende de:** Sub-Fases 8A a 8D concluídas  
+**Status:** ✅ Concluída  
+
+### Implementação & Testes
+- [x] Atualizar `src/harness/HybridSessionLifecycle.integration.test.ts`:
+  - [x] Simular múltiplos turnos na sessão com consumo cumulativo de tokens
+  - [x] Verificar que cada `AgentRun` no repositório aponta para o `sessionId` correspondente
+  - [x] Validar que a consulta de contabilidade por sessão retorna os totais acumulados com precisão
+- [x] Executar suíte completa de testes e validação estática:
+  - [x] `npm test` (91 arquivos, 690 testes aprovados)
+  - [x] `npm run test:integration` (10 arquivos, 19 testes aprovados)
+  - [x] `npm run build` (0 erros TypeScript strict)
+- [x] Atualizar documentação de APIs em `docs/API_FRONTEND.md`:
+  - [x] Documentar o query param `sessionId` em `GET /api/runs`
+  - [x] Documentar o novo endpoint `GET /api/runs/session/:sessionId`
+- [x] Criar documento de consolidação da fase: [docs/phase8-summary.md](docs/phase8-summary.md)
+
+---
+
+## Definition of Done (Fase 8 Completa)
+
+- [x] Todas as sub-fases (8A a 8E) concluídas e testadas
+- [x] `AgentRun` vinculado ao `sessionId` de forma auditável
+- [x] `InvestigationSession` com ledger cumulativo de tokens em tempo real ($O(1)$)
+- [x] Métricas de tokens e custo integradas ao Prometheus
+- [x] Suíte de testes com 100% de aprovação e sem regressões
 
 ---
 

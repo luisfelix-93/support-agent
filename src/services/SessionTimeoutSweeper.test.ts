@@ -6,6 +6,10 @@ import { SessionSummary } from '../domain/workflows/SessionSummary.js';
 import type { ISessionRepository } from '../domain/ports/ISessionRepository.js';
 import type { ChatProviderFactory } from '../infrastructure/chat/ChatProviderFactory.js';
 import type { IChatRepository } from '../domain/ports/IChatRepository.js';
+import {
+    agentSessionTokensTotal,
+    agentSessionCostUsdTotal,
+} from '../infrastructure/metrics/AgentMetrics.js';
 
 describe('SessionTimeoutSweeper', () => {
     let mockSessionRepo: ISessionRepository;
@@ -278,5 +282,45 @@ describe('SessionTimeoutSweeper', () => {
             warned: 0,
             errors: 1,
         });
+    });
+
+    it('deve emitir métricas Prometheus de tokens e custos ao encerrar por timeout', async () => {
+        const tokensSpy = vi.spyOn(agentSessionTokensTotal, 'inc');
+        const costSpy = vi.spyOn(agentSessionCostUsdTotal, 'inc');
+
+        const expiredSession = new InvestigationSession({
+            id: 'sess-tokens',
+            workspaceId: 'ws-metrics',
+            threadId: 'th-metrics',
+            status: SessionStatus.ACTIVE,
+            startedAt: new Date('2026-09-18T10:00:00.000Z'),
+            lastInteractionAt: new Date('2026-09-18T10:30:00.000Z'),
+            idleTimeoutMs: 1800000,
+            promptTokens: 2500,
+            completionTokens: 800,
+            totalTokens: 3300,
+            estimatedCostUsd: 0.042,
+        });
+
+        vi.mocked(mockSessionRepo.findInactiveSessions).mockResolvedValue([expiredSession]);
+
+        await sweeper.sweepExpiredSessions(baseDate);
+
+        expect(tokensSpy).toHaveBeenCalledWith(
+            { workspaceId: 'ws-metrics', status: SessionStatus.CLOSED_BY_TIMEOUT, tokenType: 'prompt' },
+            2500
+        );
+        expect(tokensSpy).toHaveBeenCalledWith(
+            { workspaceId: 'ws-metrics', status: SessionStatus.CLOSED_BY_TIMEOUT, tokenType: 'completion' },
+            800
+        );
+        expect(tokensSpy).toHaveBeenCalledWith(
+            { workspaceId: 'ws-metrics', status: SessionStatus.CLOSED_BY_TIMEOUT, tokenType: 'total' },
+            3300
+        );
+        expect(costSpy).toHaveBeenCalledWith(
+            { workspaceId: 'ws-metrics', status: SessionStatus.CLOSED_BY_TIMEOUT },
+            0.042
+        );
     });
 });

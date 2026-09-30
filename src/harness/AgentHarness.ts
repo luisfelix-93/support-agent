@@ -55,8 +55,11 @@ export class AgentHarness implements IAgentHarness {
             async (rootSpan) => {
                 const runId = crypto.randomUUID();
                 rootSpan.setAttribute('agent.run_id', runId);
+                if (input.sessionId) {
+                    rootSpan.setAttribute('agent.session_id', input.sessionId);
+                }
                 const startTime = Date.now();
-                const log = baseLog.child({ runId, tenantId: input.tenantId, threadId: input.threadId });
+                const log = baseLog.child({ runId, tenantId: input.tenantId, threadId: input.threadId, sessionId: input.sessionId });
 
                 log.info('Iniciando execução do Agent Harness.');
 
@@ -64,7 +67,14 @@ export class AgentHarness implements IAgentHarness {
                     runId,
                     input.tenantId,
                     input.workspaceId,
-                    input.threadId
+                    input.threadId,
+                    'running',
+                    0,
+                    [],
+                    new Date(),
+                    undefined,
+                    undefined,
+                    input.sessionId
                 );
                 run.userMessage = input.userMessage;
                 if (input.playbookIds && input.playbookIds.length > 0) {
@@ -462,6 +472,12 @@ export class AgentHarness implements IAgentHarness {
                         status,
                         durationMs,
                         playbookIds: input.playbookIds,
+                        tokens: {
+                            inputTokens: run.totalInputTokens,
+                            outputTokens: run.totalOutputTokens,
+                            totalTokens: run.totalTokens,
+                            costUsd: run.costUsd,
+                        },
                     };
                 } catch (error: any) {
                     const durationMs = Date.now() - startTime;
@@ -489,7 +505,13 @@ export class AgentHarness implements IAgentHarness {
                         toolCalls: run.toolCalls,
                         status: 'failed',
                         durationMs,
-                        error: errorMessage
+                        error: errorMessage,
+                        tokens: {
+                            inputTokens: run.totalInputTokens,
+                            outputTokens: run.totalOutputTokens,
+                            totalTokens: run.totalTokens,
+                            costUsd: run.costUsd,
+                        },
                     };
                 } finally {
                     clearTimeout(globalTimeoutTimer);

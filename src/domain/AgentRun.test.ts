@@ -105,4 +105,26 @@ describe('AgentRun', () => {
         expect(run.error).toBe('Timeout error');
         expect(run.completedAt).toBeInstanceOf(Date);
     });
+
+    it('deve aceitar e armazenar sessionId no construtor ou por atribuição', () => {
+        const runWithSession = new AgentRun(
+            'run-1',
+            'tenant-1',
+            'ws-1',
+            'thread-1',
+            'running',
+            0,
+            [],
+            new Date(),
+            undefined,
+            undefined,
+            'session-xyz-123'
+        );
+        expect(runWithSession.sessionId).toBe('session-xyz-123');
+
+        const runAssigned = new AgentRun('run-2', 'tenant-1', 'ws-1', 'thread-1');
+        expect(runAssigned.sessionId).toBeUndefined();
+        runAssigned.sessionId = 'session-abc-456';
+        expect(runAssigned.sessionId).toBe('session-abc-456');
+    });
 });
