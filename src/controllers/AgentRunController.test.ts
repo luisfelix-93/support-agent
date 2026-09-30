@@ -15,6 +15,8 @@ describe('AgentRunController', () => {
         mockService = {
             getRunById: vi.fn(),
             listRuns: vi.fn(),
+            listRunsBySession: vi.fn(),
+            getSessionAccounting: vi.fn(),
             getCostAnalytics: vi.fn(),
             getToolAnalytics: vi.fn(),
             getLLMAnalytics: vi.fn(),
@@ -73,14 +75,42 @@ describe('AgentRunController', () => {
     });
 
     describe('list', () => {
-        it('deve retornar 400 se tenantId for ausente', async () => {
+        it('deve retornar 400 se tenantId e sessionId forem ausentes', async () => {
             mockReq = { query: {} };
 
             await controller.list(mockReq, mockRes);
 
             expect(mockRes.status).toHaveBeenCalledWith(400);
             expect(mockRes.json).toHaveBeenCalledWith({
-                error: 'O query parameter tenantId é obrigatório.',
+                error: 'O query parameter tenantId ou sessionId é obrigatório.',
+            });
+        });
+
+        it('deve listar execuções por sessionId quando informado', async () => {
+            const mockRuns = [new AgentRun('r-1', 'tenant-a', 'ws-1', 'th-1', 'running', 0, [], new Date(), undefined, undefined, 'sess-1')];
+            mockReq = { query: { sessionId: 'sess-1' } };
+            vi.mocked(mockService.listRunsBySession).mockResolvedValueOnce(mockRuns);
+
+            await controller.list(mockReq, mockRes);
+
+            expect(mockService.listRunsBySession).toHaveBeenCalledWith('sess-1');
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(mockRes.json).toHaveBeenCalledWith({
+                success: true,
+                data: mockRuns,
+                count: 1,
+            });
+        });
+
+        it('deve retornar 500 se listRunsBySession falhar', async () => {
+            mockReq = { query: { sessionId: 'sess-1' } };
+            vi.mocked(mockService.listRunsBySession).mockRejectedValueOnce(new Error('DB err'));
+
+            await controller.list(mockReq, mockRes);
+
+            expect(mockRes.status).toHaveBeenCalledWith(500);
+            expect(mockRes.json).toHaveBeenCalledWith({
+                error: 'Erro interno ao listar execuções por sessão.',
             });
         });
 
@@ -237,6 +267,64 @@ describe('AgentRunController', () => {
             await controller.getLLMAnalytics(mockReq, mockRes);
 
             expect(mockRes.status).toHaveBeenCalledWith(500);
+        });
+    });
+
+    describe('getSessionAccounting', () => {
+        it('deve retornar 400 se sessionId for vazio ou ausente', async () => {
+            mockReq = { params: { sessionId: '   ' } };
+
+            await controller.getSessionAccounting(mockReq, mockRes);
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+            expect(mockRes.json).toHaveBeenCalledWith({ error: 'O parâmetro sessionId é obrigatório.' });
+        });
+
+        it('deve retornar 404 se a sessão não for encontrada', async () => {
+            mockReq = { params: { sessionId: 'sess-404' } };
+            vi.mocked(mockService.getSessionAccounting).mockResolvedValueOnce(null);
+
+            await controller.getSessionAccounting(mockReq, mockRes);
+
+            expect(mockService.getSessionAccounting).toHaveBeenCalledWith('sess-404');
+            expect(mockRes.status).toHaveBeenCalledWith(404);
+            expect(mockRes.json).toHaveBeenCalledWith({ error: 'Sessão de investigação não encontrada.' });
+        });
+
+        it('deve retornar 200 com os dados consolidados da sessão', async () => {
+            const mockSummary = {
+                sessionId: 'sess-123',
+                workspaceId: 'ws-1',
+                threadId: 'th-1',
+                status: 'active',
+                turnCount: 2,
+                tokens: {
+                    promptTokens: 1000,
+                    completionTokens: 300,
+                    totalTokens: 1300,
+                    estimatedCostUsd: 0.015,
+                },
+                runsCount: 2,
+                durationSeconds: 120,
+            };
+            mockReq = { params: { sessionId: 'sess-123' } };
+            vi.mocked(mockService.getSessionAccounting).mockResolvedValueOnce(mockSummary as any);
+
+            await controller.getSessionAccounting(mockReq, mockRes);
+
+            expect(mockService.getSessionAccounting).toHaveBeenCalledWith('sess-123');
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(mockRes.json).toHaveBeenCalledWith({ success: true, data: mockSummary });
+        });
+
+        it('deve retornar 500 se o serviço lançar erro', async () => {
+            mockReq = { params: { sessionId: 'sess-err' } };
+            vi.mocked(mockService.getSessionAccounting).mockRejectedValueOnce(new Error('Internal failure'));
+
+            await controller.getSessionAccounting(mockReq, mockRes);
+
+            expect(mockRes.status).toHaveBeenCalledWith(500);
+            expect(mockRes.json).toHaveBeenCalledWith({ error: 'Erro interno ao buscar contabilidade da sessão.' });
         });
     });
 });

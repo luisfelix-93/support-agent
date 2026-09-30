@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RunAnalyticsService } from './RunAnalyticsService.js';
 import type { IAgentRunRepository } from '../domain/ports/IAgentRunRepository.js';
+import type { ISessionRepository } from '../domain/ports/ISessionRepository.js';
 import { AgentRun } from '../domain/AgentRun.js';
+import { InvestigationSession } from '../domain/InvestigationSession.js';
+import { SessionStatus } from '../domain/SessionStatus.js';
 
 describe('RunAnalyticsService', () => {
     let mockRepo: IAgentRunRepository;
+    let mockSessionRepo: ISessionRepository;
     let service: RunAnalyticsService;
 
     beforeEach(() => {
@@ -14,12 +18,21 @@ describe('RunAnalyticsService', () => {
             save: vi.fn(),
             findByRunId: vi.fn(),
             findByTenant: vi.fn(),
+            findBySessionId: vi.fn(),
             aggregateCostByTenant: vi.fn(),
             aggregateToolAnalytics: vi.fn(),
             aggregateLLMAnalytics: vi.fn(),
         };
 
-        service = new RunAnalyticsService(mockRepo);
+        mockSessionRepo = {
+            createIndexes: vi.fn(),
+            save: vi.fn(),
+            findById: vi.fn(),
+            findActiveByThreadId: vi.fn(),
+            findInactiveSessions: vi.fn(),
+        };
+
+        service = new RunAnalyticsService(mockRepo, mockSessionRepo);
     });
 
     describe('getRunById', () => {
@@ -224,6 +237,135 @@ describe('RunAnalyticsService', () => {
             vi.mocked(mockRepo.aggregateLLMAnalytics).mockRejectedValueOnce(new Error('LLM pipeline failed'));
 
             await expect(service.getLLMAnalytics()).rejects.toThrow('LLM pipeline failed');
+        });
+    });
+
+    describe('listRunsBySession', () => {
+        it('deve retornar lista vazia se sessionId for nulo ou vazio', async () => {
+            expect(await service.listRunsBySession('')).toEqual([]);
+            expect(await service.listRunsBySession('   ')).toEqual([]);
+            expect(await service.listRunsBySession(null as any)).toEqual([]);
+            expect(mockRepo.findBySessionId).not.toHaveBeenCalled();
+        });
+
+        it('deve buscar e retornar runs associadas ao sessionId trimado', async () => {
+            const run1 = new AgentRun('run-1', 'tenant-a', 'ws-1', 'thread-1');
+            run1.sessionId = 'sess-123';
+            const run2 = new AgentRun('run-2', 'tenant-a', 'ws-1', 'thread-1');
+            run2.sessionId = 'sess-123';
+            const mockRuns = [run1, run2];
+            vi.mocked(mockRepo.findBySessionId).mockResolvedValueOnce(mockRuns);
+
+            const result = await service.listRunsBySession('  sess-123  ');
+
+            expect(mockRepo.findBySessionId).toHaveBeenCalledWith('sess-123');
+            expect(result).toHaveLength(2);
+            expect(result).toBe(mockRuns);
+        });
+
+        it('deve repassar erro se o repositório falhar', async () => {
+            vi.mocked(mockRepo.findBySessionId).mockRejectedValueOnce(new Error('DB failure'));
+
+            await expect(service.listRunsBySession('sess-err')).rejects.toThrow('DB failure');
+        });
+    });
+
+    describe('getSessionAccounting', () => {
+        it('deve retornar null se sessionId for vazio', async () => {
+            expect(await service.getSessionAccounting('')).toBeNull();
+            expect(await service.getSessionAccounting('   ')).toBeNull();
+            expect(await service.getSessionAccounting(null as any)).toBeNull();
+        });
+
+        it('deve lançar erro se sessionRepository não estiver configurado', async () => {
+            const serviceWithoutRepo = new RunAnalyticsService(mockRepo);
+            await expect(serviceWithoutRepo.getSessionAccounting('sess-1')).rejects.toThrow(
+                'ISessionRepository não configurado no RunAnalyticsService.'
+            );
+        });
+
+        it('deve retornar null se sessão não existir', async () => {
+            vi.mocked(mockSessionRepo.findById).mockResolvedValueOnce(null);
+
+            const result = await service.getSessionAccounting('sess-not-found');
+
+            expect(mockSessionRepo.findById).toHaveBeenCalledWith('sess-not-found');
+            expect(result).toBeNull();
+        });
+
+        it('deve retornar resumo consolidado com tokens, custo e contagem de runs de sessão ativa', async () => {
+            const startedAt = new Date(Date.now() - 60_000);
+            const lastInteractionAt = new Date();
+            const session = new InvestigationSession({
+                id: 'sess-act',
+                workspaceId: 'ws-1',
+                threadId: 'th-1',
+                channelId: 'chan-1',
+                status: SessionStatus.ACTIVE,
+                startedAt,
+                lastInteractionAt,
+                promptTokens: 1500,
+                completionTokens: 500,
+                totalTokens: 2000,
+                estimatedCostUsd: 0.025,
+                turnCount: 3,
+            });
+
+            vi.mocked(mockSessionRepo.findById).mockResolvedValueOnce(session);
+            vi.mocked(mockRepo.findBySessionId).mockResolvedValueOnce([
+                new AgentRun('r-1', 'tenant-a', 'ws-1', 'th-1', 'running', 0, [], new Date(), undefined, undefined, 'sess-act'),
+                new AgentRun('r-2', 'tenant-a', 'ws-1', 'th-1', 'running', 0, [], new Date(), undefined, undefined, 'sess-act'),
+                new AgentRun('r-3', 'tenant-a', 'ws-1', 'th-1', 'running', 0, [], new Date(), undefined, undefined, 'sess-act'),
+            ]);
+
+            const result = await service.getSessionAccounting('  sess-act  ');
+
+            expect(mockSessionRepo.findById).toHaveBeenCalledWith('sess-act');
+            expect(mockRepo.findBySessionId).toHaveBeenCalledWith('sess-act');
+            expect(result).not.toBeNull();
+            expect(result).toMatchObject({
+                sessionId: 'sess-act',
+                workspaceId: 'ws-1',
+                threadId: 'th-1',
+                channelId: 'chan-1',
+                status: SessionStatus.ACTIVE,
+                turnCount: 3,
+                tokens: {
+                    promptTokens: 1500,
+                    completionTokens: 500,
+                    totalTokens: 2000,
+                    estimatedCostUsd: 0.025,
+                },
+                runsCount: 3,
+            });
+            expect(result?.durationSeconds).toBeGreaterThanOrEqual(59);
+        });
+
+        it('deve calcular durationSeconds corretamente para sessão encerrada', async () => {
+            const startedAt = new Date('2026-09-23T10:00:00.000Z');
+            const closedAt = new Date('2026-09-23T10:15:30.000Z'); // 930 segundos
+            const session = new InvestigationSession({
+                id: 'sess-closed',
+                workspaceId: 'ws-1',
+                threadId: 'th-1',
+                status: SessionStatus.CLOSED_BY_USER,
+                startedAt,
+                closedAt,
+                promptTokens: 3000,
+                completionTokens: 1000,
+                totalTokens: 4000,
+                estimatedCostUsd: 0.05,
+                turnCount: 4,
+            });
+
+            vi.mocked(mockSessionRepo.findById).mockResolvedValueOnce(session);
+            vi.mocked(mockRepo.findBySessionId).mockResolvedValueOnce([]);
+
+            const result = await service.getSessionAccounting('sess-closed');
+
+            expect(result?.durationSeconds).toBe(930);
+            expect(result?.closedAt).toEqual(closedAt);
+            expect(result?.runsCount).toBe(0);
         });
     });
 });

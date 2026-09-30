@@ -130,37 +130,38 @@
 **Branch:** `feature/session-token-accounting`  
 **Responsável:** `backend-specialist`  
 **Depende de:** Sub-Fase 8C  
-**Status:** ⏳ Pendente  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Atualizar `RunAnalyticsService` (`src/services/RunAnalyticsService.ts`):
-  - [ ] Injetar `ISessionRepository` no construtor
-  - [ ] Implementar método `listRunsBySession(sessionId: string): Promise<AgentRun[]>`
-  - [ ] Implementar método `getSessionAccounting(sessionId: string): Promise<SessionAccountingSummary | null>`
-- [ ] Atualizar `AgentRunController` (`src/controllers/AgentRunController.ts`):
-  - [ ] Suportar query param opcional `sessionId` no método `list()`
-  - [ ] Implementar método `getSessionAccounting(req, res)`
-- [ ] Atualizar rotas em `agentRunRouter` (`src/api/agentRunRouter.ts`):
-  - [ ] Adicionar rota `GET /api/runs/session/:sessionId` protegida com `authMiddleware`, `tenantRateLimiter`, `requireRole(ADMIN)` e `auditLogger`
-- [ ] Atualizar injeção de dependência em `src/config/container.ts`:
-  - [ ] Passar `sessionRepository` ao instanciar `runAnalyticsService`
-- [ ] Atualizar métricas do Prometheus (`src/infrastructure/metrics/AgentMetrics.ts`):
-  - [ ] Criar `agentSessionTokensTotal`: Counter (labels: `workspaceId`, `status`, `tokenType`)
-  - [ ] Criar `agentSessionCostUsdTotal`: Counter (labels: `workspaceId`, `status`)
-- [ ] Atualizar encerramento de sessão em `ProcessAgentResponseUseCase` e `SessionTimeoutSweeper`:
-  - [ ] Registrar tokens acumulados e custo estimado nas métricas Prometheus ao fechar a sessão (por operador ou por timeout)
-  - [ ] Manter o `SessionSummary` limpo no chat, sem adicionar blocos de custo/tokens
+- [x] Atualizar `RunAnalyticsService` (`src/services/RunAnalyticsService.ts`):
+  - [x] Injetar `ISessionRepository` no construtor
+  - [x] Implementar método `listRunsBySession(sessionId: string): Promise<AgentRun[]>`
+  - [x] Implementar método `getSessionAccounting(sessionId: string): Promise<SessionAccountingSummary | null>`
+- [x] Atualizar `AgentRunController` (`src/controllers/AgentRunController.ts`):
+  - [x] Suportar query param opcional `sessionId` no método `list()`
+  - [x] Implementar método `getSessionAccounting(req, res)`
+- [x] Atualizar rotas em `agentRunRouter` (`src/api/agentRunRouter.ts`):
+  - [x] Adicionar rota `GET /api/runs/session/:sessionId` protegida com `authMiddleware`, `tenantRateLimiter`, `requireRole(ADMIN)` e `auditLogger`
+- [x] Atualizar injeção de dependência em `src/config/container.ts`:
+  - [x] Passar `sessionRepository` ao instanciar `runAnalyticsService`
+- [x] Atualizar métricas do Prometheus (`src/infrastructure/metrics/AgentMetrics.ts`):
+  - [x] Criar `agentSessionTokensTotal`: Counter (labels: `workspaceId`, `status`, `tokenType`)
+  - [x] Criar `agentSessionCostUsdTotal`: Counter (labels: `workspaceId`, `status`)
+  - [x] Criar helper `recordSessionClosureMetrics`
+- [x] Atualizar encerramento de sessão em `ProcessAgentResponseUseCase` e `SessionTimeoutSweeper`:
+  - [x] Registrar tokens acumulados e custo estimado nas métricas Prometheus ao fechar a sessão (por operador ou por timeout)
+  - [x] Manter o `SessionSummary` limpo no chat, sem adicionar blocos de custo/tokens
 
 ### Testes
-- [ ] Atualizar `src/services/RunAnalyticsService.test.ts` cobrindo `listRunsBySession` e `getSessionAccounting`
-- [ ] Atualizar `src/controllers/AgentRunController.test.ts` cobrindo o filtro `sessionId` e `getSessionAccounting`
-- [ ] Atualizar `src/api/agentRunRouter.test.ts` testando o endpoint `GET /api/runs/session/:sessionId`
-- [ ] Atualizar `src/services/SessionTimeoutSweeper.test.ts` validando emissão de métricas de tokens no encerramento por timeout
-- [ ] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts` validando emissão de métricas de tokens no encerramento pelo usuário
+- [x] Atualizar `src/services/RunAnalyticsService.test.ts` cobrindo `listRunsBySession` e `getSessionAccounting`
+- [x] Atualizar `src/controllers/AgentRunController.test.ts` cobrindo o filtro `sessionId` e `getSessionAccounting`
+- [x] Atualizar `src/api/agentRunRouter.test.ts` testando o endpoint `GET /api/runs/session/:sessionId`
+- [x] Atualizar `src/services/SessionTimeoutSweeper.test.ts` validando emissão de métricas de tokens no encerramento por timeout
+- [x] Atualizar `src/usecases/ProcessAgentResponseUseCase.test.ts` validando emissão de métricas de tokens no encerramento pelo usuário
 
 ### Verificação
-- [ ] `npm test` passa sem regressões
-- [ ] `npm run build` compila com 0 erros TypeScript strict
+- [x] `npm test` passa sem regressões (91/91 arquivos, 689/689 testes aprovados)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 

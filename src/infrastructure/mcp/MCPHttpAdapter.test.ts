@@ -6,6 +6,7 @@ class SSEMockStream {
     private controller!: ReadableStreamDefaultController<Uint8Array>;
     public stream: ReadableStream<Uint8Array>;
     private encoder = new TextEncoder();
+    private closed = false;
 
     constructor() {
         this.stream = new ReadableStream({
@@ -16,6 +17,7 @@ class SSEMockStream {
     }
 
     sendEvent(event: string, data: any) {
+        if (this.closed) return;
         let block = `event: ${event}\n`;
         if (typeof data === 'object') {
             block += `data: ${JSON.stringify(data)}\n\n`;
@@ -23,11 +25,17 @@ class SSEMockStream {
             block += `data: ${data}\n\n`;
         }
         if (this.controller) {
-            this.controller.enqueue(this.encoder.encode(block));
+            try {
+                this.controller.enqueue(this.encoder.encode(block));
+            } catch {
+                // controller já fechado por race condition em timers
+            }
         }
     }
 
     close() {
+        if (this.closed) return;
+        this.closed = true;
         if (this.controller) {
             try {
                 this.controller.close();

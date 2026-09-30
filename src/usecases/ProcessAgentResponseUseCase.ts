@@ -19,8 +19,7 @@ import { SessionStatus } from "../domain/SessionStatus.js";
 import { ClosureIntentDetector } from "../services/ClosureIntentDetector.js";
 import {
     agentSessionsTotal,
-    agentSessionsClosedTotal,
-    agentSessionDurationSeconds,
+    recordSessionClosureMetrics,
 } from "../infrastructure/metrics/AgentMetrics.js";
 import { logger } from "../config/logger.js";
 
@@ -104,11 +103,7 @@ export class ProcessAgentResponseUse {
                         session.confirmClosure(summary ?? undefined);
                         await this.sessionRepository.save(session);
 
-                        agentSessionsClosedTotal.inc({ workspaceId: session.workspaceId, reason: 'user' });
-                        if (session.closedAt) {
-                            const durationSec = Math.max(0, (session.closedAt.getTime() - session.startedAt.getTime()) / 1000);
-                            agentSessionDurationSeconds.observe({ workspaceId: session.workspaceId, reason: 'user' }, durationSec);
-                        }
+                        recordSessionClosureMetrics(session, 'user');
 
                         const summaryMarkdown = summary ? `\n\n${summary.toMarkdown()}` : '';
                         const closureMessage = `✅ **Sessão de investigação encerrada com sucesso.**${summaryMarkdown}`;
@@ -132,11 +127,7 @@ export class ProcessAgentResponseUse {
                         session.confirmClosure(summary ?? undefined);
                         await this.sessionRepository.save(session);
 
-                        agentSessionsClosedTotal.inc({ workspaceId: session.workspaceId, reason: 'user' });
-                        if (session.closedAt) {
-                            const durationSec = Math.max(0, (session.closedAt.getTime() - session.startedAt.getTime()) / 1000);
-                            agentSessionDurationSeconds.observe({ workspaceId: session.workspaceId, reason: 'user' }, durationSec);
-                        }
+                        recordSessionClosureMetrics(session, 'user');
 
                         const summaryMarkdown = summary ? `\n\n${summary.toMarkdown()}` : '';
                         const closureMessage = `✅ **Sessão de investigação encerrada com sucesso pelo operador.**${summaryMarkdown}`;

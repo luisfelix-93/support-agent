@@ -10,6 +10,10 @@ import { ChatContext } from '../domain/ChatContext.js';
 import { AgentHarness } from '../harness/AgentHarness.js';
 import { ContextAssembler } from '../harness/ContextAssembler.js';
 import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
+import {
+    agentSessionTokensTotal,
+    agentSessionCostUsdTotal,
+} from '../infrastructure/metrics/AgentMetrics.js';
 
 // Mock do LLMFactory para não instanciar adaptadores reais
 vi.mock('../infrastructure/llm/LLMFactory.js', () => ({
@@ -793,6 +797,62 @@ Timeout no gateway de pagamentos externo.
             });
 
             expect(mockSessionRepo.save).toHaveBeenCalledWith(activeSession);
+        });
+
+        it('deve emitir métricas Prometheus de tokens e custos ao encerrar sessão pelo usuário', async () => {
+            const tokensSpy = vi.spyOn(agentSessionTokensTotal, 'inc');
+            const costSpy = vi.spyOn(agentSessionCostUsdTotal, 'inc');
+
+            const closingSession = {
+                id: 'sess-close-metrics',
+                threadId: 'thread-sess-metrics',
+                workspaceId: 'workspace-abc',
+                status: 'AWAITING_CLOSURE_CONFIRMATION',
+                startedAt: new Date(Date.now() - 300_000),
+                closedAt: new Date(),
+                promptTokens: 1200,
+                completionTokens: 400,
+                totalTokens: 1600,
+                estimatedCostUsd: 0.02,
+                sessionSummary: {
+                    toMarkdown: () => '### Resumo Operacional',
+                },
+                confirmClosure: vi.fn(),
+            };
+            closingSession.confirmClosure.mockImplementation(() => {
+                closingSession.status = 'closed';
+            });
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(closingSession);
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                { run: vi.fn() } as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-sess-metrics', 'Sim, encerrar', chatProvider);
+
+            expect(closingSession.confirmClosure).toHaveBeenCalled();
+            expect(tokensSpy).toHaveBeenCalledWith(
+                { workspaceId: 'workspace-abc', status: 'closed', tokenType: 'prompt' },
+                1200
+            );
+            expect(tokensSpy).toHaveBeenCalledWith(
+                { workspaceId: 'workspace-abc', status: 'closed', tokenType: 'completion' },
+                400
+            );
+            expect(tokensSpy).toHaveBeenCalledWith(
+                { workspaceId: 'workspace-abc', status: 'closed', tokenType: 'total' },
+                1600
+            );
+            expect(costSpy).toHaveBeenCalledWith(
+                { workspaceId: 'workspace-abc', status: 'closed' },
+                0.02
+            );
         });
     });
 });
