@@ -42,11 +42,19 @@ export class SessionTimeoutSweeper {
                 return result;
             }
 
+            const processedThreads = new Set<string>();
+
             for (const session of candidateSessions) {
                 try {
+                    const threadKey = `${session.workspaceId}:${session.threadId}`;
+                    if (processedThreads.has(threadKey)) {
+                        log.debug({ threadKey, sessionId: session.id }, 'Thread já processada neste sweep, ignorando duplicata.');
+                        continue;
+                    }
+
                     // 1. Encerramento automático por inatividade (30 minutos)
                     if (session.isExpired(referenceDate)) {
-                        const summary = session.sessionSummary ?? this.compileFallbackSummary(session);
+                        const summary = session.sessionSummary ?? SessionSummary.createFallback(session, 'timeout');
 
                         session.expireByTimeout(summary, referenceDate);
                         await this.sessionRepository.save(session);
@@ -54,6 +62,7 @@ export class SessionTimeoutSweeper {
                         recordSessionClosureMetrics(session, 'timeout');
 
                         result.expired++;
+                        processedThreads.add(threadKey);
                         log.info(
                             { sessionId: session.id, threadId: session.threadId, workspaceId: session.workspaceId },
                             'Sessão de investigação encerrada por inatividade.'
@@ -71,6 +80,7 @@ export class SessionTimeoutSweeper {
                         await this.sessionRepository.save(session);
 
                         result.warned++;
+                        processedThreads.add(threadKey);
                         log.info(
                             { sessionId: session.id, threadId: session.threadId, workspaceId: session.workspaceId },
                             'Aviso de 15 minutos de inatividade enviado para a sessão.'
@@ -93,45 +103,7 @@ export class SessionTimeoutSweeper {
     }
 
     private compileFallbackSummary(session: any): SessionSummary {
-        const ledger = session.evidenceLedger;
-        const hasEvidences = ledger && ledger.hasEvidence();
-
-        if (hasEvidences) {
-            return new SessionSummary({
-                runId: session.id,
-                serviceName: (session.metadata?.serviceName as string) || 'Serviço sob Investigação',
-                incidentWindow: {
-                    start: session.startedAt.toISOString(),
-                    end: session.lastInteractionAt.toISOString(),
-                },
-                rootCauseHypothesis: 'Sessão encerrada por inatividade. Resumo compilado a partir das evidências coletadas durante a sessão.',
-                evidence: {
-                    logs: ledger.getLogs().map((l: any) => l.message),
-                    metrics: ledger.getMetrics().map((m: any) => `${m.query}: ${m.value}${m.unit ? ` ${m.unit}` : ''}`),
-                    traces: ledger.getTraces().map((t: any) => `${t.operationName} (${t.durationMs}ms)`),
-                    infra: ledger.getInfrastructure().map((i: any) => `${i.component}: ${i.status}`),
-                    database: ledger.getDatabase().map((d: any) => `${d.metricOrQuery}: ${d.value}`),
-                },
-                recommendedActions: [
-                    'Verificar telemetria recente do serviço para confirmar estabilização.',
-                    'Reabrir a investigação enviando uma nova mensagem caso anomalias persistam.',
-                ],
-            });
-        }
-
-        return new SessionSummary({
-            runId: session.id,
-            serviceName: (session.metadata?.serviceName as string) || 'Investigação Geral',
-            incidentWindow: {
-                start: session.startedAt.toISOString(),
-                end: session.lastInteractionAt.toISOString(),
-            },
-            rootCauseHypothesis: 'Sessão encerrada automaticamente após atingir o tempo limite de inatividade sem novas mensagens.',
-            evidence: { logs: [], metrics: [] },
-            recommendedActions: [
-                'Caso o incidente ainda esteja em aberto, envie uma nova mensagem na thread para reiniciar a análise.',
-            ],
-        });
+        return SessionSummary.createFallback(session, 'timeout');
     }
 
     private async notifyThread(session: any, summary: SessionSummary): Promise<void> {

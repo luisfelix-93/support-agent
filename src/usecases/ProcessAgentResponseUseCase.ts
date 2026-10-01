@@ -16,6 +16,7 @@ import type { InvestigationEngine } from "../harness/InvestigationEngine.js";
 import type { ISessionRepository } from "../domain/ports/ISessionRepository.js";
 import { InvestigationSession } from "../domain/InvestigationSession.js";
 import { SessionStatus } from "../domain/SessionStatus.js";
+import { SessionSummary } from "../domain/workflows/SessionSummary.js";
 import { ClosureIntentDetector } from "../services/ClosureIntentDetector.js";
 import {
     agentSessionsTotal,
@@ -99,7 +100,7 @@ export class ProcessAgentResponseUse {
                     const intent = this.closureIntentDetector.detectIntent(userText, true);
 
                     if (intent === 'CONFIRM_CLOSURE') {
-                        const summary = session.sessionSummary;
+                        const summary = session.sessionSummary ?? SessionSummary.createFallback(session, 'user');
                         session.confirmClosure(summary ?? undefined);
                         await this.sessionRepository.save(session);
 
@@ -123,7 +124,7 @@ export class ProcessAgentResponseUse {
                     // Cenário B: Comando explícito de encerramento enviado a qualquer momento (ex: /encerrar)
                     const intent = this.closureIntentDetector.detectIntent(userText, false);
                     if (intent === 'CONFIRM_CLOSURE') {
-                        const summary = session.sessionSummary;
+                        const summary = session.sessionSummary ?? SessionSummary.createFallback(session, 'user');
                         session.confirmClosure(summary ?? undefined);
                         await this.sessionRepository.save(session);
 
@@ -149,6 +150,16 @@ export class ProcessAgentResponseUse {
                         context.addMessage(new Message(crypto.randomUUID(), 'assistant', noActiveSessionMessage));
                         await this.chatRepository.save(context);
                         await chatProvider.sendMessage(threadId, noActiveSessionMessage);
+                        return;
+                    }
+
+                    // Se não há sessão ativa e a mensagem é apenas uma saudação/agradecimento de encerramento (ex: "obrigado", "valeu", "show")
+                    if (this.closureIntentDetector.isAcknowledgement(userText)) {
+                        const ackMessage = 'Por nada! Caso precise de uma nova investigação, basta enviar sua mensagem descrevendo o incidente.';
+                        context.addMessage(new Message(crypto.randomUUID(), 'user', userText));
+                        context.addMessage(new Message(crypto.randomUUID(), 'assistant', ackMessage));
+                        await this.chatRepository.save(context);
+                        await chatProvider.sendMessage(threadId, ackMessage);
                         return;
                     }
 
