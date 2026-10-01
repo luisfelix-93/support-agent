@@ -39,6 +39,7 @@ describe('MongoSessionRepository', () => {
             findOne: vi.fn(),
             find: vi.fn(),
             updateOne: vi.fn().mockResolvedValue({ acknowledged: true }),
+            updateMany: vi.fn().mockResolvedValue({ acknowledged: true, modifiedCount: 1 }),
             createIndex: vi.fn().mockResolvedValue('index-created'),
         };
 
@@ -170,6 +171,22 @@ describe('MongoSessionRepository', () => {
                     }),
                 },
                 { upsert: true }
+            );
+
+            expect(mockCollection.updateMany).toHaveBeenCalledWith(
+                {
+                    workspaceId: 'ws-acme',
+                    threadId: 'th-200',
+                    id: { $ne: 'sess-2' },
+                    status: {
+                        $in: [SessionStatus.ACTIVE, SessionStatus.AWAITING_CLOSURE_CONFIRMATION],
+                    },
+                },
+                {
+                    $set: expect.objectContaining({
+                        status: SessionStatus.CLOSED_BY_USER,
+                    }),
+                }
             );
         });
     });

@@ -52,6 +52,10 @@ describe('ClosureIntentDetector', () => {
             expect(detector.detectIntent('ENCERRAR', false)).toBe('CONFIRM_CLOSURE');
             expect(detector.detectIntent('fechar a sessao', false)).toBe('CONFIRM_CLOSURE');
             expect(detector.detectIntent('análise concluida', false)).toBe('CONFIRM_CLOSURE');
+            expect(detector.detectIntent('finaliza a sessão', false)).toBe('CONFIRM_CLOSURE');
+            expect(detector.detectIntent('encerra a sessão', false)).toBe('CONFIRM_CLOSURE');
+            expect(detector.detectIntent('fecha a sessão', false)).toBe('CONFIRM_CLOSURE');
+            expect(detector.detectIntent('pode finalizar a sessão', false)).toBe('CONFIRM_CLOSURE');
         });
     });
 
@@ -114,6 +118,32 @@ describe('ClosureIntentDetector', () => {
         it('deve retornar NEUTRAL para string vazia ou espaços em branco', () => {
             expect(detector.detectIntent('', false)).toBe('NEUTRAL');
             expect(detector.detectIntent('   ', true)).toBe('NEUTRAL');
+        });
+    });
+
+    describe('Detecção de Agradecimento / Saudação Final (isAcknowledgement)', () => {
+        const acks = [
+            'obrigado',
+            'obrigada',
+            'muito obrigado',
+            'valeu',
+            'show',
+            'perfeito',
+            'valeu bot',
+            'tks',
+            'thanks',
+            'beleza',
+            'ok valeu',
+        ];
+
+        it.each(acks)('deve retornar true para a saudação de agradecimento "%s"', (msg) => {
+            expect(detector.isAcknowledgement(msg)).toBe(true);
+        });
+
+        it('deve retornar false para mensagens técnicas ou comandos', () => {
+            expect(detector.isAcknowledgement('O serviço está fora do ar')).toBe(false);
+            expect(detector.isAcknowledgement('/encerrar')).toBe(false);
+            expect(detector.isAcknowledgement('')).toBe(false);
         });
     });
 });

@@ -56,6 +56,68 @@ export class SessionSummary {
         this.playbooksInvolved = props.playbooksInvolved ? [...props.playbooksInvolved] : [];
     }
 
+    static createFallback(session: any, reason: 'user' | 'timeout' = 'user'): SessionSummary {
+        const ledger = session.evidenceLedger;
+        const hasEvidences = ledger && typeof ledger.hasEvidence === 'function' ? ledger.hasEvidence() : false;
+
+        const hypothesis = reason === 'timeout'
+            ? (hasEvidences
+                ? 'Sessão encerrada por inatividade. Resumo compilado a partir das evidências coletadas durante a sessão.'
+                : 'Sessão encerrada automaticamente após atingir o tempo limite de inatividade sem novas mensagens.')
+            : (hasEvidences
+                ? 'Sessão encerrada pelo operador. Resumo compilado a partir das evidências coletadas durante a sessão.'
+                : 'Sessão de investigação encerrada pelo operador.');
+
+        const defaultActions = reason === 'timeout'
+            ? [
+                'Verificar telemetria recente do serviço para confirmar estabilização.',
+                'Reabrir a investigação enviando uma nova mensagem caso anomalias persistam.',
+              ]
+            : [
+                'Monitorar os serviços e aplicar correções cabíveis conforme o diagnóstico.',
+                'Caso surjam novos incidentes, inicie uma nova análise enviando mensagem na thread.',
+              ];
+
+        const startIso = session.startedAt instanceof Date
+            ? session.startedAt.toISOString()
+            : new Date(session.startedAt || Date.now()).toISOString();
+        const endIso = session.lastInteractionAt instanceof Date
+            ? session.lastInteractionAt.toISOString()
+            : new Date(session.lastInteractionAt || Date.now()).toISOString();
+
+        if (hasEvidences) {
+            return new SessionSummary({
+                runId: session.id,
+                serviceName: (session.metadata?.serviceName as string) || 'Serviço sob Investigação',
+                incidentWindow: {
+                    start: startIso,
+                    end: endIso,
+                },
+                rootCauseHypothesis: hypothesis,
+                evidence: {
+                    logs: ledger.getLogs().map((l: any) => l.message),
+                    metrics: ledger.getMetrics().map((m: any) => `${m.query}: ${m.value}${m.unit ? ` ${m.unit}` : ''}`),
+                    traces: ledger.getTraces().map((t: any) => `${t.operationName} (${t.durationMs}ms)`),
+                    infra: ledger.getInfrastructure().map((i: any) => `${i.component}: ${i.status}`),
+                    database: ledger.getDatabase().map((d: any) => `${d.metricOrQuery}: ${d.value}`),
+                },
+                recommendedActions: defaultActions,
+            });
+        }
+
+        return new SessionSummary({
+            runId: session.id,
+            serviceName: (session.metadata?.serviceName as string) || 'Investigação Geral',
+            incidentWindow: {
+                start: startIso,
+                end: endIso,
+            },
+            rootCauseHypothesis: hypothesis,
+            evidence: { logs: [], metrics: [] },
+            recommendedActions: defaultActions,
+        });
+    }
+
     toMarkdown(): string {
         const windowText = this.incidentWindow?.start
             ? `${this.incidentWindow.start} até ${this.incidentWindow.end || 'Em andamento'}`

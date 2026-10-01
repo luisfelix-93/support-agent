@@ -854,6 +854,80 @@ Timeout no gateway de pagamentos externo.
                 0.02
             );
         });
+
+        it('não deve criar nova sessão de investigação se o usuário enviar agradecimento de encerramento sem sessão ativa', async () => {
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(null);
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                { run: vi.fn() } as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-ack-test', 'Muito obrigado pela ajuda!', chatProvider);
+
+            // Não deve salvar nova sessão
+            expect(mockSessionRepo.save).not.toHaveBeenCalled();
+            // Deve responder educadamente
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-ack-test',
+                expect.stringContaining('Por nada!')
+            );
+        });
+
+        it('deve gerar resumo de fallback caso sessionSummary seja nulo ao encerrar explicitamente pelo operador', async () => {
+            const activeSession = {
+                id: 'sess-no-summary',
+                threadId: 'thread-no-summary',
+                workspaceId: 'workspace-abc',
+                status: 'ACTIVE',
+                startedAt: new Date(Date.now() - 600_000),
+                lastInteractionAt: new Date(),
+                closedAt: null,
+                sessionSummary: null,
+                evidenceLedger: {
+                    hasEvidence: () => false,
+                    getLogs: () => [],
+                    getMetrics: () => [],
+                    getTraces: () => [],
+                    getInfrastructure: () => [],
+                    getDatabase: () => [],
+                },
+                metadata: {},
+                confirmClosure: vi.fn().mockImplementation((summary) => {
+                    activeSession.sessionSummary = summary;
+                    activeSession.status = 'CLOSED_BY_USER';
+                }),
+            };
+            mockSessionRepo.findActiveByThreadId.mockResolvedValue(activeSession);
+
+            const sessionUseCase = new ProcessAgentResponseUse(
+                spaceMappingRepo,
+                tenantRepo,
+                chatRepo,
+                { run: vi.fn() } as any,
+                mockInvestigationEngine,
+                undefined,
+                mockSessionRepo
+            );
+
+            await sessionUseCase.execute('spaces/AAAA1111', 'thread-no-summary', 'finaliza a sessão', chatProvider);
+
+            expect(activeSession.confirmClosure).toHaveBeenCalledWith(expect.any(Object));
+            expect(mockSessionRepo.save).toHaveBeenCalledWith(activeSession);
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-no-summary',
+                expect.stringContaining('Sessão de investigação encerrada com sucesso pelo operador.')
+            );
+            expect(chatProvider.sendMessage).toHaveBeenCalledWith(
+                'thread-no-summary',
+                expect.stringContaining('RESUMO EXECUTIVO DE SESSÃO')
+            );
+        });
     });
 });
 

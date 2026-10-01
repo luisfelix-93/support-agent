@@ -62,6 +62,28 @@ export class MongoSessionRepository implements ISessionRepository {
             { $set: doc },
             { upsert: true }
         );
+
+        // Se a sessão está sendo encerrada, encerra preventivamente quaisquer sessões órfãs ativas da mesma thread
+        if (session.isClosed()) {
+            await this.collection.updateMany(
+                {
+                    workspaceId: session.workspaceId,
+                    threadId: session.threadId,
+                    id: { $ne: session.id },
+                    status: {
+                        $in: [SessionStatus.ACTIVE, SessionStatus.AWAITING_CLOSURE_CONFIRMATION],
+                    },
+                },
+                {
+                    $set: {
+                        status: session.status,
+                        closedAt: session.closedAt || new Date(),
+                        updatedAt: new Date(),
+                    },
+                }
+            );
+        }
+
         log.debug({ sessionId: session.id, status: session.status }, 'InvestigationSession persistida com sucesso.');
     }
 
