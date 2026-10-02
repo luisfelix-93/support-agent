@@ -27,9 +27,15 @@ O agente opera através de um runtime autônomo desacoplado (`IAgentHarness`), c
 - **Loop Iterativo Autônomo**: Avalia a entrada do usuário, decide se necessita de informações externas e invoca ferramentas dinamicamente até formular a resposta final.
 - **Rastreamento por `runId`**: Cada interação gera um identificador único (UUID v4) que amarra todos os logs, métricas, traces e registros analíticos.
 - **Guardrails de Execução (`ExecutionPolicy`)**:
-  - Limite rígido de **5 iterações de ferramentas** por execução para evitar loops infinitos.
-  - Timeout por iteração e timeout global de processamento.
-  - Interceptação forçada exigindo resposta final de síntese caso o limite seja atingido.
+  - Limite operacional padrão de **12 iterações de ferramentas** por execução (`MAX_TOOL_ITERATIONS`), viabilizando investigações aprofundadas em um único turno sem interrupções precoces.
+  - Timeout por iteração (`MCP_TIMEOUT_MS`), timeout de resposta do LLM (`LLM_TIMEOUT_MS`) e timeout global de processamento (`MAX_RUN_TIME_MS`).
+  - Interceptação forçada exigindo resposta final de síntese caso o teto seja atingido.
+- **Detecção de Estagnação & Trava Anti-Loop**:
+  - **Normalização Canônica (`getToolCallSignature`)**: Algoritmo recursivo que ordena chaves de argumentos JSON, eliminando falsos negativos por inversão cosmética de campos.
+  - **Corte de Chamadas Repetitivas**: Detecta quando o modelo requisita consecutivamente a mesma ferramenta com argumentos idênticos ($\ge 2$ vezes, configurável via `MAX_IDENTICAL_TOOL_CALLS`).
+  - **Interrupção Preventiva**: O Harness intercepta a requisição antes da chamada redundante ao servidor MCP, economizando latência e chamadas de rede externas.
+  - **Síntese Graciosa de Fallback**: Injeta aviso orientativo no contexto e invoca o LLM sem ferramentas (`tools: []`) para resumir os dados coletados até o momento.
+  - **Telemetria**: Rastreabilidade do evento via tag `agent.loop_detected = true` no span raiz do OpenTelemetry.
 - **Tratamento Resiliente de Ferramentas**: Falhas ou timeouts em ferramentas não quebram o atendimento; o erro é formatado e entregue como contexto para que o LLM tente uma abordagem alternativa ou explique a situação ao usuário.
 
 ---
