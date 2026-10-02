@@ -124,7 +124,15 @@ Runtime desacoplado encarregado de executar o ciclo de vida do agente:
   5. Se o LLM requisitar chamada de ferramenta (`tool_call`), despacha para o `IMCPClient` e injeta a resposta de volta no contexto.
   6. Finaliza a execução, persiste o `AgentRun` no MongoDB e agenda os jobs assíncronos de promoção de memória e auto-avaliação no BullMQ.
 - **`ContextAssembler`**: Injeta `systemInstructions`, memórias semânticas e trunca o histórico mais antigo quando necessário.
-- **`ExecutionPolicy`**: Guardrail que limita o loop a no máximo 5 iterações e impõe timeouts defensivos.
+- **`ExecutionPolicy`**: Guardrail operacional de execução que gerencia os limites do agente:
+  - `maxIterations`: Limite máximo de iterações de ferramentas por execução (padrão elevado para **12**, configurável via `MAX_TOOL_ITERATIONS`).
+  - `maxIdenticalToolCalls`: Limite de chamadas idênticas consecutivas da mesma ferramenta antes de abortar por estagnação/loop (padrão: **2**, configurável via `MAX_IDENTICAL_TOOL_CALLS`).
+  - Timeouts defensivos: `mcpTimeoutMs` (25s), `llmTimeoutMs` (60s) e `maxRunTimeMs` (120s global).
+  - `maxContextTokens`: Orçamento de tokens para a montagem de contexto (padrão: 4096).
+- **Assinatura Canônica de Ferramentas & Trava Anti-Loop (`getToolCallSignature`)**:
+  - Algoritmo de hashing determinístico (`sortKeysRecursively`) que normaliza a ordem das chaves dos parâmetros JSON (`name:sortedParamsJson`).
+  - Rastreia chamadas consecutivas: se a mesma assinatura for requisitada repetidamente ($\ge 2$ vezes), o Harness intercepta antes da chamada redundante ao servidor MCP.
+  - Injeta aviso de sistema orientando o modelo a sintetizar as evidências obtidas e aciona fallback (`agent.llm_call:loop_detected_fallback`), evitando travamentos, gasto descontrolado de tokens e loops cognitivos.
 - **`InvestigationEngine`**:
   - Avalia a mensagem inicial do usuário e o histórico de contexto.
   - Consulta o `PlaybookRegistry` e seleciona os playbooks adequados (retorna `null` em modo conversacional comum).
@@ -354,9 +362,10 @@ O `ToolGovernanceService` intercepta chamadas de ferramentas prevenindo ações 
    - Falhas consecutivas em um servidor (ex: Loki) não afetam a disponibilidade dos outros (ex: Kubernetes).
 2. **Idempotência**:
    - Webhooks de mensageria (Slack / Google Chat) utilizam chaves de idempotência baseadas em `eventId` ou hash da mensagem no Redis para prevenir respostas duplicadas.
-3. **Limites de Execução (Guardrails)**:
-   - `ExecutionPolicy` limita qualquer corrida agentic a 5 iterações de ferramentas.
-   - Timeouts estritos por iteração e por chamada de LLM.
+3. **Limites de Execução e Trava Anti-Loop (Guardrails)**:
+   - `ExecutionPolicy` limita a execução a 12 iterações por turno para permitir diagnósticos aprofundados sem interrupções precoces.
+   - Detecção ativa de estagnação: intercepta loops repetitivos de ferramentas consecutivas idênticas (`maxIdenticalToolCalls: 2`) com fallback orientado a síntese.
+   - Timeouts estritos por iteração de ferramenta (25s), por chamada de LLM (60s) e timeout global de segurança (120s).
 4. **Graceful Shutdown**:
    - Tratamento de `SIGTERM` e `SIGINT` aguardando a finalização de jobs em execução no BullMQ e fechando pools de conexões de forma segura.
 
@@ -370,7 +379,7 @@ O sistema possui observabilidade completa integrada aos três pilares:
 |---|---|---|
 | **Logs** | Pino + Grafana Loki | Formato JSON estruturado com correlação via `trace_id`, `span_id`, `tenantId` e `runId`. |
 | **Métricas** | Prometheus | Expostas em `/metrics`. Coletam latência do loop agentic, contadores de tokens, chamadas MCP e gauges de avaliação. |
-| **Tracing** | OpenTelemetry + Tempo | Spans granulares por requisição HTTP, iteração do Harness, chamadas de LLM, embeddings e operações de repositório. |
+| **Tracing** | OpenTelemetry + Tempo | Spans granulares por requisição HTTP, iteração do Harness, chamadas de LLM, embeddings, operações de repositório e anotação contextual de loops (`agent.loop_detected`). |
 
 Consulte [grafana-tempo-tracing.md](grafana-tempo-tracing.md) para detalhes da topologia de rastreamento.
 
