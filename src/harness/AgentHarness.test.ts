@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { AgentHarness } from './AgentHarness.js';
+import { AgentHarness, getToolCallSignature } from './AgentHarness.js';
 import { ContextAssembler } from './ContextAssembler.js';
 import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
 import { ChatContext } from '../domain/ChatContext.js';
@@ -563,4 +563,151 @@ describe('AgentHarness', () => {
         expect(savedRun.sessionId).toBe('sess-abc-999');
         expect(savedRun.totalTokens).toBe(200);
     });
+
+    describe('Fase 9B: Detector de Estagnação & Trava Anti-Loop', () => {
+        it('getToolCallSignature deve gerar assinatura canônica normalizada ordenando chaves recursivamente', () => {
+            const sig1 = getToolCallSignature({
+                name: 'consultar_k8s',
+                parameters: { namespace: 'default', pod: 'api-1', options: { tail: 100, follow: false } }
+            });
+            const sig2 = getToolCallSignature({
+                name: 'consultar_k8s',
+                parameters: { pod: 'api-1', namespace: 'default', options: { follow: false, tail: 100 } }
+            });
+
+            expect(sig1).toBe(sig2);
+            expect(sig1).toBe('consultar_k8s:{"namespace":"default","options":{"follow":false,"tail":100},"pod":"api-1"}');
+        });
+
+        it('deve permitir execução até 12 iterações quando chamadas de ferramentas progridem normalmente', async () => {
+            const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+            const { llmProvider, mcpClient } = makeMocks();
+            const policy = new ExecutionPolicy({ maxIterations: 12 });
+
+            // Simula 12 decisões com ferramentas diferentes e depois resposta de texto
+            for (let i = 1; i <= 12; i++) {
+                vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                    type: 'tool_call',
+                    tool: { name: `tool_step_${i}`, parameters: { step: i } } as any
+                });
+            }
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'text',
+                content: 'Investigação aprofundada de 12 passos concluída.'
+            });
+
+            const harness = new AgentHarness(contextAssembler, undefined, policy);
+            const context = new ChatContext('thread-deep-1', 'ws-1');
+
+            const result = await harness.run({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                threadId: 'thread-deep-1',
+                userMessage: 'Analisar incidente complexo',
+                context,
+                llmProvider,
+                mcpClient,
+                tools: [{ name: 'tool_step' }]
+            });
+
+            expect(result.status).toBe('completed');
+            expect(result.iterations).toBe(12);
+            expect(result.toolCalls).toHaveLength(12);
+            expect(mcpClient.executeTool).toHaveBeenCalledTimes(12);
+            expect(result.response).toBe('Investigação aprofundada de 12 passos concluída.');
+        });
+
+        it('deve abortar precocemente ao detectar chamadas consecutivas idênticas e acionar fallback de síntese', async () => {
+            const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+            const { llmProvider, mcpClient } = makeMocks();
+            const policy = new ExecutionPolicy({ maxIterations: 12, maxIdenticalToolCalls: 2 });
+
+            // 1ª chamada: ferramenta A com args { pod: 'auth-pod' } -> executa
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: { name: 'get_logs', parameters: { pod: 'auth-pod' } } as any
+            });
+
+            // 2ª chamada: exatamente a mesma ferramenta com mesmos args -> deve disparar loop_detected
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: { name: 'get_logs', parameters: { pod: 'auth-pod' } } as any
+            });
+
+            // Fallback: chamado sem ferramentas para resumir
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'text',
+                content: 'Síntese das evidências obtidas antes da interrupção do loop.'
+            });
+
+            const harness = new AgentHarness(contextAssembler, undefined, policy);
+            const context = new ChatContext('thread-loop-1', 'ws-1');
+
+            const result = await harness.run({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                threadId: 'thread-loop-1',
+                userMessage: 'Investigar repetição',
+                context,
+                llmProvider,
+                mcpClient,
+                tools: [{ name: 'get_logs' }]
+            });
+
+            expect(result.status).toBe('max_iterations');
+            expect(result.response).toBe('Síntese das evidências obtidas antes da interrupção do loop.');
+            // MCP só deve ter sido executado 1 vez (a 2ª chamada foi barrada pela trava anti-loop)
+            expect(mcpClient.executeTool).toHaveBeenCalledTimes(1);
+            expect(result.iterations).toBe(1);
+            // Fallback deve ter sido chamado com array vazio de tools
+            expect(vi.mocked(llmProvider.generateResponse).mock.calls[2][1]).toEqual([]);
+        });
+
+        it('deve resetar o contador consecutivo quando ferramentas alternam normalmente', async () => {
+            const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+            const { llmProvider, mcpClient } = makeMocks();
+            const policy = new ExecutionPolicy({ maxIterations: 12, maxIdenticalToolCalls: 2 });
+
+            // 1. Tool A
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: { name: 'tool_A', parameters: { id: 1 } } as any
+            });
+            // 2. Tool B (diferente -> reseta contador)
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: { name: 'tool_B', parameters: { id: 1 } } as any
+            });
+            // 3. Tool A novamente (não consecutiva -> permitida)
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: { name: 'tool_A', parameters: { id: 1 } } as any
+            });
+            // 4. Texto final
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'text',
+                content: 'Finalizado sem disparar loop.'
+            });
+
+            const harness = new AgentHarness(contextAssembler, undefined, policy);
+            const context = new ChatContext('thread-alternate-1', 'ws-1');
+
+            const result = await harness.run({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                threadId: 'thread-alternate-1',
+                userMessage: 'Testar alternância',
+                context,
+                llmProvider,
+                mcpClient,
+                tools: [{ name: 'tool_A' }, { name: 'tool_B' }]
+            });
+
+            expect(result.status).toBe('completed');
+            expect(result.iterations).toBe(3);
+            expect(mcpClient.executeTool).toHaveBeenCalledTimes(3);
+            expect(result.response).toBe('Finalizado sem disparar loop.');
+        });
+    });
 });
+

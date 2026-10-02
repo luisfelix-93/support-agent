@@ -41,30 +41,30 @@
 **Branch:** `feature/harness-loop-optimization`  
 **Responsável:** `backend-specialist`  
 **Depende de:** Sub-Fase 9A  
-**Status:** ⏳ Pendente  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Implementar helper de assinatura canônica de ferramenta em `src/harness/AgentHarness.ts`:
-  - [ ] Gerar string normalizada de assinatura (`toolName:sortedArgsJson`)
-- [ ] Implementar rastreamento de chamadas consecutivas no laço `while`:
-  - [ ] Manter `lastToolSignature` e `consecutiveIdenticalCalls` no escopo da execução
-  - [ ] Se a mesma ferramenta for chamada consecutivamente com argumentos idênticos $\ge$ `executionPolicy.maxIdenticalToolCalls`:
-    - [ ] Registrar log de warning com métricas de contexto
-    - [ ] Interromper o laço de ferramentas antes de esgotar o orçamento global
-    - [ ] Injetar mensagem de sistema orientando o LLM a sintetizar as informações coletadas até o momento
-    - [ ] Disparar chamada de fallback ao LLM sem ferramentas (`tools: []`)
-    - [ ] Definir status da execução apropriado (ex: `loop_detected` ou `max_iterations` com log contextual)
-- [ ] Garantir que chamadas com ferramentas diferentes ou argumentos distintos resetem o contador consecutivo
+- [x] Implementar helper de assinatura canônica de ferramenta em `src/harness/AgentHarness.ts`:
+  - [x] Gerar string normalizada de assinatura (`toolName:sortedArgsJson`)
+- [x] Implementar rastreamento de chamadas consecutivas no laço `while`:
+  - [x] Manter `lastToolSignature` e `consecutiveIdenticalCalls` no escopo da execução
+  - [x] Se a mesma ferramenta for chamada consecutivamente com argumentos idênticos $\ge$ `executionPolicy.maxIdenticalToolCalls`:
+    - [x] Registrar log de warning com métricas de contexto
+    - [x] Interromper o laço de ferramentas antes de esgotar o orçamento global
+    - [x] Injetar mensagem de sistema orientando o LLM a sintetizar as informações coletadas até o momento
+    - [x] Disparar chamada de fallback ao LLM sem ferramentas (`tools: []`)
+    - [x] Definir status da execução apropriado (ex: `loop_detected` ou `max_iterations` com log contextual)
+- [x] Garantir que chamadas com ferramentas diferentes ou argumentos distintos resetem o contador consecutivo
 
 ### Testes
-- [ ] Atualizar `src/harness/AgentHarness.test.ts`:
-  - [ ] Testar execução contínua até 12 iterações quando as chamadas de ferramentas progridem normalmente
-  - [ ] Testar interrupção antecipada quando uma ferramenta idêntica é solicitada consecutivamente acima do limite
-  - [ ] Testar injeção do aviso de sistema e geração da resposta final via fallback de síntese
+- [x] Atualizar `src/harness/AgentHarness.test.ts`:
+  - [x] Testar execução contínua até 12 iterações quando as chamadas de ferramentas progridem normalmente
+  - [x] Testar interrupção antecipada quando uma ferramenta idêntica é solicitada consecutivamente acima do limite
+  - [x] Testar injeção do aviso de sistema e geração da resposta final via fallback de síntese
 
 ### Verificação
-- [ ] `npm test -- src/harness/AgentHarness.test.ts` 100% aprovado
-- [ ] `npm run build` compila com 0 erros TypeScript strict
+- [x] `npm test -- src/harness/AgentHarness.test.ts` 100% aprovado (16/16 testes)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 

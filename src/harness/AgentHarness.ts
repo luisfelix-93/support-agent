@@ -30,6 +30,33 @@ import { CircuitBreakerOpenError } from "../infrastructure/resilience/CircuitBre
 
 const baseLog = logger.child({ module: 'AgentHarness' });
 
+function sortKeysRecursively(obj: unknown): unknown {
+    if (obj === null || typeof obj !== 'object') {
+        return obj;
+    }
+    if (Array.isArray(obj)) {
+        return obj.map(sortKeysRecursively);
+    }
+    const record = obj as Record<string, unknown>;
+    const sortedKeys = Object.keys(record).sort();
+    const result: Record<string, unknown> = {};
+    for (const key of sortedKeys) {
+        result[key] = sortKeysRecursively(record[key]);
+    }
+    return result;
+}
+
+export function getToolCallSignature(toolCall: { name: string; parameters?: Record<string, unknown> }): string {
+    const name = toolCall.name || '';
+    const params = toolCall.parameters ?? {};
+    try {
+        const sortedParams = sortKeysRecursively(params);
+        return `${name}:${JSON.stringify(sortedParams)}`;
+    } catch {
+        return `${name}:${JSON.stringify(params)}`;
+    }
+}
+
 export class AgentHarness implements IAgentHarness {
     constructor(
         private readonly contextAssembler: IContextAssembler,
@@ -259,16 +286,57 @@ export class AgentHarness implements IAgentHarness {
                         async () => generateLlmWithTimeout(assembledContext, initialTools)
                     );
                     let iteration = 0;
+                    let lastToolSignature: string | undefined;
+                    let consecutiveIdenticalCalls = 0;
 
                     while (
                         currentDecision.type === 'tool_call' &&
                         this.executionPolicy.shouldContinue(iteration) &&
                         !timeoutTriggered
                     ) {
+                        const toolCall = currentDecision.tool;
+                        const signature = getToolCallSignature(toolCall);
+
+                        if (signature === lastToolSignature) {
+                            consecutiveIdenticalCalls++;
+                            if (consecutiveIdenticalCalls >= this.executionPolicy.maxIdenticalToolCalls) {
+                                log.warn(
+                                    {
+                                        tool: toolCall.name,
+                                        consecutiveIdenticalCalls,
+                                        maxIdenticalToolCalls: this.executionPolicy.maxIdenticalToolCalls
+                                    },
+                                    'Loop/estagnação detectado: ferramenta chamada consecutivamente com parâmetros idênticos. Interrompendo execução para síntese.'
+                                );
+                                rootSpan.setAttribute('agent.loop_detected', true);
+
+                                assembledContext.addMessage(
+                                    new Message(
+                                        crypto.randomUUID(),
+                                        'system',
+                                        'Aviso do Sistema: Chamadas repetidas da mesma ferramenta foram interrompidas para evitar loop de execução. Por favor, resuma as evidências já obtidas e forneça uma resposta conclusiva ao usuário.'
+                                    )
+                                );
+
+                                const fallbackDecision = await withSpan(
+                                    'agent.llm_call:loop_detected_fallback',
+                                    async () => generateLlmWithTimeout(assembledContext, [])
+                                );
+
+                                finalResponseText = fallbackDecision.type === 'text'
+                                    ? fallbackDecision.content
+                                    : 'Interrompemos a análise para evitar repetição de ações. Resumo das evidências coletadas.';
+                                status = 'max_iterations';
+                                break;
+                            }
+                        } else {
+                            lastToolSignature = signature;
+                            consecutiveIdenticalCalls = 1;
+                        }
+
                         iteration++;
                         run.iterations = iteration;
 
-                        const toolCall = currentDecision.tool;
                         log.info({ iteration, tool: toolCall.name }, 'LLM solicitou chamada de ferramenta.');
                         agentToolCallsTotal.inc({ tenantId: input.tenantId, tool: toolCall.name });
 
@@ -355,7 +423,7 @@ export class AgentHarness implements IAgentHarness {
                         status = 'failed';
                         finalResponseText = finalResponseText || 'Tempo limite de execução atingido. A operação foi interrompida.';
                     } else if (finalResponseText) {
-                        // já definido pelo fallback de circuit breaker
+                        // já definido pelo fallback de circuit breaker ou pelo detector de loop
                     } else if (currentDecision.type === 'text') {
                         finalResponseText = currentDecision.content;
                         status = 'completed';
