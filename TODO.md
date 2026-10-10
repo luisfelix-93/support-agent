@@ -36,24 +36,25 @@
 **Branch:** `feature/mcp-output-sanitization`  
 **Responsável:** `backend-specialist`  
 **Depende de:** Sub-Fase 10A  
-**Status:** ⏳ Pendente  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Atualizar `src/harness/ExecutionPolicy.ts`:
-  - [ ] Adicionar `maxToolOutputChars?: number` (padrão: 6000 ou `MAX_TOOL_OUTPUT_CHARS`)
-  - [ ] Adicionar `maxToolOutputLines?: number` (padrão: 50 ou `MAX_TOOL_OUTPUT_LINES`)
-- [ ] Atualizar `.env.example`:
-  - [ ] Documentar `MAX_TOOL_OUTPUT_CHARS=6000`
-  - [ ] Documentar `MAX_TOOL_OUTPUT_LINES=50`
-- [ ] Atualizar `src/harness/AgentHarness.ts`:
-  - [ ] Injetar `ToolOutputSanitizer` no fluxo do loop `while` antes de adicionar mensagens a `assembledContext`
-  - [ ] Manter auditoria detalhada em `run.recordToolCall(...)`
-- [ ] Atualizar testes em `src/harness/AgentHarness.test.ts`:
-  - [ ] Validar que payloads de ferramentas adicionados ao contexto respeitam os limites configurados
+- [x] Atualizar `src/harness/ExecutionPolicy.ts`:
+  - [x] Adicionar `maxToolOutputChars?: number` (padrão: 6000 ou `MAX_TOOL_OUTPUT_CHARS`)
+  - [x] Adicionar `maxToolOutputLines?: number` (padrão: 50 ou `MAX_TOOL_OUTPUT_LINES`)
+- [x] Atualizar `.env.example`:
+  - [x] Documentar `MAX_TOOL_OUTPUT_CHARS=6000`
+  - [x] Documentar `MAX_TOOL_OUTPUT_LINES=50`
+- [x] Atualizar `src/harness/AgentHarness.ts`:
+  - [x] Injetar `ToolOutputSanitizer` no fluxo do loop `while` antes de adicionar mensagens a `assembledContext`
+  - [x] Manter auditoria detalhada em `run.recordToolCall(...)`
+- [x] Atualizar testes em `src/harness/AgentHarness.test.ts`:
+  - [x] Validar que payloads de ferramentas adicionados ao contexto respeitam os limites configurados
 
 ### Verificação
-- [ ] `npm test -- src/harness/AgentHarness.test.ts` 100% aprovado
-- [ ] `npm test -- src/harness/ExecutionPolicy.test.ts` 100% aprovado
+- [x] `npm test -- src/harness/AgentHarness.test.ts` 100% aprovado (18/18 testes)
+- [x] `npm test -- src/harness/ExecutionPolicy.test.ts` 100% aprovado (4/4 testes)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 

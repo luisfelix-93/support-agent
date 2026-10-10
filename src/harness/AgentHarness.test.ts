@@ -709,5 +709,114 @@ describe('AgentHarness', () => {
             expect(result.response).toBe('Finalizado sem disparar loop.');
         });
     });
+
+    describe('Sanitização de saídas de ferramentas no contexto do LLM', () => {
+        it('deve sanitizar payload ruidoso de ferramenta antes de injetar no contexto da próxima iteração', async () => {
+            const { llmProvider, mcpClient, agentRunRepository } = makeMocks();
+            const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+            const policy = new ExecutionPolicy({ maxToolOutputChars: 500 });
+
+            // Iteração 0: LLM pede ferramenta
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: { name: 'get_k8s_pod', parameters: { pod: 'auth-pod' } } as any
+            });
+
+            // Retorno bruto com metadados ruidosos de K8s
+            const rawPodOutput = {
+                metadata: {
+                    name: 'auth-pod',
+                    namespace: 'default',
+                    managedFields: [{ manager: 'kube-controller', fieldsType: 'FieldsV1' }],
+                    ownerReferences: [{ kind: 'ReplicaSet', name: 'auth-pod-rs' }]
+                },
+                status: {
+                    phase: 'Running',
+                    restartCount: 0
+                }
+            };
+            vi.mocked(mcpClient.executeTool).mockResolvedValueOnce(rawPodOutput);
+
+            // Iteração 1: LLM recebe contexto sanitizado e responde texto
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'text',
+                content: 'Pod auth-pod está em estado Running.'
+            });
+
+            const harness = new AgentHarness(contextAssembler, undefined, policy, undefined, undefined, undefined, agentRunRepository);
+            const context = new ChatContext('thread-sanitized-1', 'ws-1');
+
+            const result = await harness.run({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                threadId: 'thread-sanitized-1',
+                userMessage: 'Verifique o pod auth-pod',
+                context,
+                llmProvider,
+                mcpClient,
+                tools: [{ name: 'get_k8s_pod' }]
+            });
+
+            expect(result.status).toBe('completed');
+            expect(result.iterations).toBe(1);
+
+            // Verifica a chamada da segunda iteração ao LLM
+            const secondCallContext = vi.mocked(llmProvider.generateResponse).mock.calls[1][0] as ChatContext;
+            const toolSystemMsg = secondCallContext.messages.find(m => m.role === 'system' && m.content.includes('auth-pod'));
+            expect(toolSystemMsg).toBeDefined();
+
+            // O conteúdo injetado no contexto não deve conter managedFields nem ownerReferences
+            expect(toolSystemMsg?.content).not.toContain('managedFields');
+            expect(toolSystemMsg?.content).not.toContain('ownerReferences');
+            expect(toolSystemMsg?.content).toContain('Running');
+
+            // Porém a auditoria persistida no AgentRun deve preservar o payload bruto original
+            expect(agentRunRepository.save).toHaveBeenCalled();
+            const savedRun = vi.mocked(agentRunRepository.save).mock.calls[0][0];
+            expect(savedRun.toolCalls[0].result).toEqual(rawPodOutput);
+        });
+
+        it('deve truncar saída textual excessivamente longa respeitando maxToolOutputLines', async () => {
+            const { llmProvider, mcpClient } = makeMocks();
+            const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+            const policy = new ExecutionPolicy({ maxToolOutputLines: 10 });
+
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: { name: 'fetch_logs', parameters: { service: 'api' } } as any
+            });
+
+            // 50 linhas de log
+            const longLogs = Array.from({ length: 50 }, (_, i) => `log line #${i + 1}`).join('\n');
+            vi.mocked(mcpClient.executeTool).mockResolvedValueOnce(longLogs);
+
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'text',
+                content: 'Logs analisados.'
+            });
+
+            const harness = new AgentHarness(contextAssembler, undefined, policy);
+            const context = new ChatContext('thread-log-trunc-1', 'ws-1');
+
+            const result = await harness.run({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                threadId: 'thread-log-trunc-1',
+                userMessage: 'Buscar logs',
+                context,
+                llmProvider,
+                mcpClient,
+                tools: [{ name: 'fetch_logs' }]
+            });
+
+            expect(result.status).toBe('completed');
+
+            const secondCallContext = vi.mocked(llmProvider.generateResponse).mock.calls[1][0] as ChatContext;
+            const logSystemMsg = secondCallContext.messages.find(m => m.role === 'system' && m.content.includes('log line'));
+            expect(logSystemMsg).toBeDefined();
+            expect(logSystemMsg?.content).toContain('linhas intermediárias suprimidas para economia de contexto');
+        });
+    });
 });
+
 
