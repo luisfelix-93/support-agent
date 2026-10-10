@@ -177,4 +177,51 @@ SESSION SUMMARY
         expect(engine.hasSessionSummary(variation3)).toBe(true);
         expect(engine.stripSessionSummary(variation3)).toBe('Métricas verificadas.');
     });
+
+    it('deve incluir o protocolo anti-alucinação e diretriz de hipótese condicional nas instruções de sistema', () => {
+        const plan = engine.evaluate('Erro 500 no endpoint de checkout');
+        expect(plan).not.toBeNull();
+        expect(plan!.systemInstructions).toContain('CALIBRAÇÃO DE CERTEZA & PROTOCOLO ANTI-ALUCINAÇÃO');
+        expect(plan!.systemInstructions).toContain('[HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]');
+        expect(plan!.systemInstructions).toContain('Disclaimer de Ausência de Evidência Direta');
+        expect(plan!.systemInstructions).toContain('Verificações Normais');
+        expect(plan!.systemInstructions).toContain('Hipóteses Sugestivas');
+        expect(plan!.systemInstructions).toContain('Próximas Ferramentas Sugeridas');
+    });
+
+    it('deve extrair SessionSummary com isConditional=true quando contiver disclaimer e hipótese condicional', () => {
+        const conditionalResponse = `
+Verifiquei os serviços e não localizei erros ativos nos logs.
+
+═══════════════════════════════════════════════════════════
+📋 RESUMO EXECUTIVO DE SESSÃO (SESSION SUMMARY)
+═══════════════════════════════════════════════════════════
+• Run ID: run-cond-100
+• Serviço / Componente: notification-service
+• Janela do Incidente: 09:00 às 09:30
+• Playbooks Ativados: api-error
+
+🔍 EVIDÊNCIAS CONSOLIDADAS:
+• Logs:
+  - Nenhum erro encontrado na janela consultada
+• Métricas:
+  - Taxa de 5xx em 0%
+
+💡 HIPÓTESE DE CAUSA RAIZ (RCA):
+[HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]: Telemetria saudável no momento. Hipótese de falha temporária em provedor de SMS externo ou perda de conectividade transitória.
+
+🛠️ AÇÕES RECOMENDADAS:
+1. Consultar endpoint de status do gateway de SMS
+2. Monitorar fila de notificações por mais 15 minutos
+═══════════════════════════════════════════════════════════
+        `;
+
+        const summary = engine.extractSessionSummary(conditionalResponse, 'run-cond-100', ['api-error']);
+        expect(summary).not.toBeNull();
+        expect(summary!.isConditional).toBe(true);
+        expect(summary!.rootCauseHypothesis).toContain('[HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]');
+        expect(summary!.rootCauseHypothesis).toContain('provedor de SMS externo');
+        expect(summary!.recommendedActions).toHaveLength(2);
+    });
 });
+

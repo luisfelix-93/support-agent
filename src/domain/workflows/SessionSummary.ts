@@ -56,6 +56,11 @@ export class SessionSummary {
         this.playbooksInvolved = props.playbooksInvolved ? [...props.playbooksInvolved] : [];
     }
 
+    get isConditional(): boolean {
+        return this.rootCauseHypothesis.includes('HIPÓTESE CONDICIONAL') ||
+               this.rootCauseHypothesis.includes('EVIDÊNCIA INCONCLUSIVA');
+    }
+
     static createFallback(session: any, reason: 'user' | 'timeout' = 'user'): SessionSummary {
         const ledger = session.evidenceLedger;
         const hasEvidences = ledger && typeof ledger.hasEvidence === 'function' ? ledger.hasEvidence() : false;

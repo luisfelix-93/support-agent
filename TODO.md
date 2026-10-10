@@ -63,18 +63,20 @@
 **Branch:** `feature/mcp-output-sanitization`  
 **Responsável:** `prompt-engineer` / `backend-specialist`  
 **Depende de:** Sub-Fase 10B  
-**Status:** ⏳ Pendente  
+**Status:** ✅ Concluída  
 
 ### Implementação
-- [ ] Atualizar diretrizes de sistema em `src/harness/InvestigationEngine.ts`:
-  - [ ] Adicionar regra de calibração de certeza (proibir afirmação definitiva sem evidência direta)
-  - [ ] Definir formato para cenários inconclusivos com a tag `[HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]`
-  - [ ] Exigir estrutura com: (1) Verificações normais, (2) Disclaimer de evidência direta ausente, (3) Hipóteses prováveis em cenários análogos, (4) Próximas ferramentas sugeridas
-- [ ] Atualizar testes em `src/harness/InvestigationEngine.test.ts`:
-  - [ ] Validar presença do protocolo de disclaimer e hipóteses nas instruções do playbook
+- [x] Atualizar diretrizes de sistema em `src/harness/InvestigationEngine.ts`:
+  - [x] Adicionar regra de calibração de certeza (proibir afirmação definitiva sem evidência direta)
+  - [x] Definir formato para cenários inconclusivos com a tag `[HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]`
+  - [x] Exigir estrutura com: (1) Verificações normais, (2) Disclaimer de evidência direta ausente, (3) Hipóteses prováveis em cenários análogos, (4) Próximas ferramentas sugeridas
+- [x] Atualizar testes em `src/harness/InvestigationEngine.test.ts`:
+  - [x] Validar presença do protocolo de disclaimer e hipóteses nas instruções do playbook
+- [x] Adicionar getter `isConditional` em `src/domain/workflows/SessionSummary.ts` para detecção de hipóteses com disclaimer
 
 ### Verificação
-- [ ] `npm test -- src/harness/InvestigationEngine.test.ts` 100% aprovado
+- [x] `npm test -- src/harness/InvestigationEngine.test.ts` 100% aprovado (10/10 testes)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 
