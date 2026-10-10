@@ -1,101 +1,121 @@
-# TODO — Fase 9: Otimização de Iterações e Resiliência Anti-Loop do AgentHarness (Opção A)
+# TODO — Fase 10: Sanitização de Saída MCP & Ancoragem de Hipóteses com Disclaimer (Opção A)
 
-> Checklist operacional de implementação para acompanhamento contínuo da Fase 9 (Opção A: Limite Dinâmico & Trava Anti-Loop).  
+> Checklist operacional de implementação para acompanhamento contínuo da Fase 10 (Sanitização de Payloads MCP & Mitigação de Alucinações).  
 > Marque `[x]` conforme cada item for concluído.  
-> Plano de referência: [docs/harness-iterations.md](docs/harness-iterations.md) | Roadmap: [roadmap.md](docs/roadmap.md)  
-> Fase anterior: [Fase 8 Concluída](docs/phase8-summary.md)  
+> Plano de referência: [mcp-sanitization-plan.md](mcp-sanitization-plan.md) | Roadmap: [roadmap.md](docs/roadmap.md)  
+> Fase anterior: [Fase 9 Concluída](docs/release-notes-harness-loop-optimization.md)  
 
 ---
 
-## Sub-Fase 9A: Parametrização e Política de Execução (`ExecutionPolicy`)
+## Sub-Fase 10A: Componente de Domínio / Harness `ToolOutputSanitizer`
 
-**Branch:** `feature/harness-loop-optimization`  
+**Branch:** `feature/mcp-output-sanitization`  
 **Responsável:** `backend-specialist`  
 **Status:** ✅ Concluída  
 
 ### Implementação
-- [x] Criar branch dedicada `feature/harness-loop-optimization` a partir de `dev`
-- [x] Atualizar interface `ExecutionPolicyConfig` (`src/harness/ExecutionPolicy.ts`):
-  - [x] Adicionar `maxIdenticalToolCalls?: number;`
-- [x] Atualizar classe `ExecutionPolicy` (`src/harness/ExecutionPolicy.ts`):
-  - [x] Alterar valor padrão de `maxIterations` de 5 para 12
-  - [x] Adicionar propriedade pública `public readonly maxIdenticalToolCalls: number;` (padrão: 2 ou `Number(process.env.MAX_IDENTICAL_TOOL_CALLS) || 2`)
-  - [x] Adicionar método helper ou verificação para validação de limites
-- [x] Atualizar `.env.example`:
-  - [x] Documentar `MAX_TOOL_ITERATIONS=12`
-  - [x] Documentar `MAX_IDENTICAL_TOOL_CALLS=2`
-
-### Testes
-- [x] Criar/atualizar testes unitários em `src/harness/ExecutionPolicy.test.ts`:
-  - [x] Validar defaults (`maxIterations = 12`, `maxIdenticalToolCalls = 2`)
-  - [x] Validar leitura correta a partir de variáveis de ambiente e via injeção customizada
+- [x] Criar branch dedicada `feature/mcp-output-sanitization` a partir de `dev`
+- [x] Implementar classe e interfaces em `src/harness/ToolOutputSanitizer.ts`:
+  - [x] Interface `SanitizationOptions` (`maxLines?: number`, `maxChars?: number`, `pruneKeys?: string[]`)
+  - [x] Poda de chaves ruidosas/metadados em objetos JSON (ex: `metadata.managedFields`, `ownerReferences`, valores vazios/nulos)
+  - [x] Truncamento seguro de saídas tabulares e streams de logs (`maxLines` com mensagem de supressão)
+  - [x] Preservação de campos essenciais (status, mensagens de erro, identificadores chave)
+- [x] Criar testes unitários em `src/harness/ToolOutputSanitizer.test.ts`:
+  - [x] Testar poda de JSON de K8s e Loki mantendo propriedades relevantes
+  - [x] Testar limites de linhas e caracteres com marcador de corte
+  - [x] Testar idempotência com payloads já enxutos e tipos primitivos
 
 ### Verificação
-- [x] `npm test` passa sem quebras nos testes existentes (92 arquivos, 708 testes aprovados)
+- [x] `npm test -- src/harness/ToolOutputSanitizer.test.ts` 100% aprovado (9/9 testes)
 - [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 
-## Sub-Fase 9B: Detector de Estagnação & Trava Anti-Loop no `AgentHarness`
+## Sub-Fase 10B: Integração no `AgentHarness` & Parâmetros de Execução
 
-**Branch:** `feature/harness-loop-optimization`  
+**Branch:** `feature/mcp-output-sanitization`  
 **Responsável:** `backend-specialist`  
-**Depende de:** Sub-Fase 9A  
-**Status:** ✅ Concluída  
+**Depende de:** Sub-Fase 10A  
+**Status:** ⏳ Pendente  
 
 ### Implementação
-- [x] Implementar helper de assinatura canônica de ferramenta em `src/harness/AgentHarness.ts`:
-  - [x] Gerar string normalizada de assinatura (`toolName:sortedArgsJson`)
-- [x] Implementar rastreamento de chamadas consecutivas no laço `while`:
-  - [x] Manter `lastToolSignature` e `consecutiveIdenticalCalls` no escopo da execução
-  - [x] Se a mesma ferramenta for chamada consecutivamente com argumentos idênticos $\ge$ `executionPolicy.maxIdenticalToolCalls`:
-    - [x] Registrar log de warning com métricas de contexto
-    - [x] Interromper o laço de ferramentas antes de esgotar o orçamento global
-    - [x] Injetar mensagem de sistema orientando o LLM a sintetizar as informações coletadas até o momento
-    - [x] Disparar chamada de fallback ao LLM sem ferramentas (`tools: []`)
-    - [x] Definir status da execução apropriado (ex: `loop_detected` ou `max_iterations` com log contextual)
-- [x] Garantir que chamadas com ferramentas diferentes ou argumentos distintos resetem o contador consecutivo
-
-### Testes
-- [x] Atualizar `src/harness/AgentHarness.test.ts`:
-  - [x] Testar execução contínua até 12 iterações quando as chamadas de ferramentas progridem normalmente
-  - [x] Testar interrupção antecipada quando uma ferramenta idêntica é solicitada consecutivamente acima do limite
-  - [x] Testar injeção do aviso de sistema e geração da resposta final via fallback de síntese
+- [ ] Atualizar `src/harness/ExecutionPolicy.ts`:
+  - [ ] Adicionar `maxToolOutputChars?: number` (padrão: 6000 ou `MAX_TOOL_OUTPUT_CHARS`)
+  - [ ] Adicionar `maxToolOutputLines?: number` (padrão: 50 ou `MAX_TOOL_OUTPUT_LINES`)
+- [ ] Atualizar `.env.example`:
+  - [ ] Documentar `MAX_TOOL_OUTPUT_CHARS=6000`
+  - [ ] Documentar `MAX_TOOL_OUTPUT_LINES=50`
+- [ ] Atualizar `src/harness/AgentHarness.ts`:
+  - [ ] Injetar `ToolOutputSanitizer` no fluxo do loop `while` antes de adicionar mensagens a `assembledContext`
+  - [ ] Manter auditoria detalhada em `run.recordToolCall(...)`
+- [ ] Atualizar testes em `src/harness/AgentHarness.test.ts`:
+  - [ ] Validar que payloads de ferramentas adicionados ao contexto respeitam os limites configurados
 
 ### Verificação
-- [x] `npm test -- src/harness/AgentHarness.test.ts` 100% aprovado (16/16 testes)
-- [x] `npm run build` compila com 0 erros TypeScript strict
+- [ ] `npm test -- src/harness/AgentHarness.test.ts` 100% aprovado
+- [ ] `npm test -- src/harness/ExecutionPolicy.test.ts` 100% aprovado
 
 ---
 
-## Sub-Fase 9C: Testes de Regressão, Validação Geral & Documentação
+## Sub-Fase 10C: Protocolo de Incerteza & Hipóteses com Disclaimer no `InvestigationEngine`
 
-**Branch:** `feature/harness-loop-optimization`  
+**Branch:** `feature/mcp-output-sanitization`  
+**Responsável:** `prompt-engineer` / `backend-specialist`  
+**Depende de:** Sub-Fase 10B  
+**Status:** ⏳ Pendente  
+
+### Implementação
+- [ ] Atualizar diretrizes de sistema em `src/harness/InvestigationEngine.ts`:
+  - [ ] Adicionar regra de calibração de certeza (proibir afirmação definitiva sem evidência direta)
+  - [ ] Definir formato para cenários inconclusivos com a tag `[HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]`
+  - [ ] Exigir estrutura com: (1) Verificações normais, (2) Disclaimer de evidência direta ausente, (3) Hipóteses prováveis em cenários análogos, (4) Próximas ferramentas sugeridas
+- [ ] Atualizar testes em `src/harness/InvestigationEngine.test.ts`:
+  - [ ] Validar presença do protocolo de disclaimer e hipóteses nas instruções do playbook
+
+### Verificação
+- [ ] `npm test -- src/harness/InvestigationEngine.test.ts` 100% aprovado
+
+---
+
+## Sub-Fase 10D: Auto-Avaliação, Validação E2E & Documentação
+
+**Branch:** `feature/mcp-output-sanitization`  
 **Responsável:** `qa-engineer` / `backend-specialist`  
-**Depende de:** Sub-Fase 9A e 9B concluídas  
-**Status:** ✅ Concluída  
+**Depende de:** Sub-Fases 10A, 10B e 10C concluídas  
+**Status:** ⏳ Pendente  
 
 ### Implementação & Testes
-- [x] Executar suíte completa de testes unitários:
-  - [x] `npm test` (92 arquivos, 712 testes aprovados sem regressões)
-- [x] Executar testes de integração do harness:
-  - [x] `npm run test:integration` (10 arquivos, 19 testes aprovados)
-- [x] Atualizar status em [docs/harness-iterations.md](docs/harness-iterations.md)
-- [x] Criar release notes técnico em [docs/release-notes-harness-loop-optimization.md](docs/release-notes-harness-loop-optimization.md)
+- [ ] Atualizar prompt de auto-avaliação em `src/evaluation/SelfEvaluationPrompt.ts`:
+  - [ ] Calibrar critério de `completeness` e `hallucinationRisk` para validar positivamente o uso de disclaimers honestos
+- [ ] Executar suíte completa de testes:
+  - [ ] `npm test` (92+ arquivos unitários sem regressão)
+  - [ ] `npm run test:integration` (testes de integração do harness e multi-MCP)
+- [ ] Atualizar a documentação disponível e, `architecture.md`, `features.md`, `TODO.md`. 
+- [ ] Criar release notes técnico em `docs/release-notes-mcp-output-sanitization.md`
 
 ---
 
-## Definition of Done (Fase 9 - Opção A Completa)
+## Definition of Done (Fase 10 - Opção A Completa)
 
-- [x] `maxIterations` elevado para 12 permitindo investigações aprofundadas sem necessidade de múltiplos "continue"
-- [x] Detector anti-loop bloqueando chamadas repetitivas idênticas com síntese graciosa
-- [x] Variáveis configuráveis no `.env.example`
-- [x] Suíte de testes unitários e de integração 100% aprovada (712 unitários + 19 integração)
-- [x] TypeScript strict sem warnings ou erros de compilação (`npm run build` aprovado)
+- [ ] Saídas de ferramentas MCP sanitizadas e truncadas antes da injeção no contexto do LLM
+- [ ] Economia perceptível no consumo de tokens em investigações multi-passo
+- [ ] Agente instruído a emitir disclaimer explícito ao levantar hipóteses sem evidência direta
+- [ ] Suíte de testes unitários e de integração 100% aprovada
+- [ ] TypeScript strict sem warnings ou erros de compilação (`npm run build`)
 
 ---
 
 ## Histórico de Fases Anteriores Concluídas
+
+<details>
+<summary><b>Fase 9: Otimização de Iterações e Resiliência Anti-Loop do AgentHarness — Concluída ✅</b></summary>
+
+- [x] Sub-Fase 9A: Parametrização e Política de Execução (`ExecutionPolicy` com `maxIterations=12` e `maxIdenticalToolCalls=2`)
+- [x] Sub-Fase 9B: Detector de Estagnação & Trava Anti-Loop no `AgentHarness`
+- [x] Sub-Fase 9C: Testes de Regressão, Validação Geral & Documentação
+- [x] 100% de testes aprovados (92 arquivos, 712 testes unitários / 10 arquivos de integração, 19 testes)
+- [x] Documento consolidado: [docs/release-notes-harness-loop-optimization.md](docs/release-notes-harness-loop-optimization.md)
+</details>
 
 <details>
 <summary><b>Fase 8: Contabilidade e Gestão de Tokens por Sessão — Concluída ✅</b></summary>
