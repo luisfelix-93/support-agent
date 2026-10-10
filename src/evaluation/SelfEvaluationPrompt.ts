@@ -54,9 +54,9 @@ ${sanitizedResponse}
 
 ### CRITÉRIOS DE AVALIAÇÃO (Atribua valores entre 0.00 e 1.00):
 1. **confidence** (0.00 a 1.00): Grau de clareza, certeza e postura profissional na resposta. Não confunda com excesso de confiança infundada.
-2. **hallucinationRisk** (0.00 a 1.00): Probabilidade de a resposta conter dados inverídicos, inventados, falsas promessas ou informações não respaldadas pelo contexto ou ferramentas. (0.00 = 100% fundamentada, 1.00 = clara alucinação).
+2. **hallucinationRisk** (0.00 a 1.00): Probabilidade de a resposta conter dados inverídicos, inventados, falsas promessas ou informações não respaldadas pelo contexto ou ferramentas. (0.00 = 100% fundamentada, 1.00 = clara alucinação). NOTA: Se o agente não encontrar evidências diretas nos retornos das ferramentas e adotar hipótese condicional com disclaimer transparente (ex: '[HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]'), isso NÃO é alucinação (atribua risco baixo, ex: 0.00 a 0.05). Alucinação é inventar dados ou afirmar causas categóricas sem suporte.
 3. **contextRelevance** (0.00 a 1.00): Adequação no uso das informações de contexto e memórias disponíveis. Se nenhuma memória foi necessária e a resposta foi correta, atribua 1.00.
-4. **completeness** (0.00 a 1.00): Grau em que a solicitação ou dúvida do usuário foi atendida de maneira completa, sem deixar pontas soltas.
+4. **completeness** (0.00 a 1.00): Grau em que a solicitação ou dúvida do usuário foi atendida de maneira completa, sem deixar pontas soltas. NOTA: Quando a telemetria for inconclusiva ou não apresentar erros ativos, uma resposta que elenca as verificações normais realizadas, emite disclaimer honesto, levanta hipóteses prováveis e recomenda próximos passos investigativos deve ser considerada COMPLETA (0.90 a 1.00), e NÃO incompleta.
 5. **toolSelectionQuality** (0.00 a 1.00): Acurácia na decisão de chamar ferramentas e parâmetros informados. Se nenhuma ferramenta foi necessária e o agente não a chamou, atribua 1.00. Se chamou ferramentas desnecessárias ou com parâmetros errados, atribua nota baixa.
 
 ---
@@ -103,6 +103,20 @@ Avaliação:
   "completeness": 0.15,
   "toolSelectionQuality": 0.05,
   "reasoning": "Chamou ferramenta perigosa e irrelevante para redefinição de senha e não orientou o usuário."
+}
+
+[Exemplo 4 - Investigação com Telemetria Normal & Hipótese Condicional com Disclaimer]
+Usuário: "Clientes reclamaram de lentidão no checkout às 10h."
+Ações: Chamou query_metrics(service="checkout") -> Latência p99=120ms (normal). Chamou query_logs(service="checkout") -> Sem logs de erro.
+Resposta: "Verifiquei a telemetria do serviço checkout entre 09:50 e 10:15 e tanto métricas quanto logs estão saudáveis. [HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]: Sem evidência direta de degradação interna no checkout no momento; hipótese de instabilidade em gateway de pagamento externo ou conexão transitória de clientes. Recomendo consultar a telemetria do gateway de pagamento."
+Avaliação:
+{
+  "confidence": 0.95,
+  "hallucinationRisk": 0.02,
+  "contextRelevance": 1.00,
+  "completeness": 0.98,
+  "toolSelectionQuality": 1.00,
+  "reasoning": "O agente consultou as ferramentas adequadas, constatou telemetria normal, evitou inventar causas fictícias, emitiu disclaimer honesto e sugeriu hipótese condicional com próximos passos investigativos."
 }
 
 ---

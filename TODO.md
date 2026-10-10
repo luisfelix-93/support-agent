@@ -85,26 +85,26 @@
 **Branch:** `feature/mcp-output-sanitization`  
 **Responsável:** `qa-engineer` / `backend-specialist`  
 **Depende de:** Sub-Fases 10A, 10B e 10C concluídas  
-**Status:** ⏳ Pendente  
+**Status:** ✅ Concluída  
 
 ### Implementação & Testes
-- [ ] Atualizar prompt de auto-avaliação em `src/evaluation/SelfEvaluationPrompt.ts`:
-  - [ ] Calibrar critério de `completeness` e `hallucinationRisk` para validar positivamente o uso de disclaimers honestos
-- [ ] Executar suíte completa de testes:
-  - [ ] `npm test` (92+ arquivos unitários sem regressão)
-  - [ ] `npm run test:integration` (testes de integração do harness e multi-MCP)
-- [ ] Atualizar a documentação disponível e, `architecture.md`, `features.md`, `TODO.md`. 
-- [ ] Criar release notes técnico em `docs/release-notes-mcp-output-sanitization.md`
+- [x] Atualizar prompt de auto-avaliação em `src/evaluation/SelfEvaluationPrompt.ts`:
+  - [x] Calibrar critério de `completeness` e `hallucinationRisk` para validar positivamente o uso de disclaimers honestos
+- [x] Executar suíte completa de testes:
+  - [x] `npm test` (93 arquivos unitários, 725 testes aprovados sem regressão)
+  - [x] `npm run test:integration` (10 arquivos, 19 testes de integração aprovados)
+- [x] Atualizar a documentação disponível em `architecture.md`, `features.md`, `TODO.md`. 
+- [x] Criar release notes técnico em `docs/release-notes-mcp-output-sanitization.md`
 
 ---
 
 ## Definition of Done (Fase 10 - Opção A Completa)
 
-- [ ] Saídas de ferramentas MCP sanitizadas e truncadas antes da injeção no contexto do LLM
-- [ ] Economia perceptível no consumo de tokens em investigações multi-passo
-- [ ] Agente instruído a emitir disclaimer explícito ao levantar hipóteses sem evidência direta
-- [ ] Suíte de testes unitários e de integração 100% aprovada
-- [ ] TypeScript strict sem warnings ou erros de compilação (`npm run build`)
+- [x] Saídas de ferramentas MCP sanitizadas e truncadas antes da injeção no contexto do LLM
+- [x] Economia perceptível no consumo de tokens em investigações multi-passo
+- [x] Agente instruído a emitir disclaimer explícito ao levantar hipóteses sem evidência direta
+- [x] Suíte de testes unitários e de integração 100% aprovada (725 unitários + 19 integração)
+- [x] TypeScript strict sem warnings ou erros de compilação (`npm run build`)
 
 ---
 
