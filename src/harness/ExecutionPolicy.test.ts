@@ -11,6 +11,8 @@ describe('ExecutionPolicy', () => {
         delete process.env.MAX_CONTEXT_TOKENS;
         delete process.env.MAX_RUN_TIME_MS;
         delete process.env.LLM_TIMEOUT_MS;
+        delete process.env.MAX_TOOL_OUTPUT_CHARS;
+        delete process.env.MAX_TOOL_OUTPUT_LINES;
     });
 
     afterEach(() => {
@@ -26,6 +28,8 @@ describe('ExecutionPolicy', () => {
         expect(policy.maxContextTokens).toBe(4096);
         expect(policy.maxRunTimeMs).toBe(120000);
         expect(policy.llmTimeoutMs).toBe(60000);
+        expect(policy.maxToolOutputChars).toBe(6000);
+        expect(policy.maxToolOutputLines).toBe(50);
     });
 
     it('deve priorizar valores passados no construtor', () => {
@@ -36,6 +40,8 @@ describe('ExecutionPolicy', () => {
             maxContextTokens: 8192,
             maxRunTimeMs: 60000,
             llmTimeoutMs: 30000,
+            maxToolOutputChars: 3000,
+            maxToolOutputLines: 25,
         });
 
         expect(policy.maxIterations).toBe(8);
@@ -44,6 +50,8 @@ describe('ExecutionPolicy', () => {
         expect(policy.maxContextTokens).toBe(8192);
         expect(policy.maxRunTimeMs).toBe(60000);
         expect(policy.llmTimeoutMs).toBe(30000);
+        expect(policy.maxToolOutputChars).toBe(3000);
+        expect(policy.maxToolOutputLines).toBe(25);
     });
 
     it('deve carregar valores de variáveis de ambiente quando não fornecidos no construtor', () => {
@@ -53,6 +61,8 @@ describe('ExecutionPolicy', () => {
         process.env.MAX_CONTEXT_TOKENS = '2048';
         process.env.MAX_RUN_TIME_MS = '90000';
         process.env.LLM_TIMEOUT_MS = '45000';
+        process.env.MAX_TOOL_OUTPUT_CHARS = '4500';
+        process.env.MAX_TOOL_OUTPUT_LINES = '30';
 
         const policy = new ExecutionPolicy();
 
@@ -62,6 +72,8 @@ describe('ExecutionPolicy', () => {
         expect(policy.maxContextTokens).toBe(2048);
         expect(policy.maxRunTimeMs).toBe(90000);
         expect(policy.llmTimeoutMs).toBe(45000);
+        expect(policy.maxToolOutputChars).toBe(4500);
+        expect(policy.maxToolOutputLines).toBe(30);
     });
 
     it('deve avaliar shouldContinue corretamente com base no número de iterações', () => {

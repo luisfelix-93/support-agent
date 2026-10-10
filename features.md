@@ -35,7 +35,12 @@ O agente opera através de um runtime autônomo desacoplado (`IAgentHarness`), c
   - **Corte de Chamadas Repetitivas**: Detecta quando o modelo requisita consecutivamente a mesma ferramenta com argumentos idênticos ($\ge 2$ vezes, configurável via `MAX_IDENTICAL_TOOL_CALLS`).
   - **Interrupção Preventiva**: O Harness intercepta a requisição antes da chamada redundante ao servidor MCP, economizando latência e chamadas de rede externas.
   - **Síntese Graciosa de Fallback**: Injeta aviso orientativo no contexto e invoca o LLM sem ferramentas (`tools: []`) para resumir os dados coletados até o momento.
-  - **Telemetria**: Rastreabilidade do evento via tag `agent.loop_detected = true` no span raiz do OpenTelemetry.
+- **Sanitização & Compactação de Saídas MCP (`ToolOutputSanitizer`)**:
+  - **Poda Seletiva de Metadados**: Remove ruído e campos redundantes em JSONs de Kubernetes/observabilidade (`managedFields`, `ownerReferences`, `annotations`, `uid`, `resourceVersion`).
+  - **Supressão Recursiva**: Elimina valores nulos, coleções vazias e objetos sem campos para maximizar a densidade informacional.
+  - **Truncamento de Linhas com Preservação de Head & Tail**: Limita logs e tabelas (`MAX_TOOL_OUTPUT_LINES=50`) preservando o início da inicialização e o final onde constam exceções e stack traces.
+  - **Teto Seguro de Caracteres**: Impede estouro de contexto (`MAX_TOOL_OUTPUT_CHARS=6000`) truncando saídas anômalas antes de alimentar o LLM no turno seguinte.
+  - **Auditoria Preservada**: O payload bruto original permanece registrado em `AgentRun.toolCalls` para auditoria e métricas fiéis.
 - **Tratamento Resiliente de Ferramentas**: Falhas ou timeouts em ferramentas não quebram o atendimento; o erro é formatado e entregue como contexto para que o LLM tente uma abordagem alternativa ou explique a situação ao usuário.
 
 ---
@@ -204,6 +209,10 @@ O Support Agent evoluiu de um bot conversacional reativo para uma **plataforma a
   - Estrutura de domínio para consolidação e formatação de evidências de telemetria coletadas pelo agente ao longo do ciclo iterativo.
 - **Resumo Executivo de Sessão (`SessionSummary`)**:
   - Formatação corporativa padronizada ao final de cada diagnóstico, contendo: `runId`, serviço afetado, janela temporal do incidente, evidências consolidadas (logs, métricas, traces, infra, db), hipótese fundamentada de causa raiz (RCA) e ações recomendadas de mitigação e correção estrutural.
+  - Expõe propriedade `isConditional` para diferenciar conclusões factuais de hipóteses com disclaimer.
+- **Protocolo de Incerteza Calibrada & Anti-Alucinação**:
+  - Quando ferramentas de monitoramento e logs retornam telemetria normal ou inconclusiva, o agente é proibido de inventar causas de raiz categóricas.
+  - Adota formalmente a tag `[HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]`, estruturando a resposta com: verificações normais realizadas, disclaimer de evidência direta ausente, hipóteses prováveis baseadas em incidentes similares e próximas ferramentas ou testes sugeridos.
 - **Autonomia Controlada (Read-Only)**:
   - O agente coleta evidências, correlaciona dados e recomenda ações de remediação, sem executar comandos destrutivos ou mutações de infraestrutura sem supervisão humana.
 

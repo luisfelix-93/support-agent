@@ -13,6 +13,7 @@ import type { LLMCallRecord } from "../domain/LLMCallRecord.js";
 import { calculateCost } from "../domain/pricing/LLMPricingTable.js";
 import { Message } from "../domain/Message.js";
 import { ExecutionPolicy } from "./ExecutionPolicy.js";
+import { ToolOutputSanitizer } from "./ToolOutputSanitizer.js";
 import { logger } from "../config/logger.js";
 import {
     agentRunsTotal,
@@ -66,7 +67,8 @@ export class AgentHarness implements IAgentHarness {
         private readonly queueService?: IQueueService,
         private readonly embeddingProvider?: IEmbeddingProvider,
         private readonly agentRunRepository?: IAgentRunRepository,
-        private readonly memoryReranker?: IMemoryReranker
+        private readonly memoryReranker?: IMemoryReranker,
+        private readonly toolOutputSanitizer: ToolOutputSanitizer = new ToolOutputSanitizer()
     ) {}
 
     async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -397,9 +399,15 @@ export class AgentHarness implements IAgentHarness {
                             break;
                         }
 
-                        // Adiciona o resultado da ferramenta ao contexto para a próxima iteração
+                        // Sanitiza e trunca a saída da ferramenta para economia de tokens e mitigação de ruído
+                        const sanitizedToolOutput = this.toolOutputSanitizer.sanitizeToString(toolResult, {
+                            maxLines: this.executionPolicy.maxToolOutputLines,
+                            maxChars: this.executionPolicy.maxToolOutputChars,
+                        });
+
+                        // Adiciona o resultado sanitizado da ferramenta ao contexto para a próxima iteração
                         assembledContext.addMessage(
-                            new Message(crypto.randomUUID(), 'system', JSON.stringify(toolResult))
+                            new Message(crypto.randomUUID(), 'system', sanitizedToolOutput)
                         );
 
                         if (timeoutTriggered) {

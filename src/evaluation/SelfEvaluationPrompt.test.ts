@@ -31,6 +31,8 @@ describe('SelfEvaluationPrompt', () => {
         expect(prompt).toContain('completeness');
         expect(prompt).toContain('toolSelectionQuality');
         expect(prompt).toContain('Exemplo 1');
+        expect(prompt).toContain('Exemplo 4');
+        expect(prompt).toContain('[HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]');
     });
 
     it('deve sanitizar blocos de código com crases triplas para evitar quebra de formatação', () => {

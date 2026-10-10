@@ -129,6 +129,14 @@ Runtime desacoplado encarregado de executar o ciclo de vida do agente:
   - `maxIdenticalToolCalls`: Limite de chamadas idênticas consecutivas da mesma ferramenta antes de abortar por estagnação/loop (padrão: **2**, configurável via `MAX_IDENTICAL_TOOL_CALLS`).
   - Timeouts defensivos: `mcpTimeoutMs` (25s), `llmTimeoutMs` (60s) e `maxRunTimeMs` (120s global).
   - `maxContextTokens`: Orçamento de tokens para a montagem de contexto (padrão: 4096).
+  - `maxToolOutputChars`: Limite máximo de caracteres por payload de ferramenta antes do truncamento (padrão: 6000, configurável via `MAX_TOOL_OUTPUT_CHARS`).
+  - `maxToolOutputLines`: Limite de linhas por payload de ferramenta antes do truncamento head+tail (padrão: 50, configurável via `MAX_TOOL_OUTPUT_LINES`).
+- **`ToolOutputSanitizer` (Sanitização & Compressão de Saídas MCP)**:
+  - Intercepta e compacta respostas de ferramentas MCP antes da injeção no histórico de conversação (`assembledContext`).
+  - Remove metadados ruidosos de Kubernetes/observabilidade (`managedFields`, `ownerReferences`, `annotations`, `resourceVersion`, `uid`, etc.).
+  - Aplica supressão recursiva de chaves vazias (`null`, listas e objetos vazios).
+  - Trunca listas e logs mantendo preservação de início (head) e fim (tail, onde constam stack traces e causas reais).
+  - Preserva integralmente o payload original em `AgentRun.toolCalls` para auditoria fiel.
 - **Assinatura Canônica de Ferramentas & Trava Anti-Loop (`getToolCallSignature`)**:
   - Algoritmo de hashing determinístico (`sortKeysRecursively`) que normaliza a ordem das chaves dos parâmetros JSON (`name:sortedParamsJson`).
   - Rastreia chamadas consecutivas: se a mesma assinatura for requisitada repetidamente ($\ge 2$ vezes), o Harness intercepta antes da chamada redundante ao servidor MCP.
@@ -136,8 +144,9 @@ Runtime desacoplado encarregado de executar o ciclo de vida do agente:
 - **`InvestigationEngine`**:
   - Avalia a mensagem inicial do usuário e o histórico de contexto.
   - Consulta o `PlaybookRegistry` e seleciona os playbooks adequados (retorna `null` em modo conversacional comum).
-  - Injeta o protocolo universal SRE (*Triagem ➔ Hipótese ➔ Coleta de Evidências ➔ Correlação Cruzada ➔ Causa Raiz / RCA ➔ Session Summary*).
-  - Extrai e valida o `SessionSummary` estruturado na finalização do atendimento.
+  - Injeta o protocolo universal SRE (*Triagem ➔ Hipótese ➔ Coleta de Evidências ➔ Correlação Cruzada ➔ Calibração de Certeza Anti-Alucinação ➔ Session Summary*).
+  - **Protocolo de Incerteza Calibrada (Anti-Alucinação)**: Proíbe afirmações categóricas quando ferramentas retornam telemetria normal/saudável; obriga adoção de `[HIPÓTESE CONDICIONAL - EVIDÊNCIA INCONCLUSIVA]` com detalhamento de verificações normais, disclaimer de ausência de evidência direta, hipóteses sugestivas e próximas ferramentas recomendadas.
+  - Extrai e valida o `SessionSummary` estruturado na finalização do atendimento, expondo o getter `isConditional`.
 
 ### 2.4. Use Cases (`src/usecases`)
 Orquestram os fluxos de aplicação sem acoplar a regras específicas de canais:
