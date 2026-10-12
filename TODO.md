@@ -62,27 +62,27 @@
 **Branch:** `fix/harness-timeout-mitigation`  
 **Responsável:** `backend-specialist` / `prompt-engineer`  
 **Depende de:** Sub-Fase 11B  
-**Status:** ⏳ Pendente  
+**Status:** Concluída ✅  
 
 ### Implementação
-- [ ] Atualizar `.env.example`:
-  - [ ] Documentar `TIMEOUT_DRAIN_MARGIN_MS=20000`
-- [ ] Atualizar diretrizes operacionais em `src/harness/InvestigationEngine.ts`:
-  - [ ] Instrução explícita no playbook proibindo redescoberta de schemas já obtidos
-- [ ] Atualizar testes em:
-  - [ ] `src/harness/ExecutionPolicy.test.ts` (testar nova propriedade e fallback de env)
-  - [ ] `src/harness/InvestigationEngine.test.ts` (validar novas diretrizes no prompt montado)
+- [x] Atualizar `.env.example`:
+  - [x] Documentar `TIMEOUT_DRAIN_MARGIN_MS=20000`
+- [x] Atualizar diretrizes operacionais em `src/harness/InvestigationEngine.ts`:
+  - [x] Instrução explícita no playbook proibindo redescoberta de schemas já obtidos
+- [x] Atualizar testes em:
+  - [x] `src/harness/ExecutionPolicy.test.ts` (testar nova propriedade e fallback de env)
+  - [x] `src/harness/InvestigationEngine.test.ts` (validar novas diretrizes no prompt montado)
 
 ### Verificação
-- [ ] `npm test -- src/harness/ExecutionPolicy.test.ts` aprovado
-- [ ] `npm test -- src/harness/InvestigationEngine.test.ts` aprovado
-- [ ] `npm run build` compila com 0 erros TypeScript strict
+- [x] `npm test -- src/harness/ExecutionPolicy.test.ts` aprovado (4/4 testes)
+- [x] `npm test -- src/harness/InvestigationEngine.test.ts` aprovado (11/11 testes)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 
 ## Sub-Fase 11D: Validação E2E, Testes de Regressão & Documentação
 
-**Branch:** `feature/harness-timeout-mitigation`  
+**Branch:** `fix/harness-timeout-mitigation`  
 **Responsável:** `qa-engineer` / `backend-specialist`  
 **Depende de:** Sub-Fases 11A, 11B e 11C concluídas  
 **Status:** ⏳ Pendente  
