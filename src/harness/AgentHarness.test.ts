@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { AgentHarness, getToolCallSignature } from './AgentHarness.js';
+import { AgentHarness, getToolCallSignature, getToolTargetKey } from './AgentHarness.js';
 import { ContextAssembler } from './ContextAssembler.js';
 import { TiktokenAdapter } from '../infrastructure/tokenizer/TiktokenAdapter.js';
 import { ChatContext } from '../domain/ChatContext.js';
@@ -707,6 +707,155 @@ describe('AgentHarness', () => {
             expect(result.iterations).toBe(3);
             expect(mcpClient.executeTool).toHaveBeenCalledTimes(3);
             expect(result.response).toBe('Finalizado sem disparar loop.');
+        });
+    });
+
+    describe('Fase 11A: Detector de Repetição Semântica & Anti-Loop por Alvo', () => {
+        it('getToolTargetKey deve extrair identificador canônico de recurso e ignorar parâmetros cosméticos', () => {
+            const key1 = getToolTargetKey({
+                name: 'discover_postgres_schema',
+                parameters: { table_name: 'attendances', output_format: 'json' }
+            });
+            const key2 = getToolTargetKey({
+                name: 'discover_postgres_schema',
+                parameters: { table_name: 'attendances', schema_name: 'public', output_format: 'markdown' }
+            });
+            const key3 = getToolTargetKey({
+                name: 'discover_postgres_schema',
+                parameters: { table_name: '  ATTENDANCES  ' }
+            });
+
+            expect(key1).toBe('discover_postgres_schema:table_name=attendances');
+            expect(key2).toBe('discover_postgres_schema:table_name=attendances');
+            expect(key3).toBe('discover_postgres_schema:table_name=attendances');
+
+            // Recurso diferente gera chave diferente
+            const keyOther = getToolTargetKey({
+                name: 'discover_postgres_schema',
+                parameters: { table_name: 'users' }
+            });
+            expect(keyOther).toBe('discover_postgres_schema:table_name=users');
+        });
+
+        it('getToolTargetKey deve reconhecer alvos em queries e ferramentas sem parâmetros', () => {
+            const qKey1 = getToolTargetKey({
+                name: 'query_postgres',
+                parameters: { query: 'SELECT count(*) FROM attendances', output_format: 'json' }
+            });
+            const qKey2 = getToolTargetKey({
+                name: 'query_postgres',
+                parameters: { query: 'SELECT count(*) FROM attendances', output_format: 'markdown' }
+            });
+            const qKey3 = getToolTargetKey({
+                name: 'query_postgres',
+                parameters: { query: 'SELECT\n  count(*)\n  FROM   attendances  ', output_format: 'json' }
+            });
+            expect(qKey1).toBe(qKey2);
+            expect(qKey3).toBe(qKey1);
+
+            const emptyKey1 = getToolTargetKey({ name: 'list_my_integrations', parameters: {} });
+            const emptyKey2 = getToolTargetKey({ name: 'list_my_integrations' });
+            expect(emptyKey1).toBe('list_my_integrations');
+            expect(emptyKey2).toBe('list_my_integrations');
+        });
+
+        it('deve abortar precocemente ao detectar chamadas da mesma ferramenta sobre o mesmo alvo variando apenas parâmetros cosméticos', async () => {
+            const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+            const { llmProvider, mcpClient } = makeMocks();
+            const policy = new ExecutionPolicy({ maxIterations: 12, maxIdenticalToolCalls: 2 });
+
+            // 1ª chamada: discover_postgres_schema em attendances com output_format=json
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: {
+                    name: 'discover_postgres_schema',
+                    parameters: { table_name: 'attendances', output_format: 'json' }
+                } as any
+            });
+
+            // 2ª chamada: mesma ferramenta na mesma tabela, mas mudando schema_name e output_format=markdown
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: {
+                    name: 'discover_postgres_schema',
+                    parameters: { table_name: 'attendances', schema_name: 'public', output_format: 'markdown' }
+                } as any
+            });
+
+            // Fallback de síntese
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'text',
+                content: 'Síntese das evidências após interrupção de repetição semântica.'
+            });
+
+            const harness = new AgentHarness(contextAssembler, undefined, policy);
+            const context = new ChatContext('thread-sem-loop-1', 'ws-1');
+
+            const result = await harness.run({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                threadId: 'thread-sem-loop-1',
+                userMessage: 'Descobrir esquema de attendances',
+                context,
+                llmProvider,
+                mcpClient,
+                tools: [{ name: 'discover_postgres_schema' }]
+            });
+
+            expect(result.status).toBe('max_iterations');
+            expect(result.response).toBe('Síntese das evidências após interrupção de repetição semântica.');
+            // MCP só deve ter sido executado 1 vez (a 2ª chamada foi bloqueada pelo detector semântico)
+            expect(mcpClient.executeTool).toHaveBeenCalledTimes(1);
+            expect(result.iterations).toBe(1);
+        });
+
+        it('deve permitir chamadas consecutivas da mesma ferramenta se o alvo do recurso for diferente', async () => {
+            const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+            const { llmProvider, mcpClient } = makeMocks();
+            const policy = new ExecutionPolicy({ maxIterations: 12, maxIdenticalToolCalls: 2 });
+
+            // 1ª chamada: attendances
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: {
+                    name: 'discover_postgres_schema',
+                    parameters: { table_name: 'attendances' }
+                } as any
+            });
+
+            // 2ª chamada: users (recurso diferente)
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: {
+                    name: 'discover_postgres_schema',
+                    parameters: { table_name: 'users' }
+                } as any
+            });
+
+            // 3ª chamada: resposta de texto final
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'text',
+                content: 'Esquemas de attendances e users obtidos com sucesso.'
+            });
+
+            const harness = new AgentHarness(contextAssembler, undefined, policy);
+            const context = new ChatContext('thread-sem-ok-1', 'ws-1');
+
+            const result = await harness.run({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                threadId: 'thread-sem-ok-1',
+                userMessage: 'Descobrir esquemas',
+                context,
+                llmProvider,
+                mcpClient,
+                tools: [{ name: 'discover_postgres_schema' }]
+            });
+
+            expect(result.status).toBe('completed');
+            expect(result.iterations).toBe(2);
+            expect(mcpClient.executeTool).toHaveBeenCalledTimes(2);
+            expect(result.response).toBe('Esquemas de attendances e users obtidos com sucesso.');
         });
     });
 
