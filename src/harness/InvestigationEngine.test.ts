@@ -189,6 +189,14 @@ SESSION SUMMARY
         expect(plan!.systemInstructions).toContain('Próximas Ferramentas Sugeridas');
     });
 
+    it('deve incluir a diretriz de não-redundância de schema discovery nas instruções de sistema', () => {
+        const plan = engine.evaluate('Erro 500 no endpoint de checkout');
+        expect(plan).not.toBeNull();
+        expect(plan!.systemInstructions).toContain('NÃO-REDUNDÂNCIA & ECONOMIA DE ITERAÇÕES');
+        expect(plan!.systemInstructions).toContain('discover_postgres_schema');
+        expect(plan!.systemInstructions).toContain('Uma vez obtido o esquema');
+    });
+
     it('deve extrair SessionSummary com isConditional=true quando contiver disclaimer e hipótese condicional', () => {
         const conditionalResponse = `
 Verifiquei os serviços e não localizei erros ativos nos logs.

@@ -13,6 +13,7 @@ describe('ExecutionPolicy', () => {
         delete process.env.LLM_TIMEOUT_MS;
         delete process.env.MAX_TOOL_OUTPUT_CHARS;
         delete process.env.MAX_TOOL_OUTPUT_LINES;
+        delete process.env.TIMEOUT_DRAIN_MARGIN_MS;
     });
 
     afterEach(() => {
@@ -30,6 +31,7 @@ describe('ExecutionPolicy', () => {
         expect(policy.llmTimeoutMs).toBe(60000);
         expect(policy.maxToolOutputChars).toBe(6000);
         expect(policy.maxToolOutputLines).toBe(50);
+        expect(policy.timeoutDrainMarginMs).toBe(20000);
     });
 
     it('deve priorizar valores passados no construtor', () => {
@@ -42,6 +44,7 @@ describe('ExecutionPolicy', () => {
             llmTimeoutMs: 30000,
             maxToolOutputChars: 3000,
             maxToolOutputLines: 25,
+            timeoutDrainMarginMs: 15000,
         });
 
         expect(policy.maxIterations).toBe(8);
@@ -52,6 +55,7 @@ describe('ExecutionPolicy', () => {
         expect(policy.llmTimeoutMs).toBe(30000);
         expect(policy.maxToolOutputChars).toBe(3000);
         expect(policy.maxToolOutputLines).toBe(25);
+        expect(policy.timeoutDrainMarginMs).toBe(15000);
     });
 
     it('deve carregar valores de variáveis de ambiente quando não fornecidos no construtor', () => {
@@ -63,6 +67,7 @@ describe('ExecutionPolicy', () => {
         process.env.LLM_TIMEOUT_MS = '45000';
         process.env.MAX_TOOL_OUTPUT_CHARS = '4500';
         process.env.MAX_TOOL_OUTPUT_LINES = '30';
+        process.env.TIMEOUT_DRAIN_MARGIN_MS = '25000';
 
         const policy = new ExecutionPolicy();
 
@@ -74,6 +79,7 @@ describe('ExecutionPolicy', () => {
         expect(policy.llmTimeoutMs).toBe(45000);
         expect(policy.maxToolOutputChars).toBe(4500);
         expect(policy.maxToolOutputLines).toBe(30);
+        expect(policy.timeoutDrainMarginMs).toBe(25000);
     });
 
     it('deve avaliar shouldContinue corretamente com base no número de iterações', () => {

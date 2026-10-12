@@ -8,8 +8,9 @@ import type {
     ToolAnalyticsSummary,
     LLMAnalyticsSummary
 } from "../domain/ports/IAgentRunRepository.js";
-import type { LLMCallRecord } from "../domain/LLMCallRecord.js";
 import { logger } from "../config/logger.js";
+import { getAgentVersion } from "../config/version.js";
+import type { LLMCallRecord } from "../domain/LLMCallRecord.js";
 
 const log = logger.child({ module: 'AgentRunRepository' });
 
@@ -305,7 +306,7 @@ export class AgentRunRepository implements IAgentRunRepository {
         run.costUsd = doc.costUsd ?? 0;
         run.memoriesInjected = doc.memoriesInjected ?? 0;
         run.contextUtilization = doc.contextUtilization ?? 0;
-        run.agentVersion = doc.agentVersion ?? '1.0.0';
+        run.agentVersion = doc.agentVersion ?? getAgentVersion();
         run.finalResponse = doc.finalResponse;
         run.userMessage = doc.userMessage;
         run.sessionId = doc.sessionId;

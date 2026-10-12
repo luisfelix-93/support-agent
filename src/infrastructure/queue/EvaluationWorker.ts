@@ -12,6 +12,7 @@ import { EvaluationResult, type SelfEvalScores, type PassiveMetrics } from "../.
 import type { ToolCallRecord } from "../../domain/AgentRun.js";
 import type { LLMCallRecord } from "../../domain/LLMCallRecord.js";
 import { logger } from "../../config/logger.js";
+import { getAgentVersion } from "../../config/version.js";
 import { extractTraceContext } from "../tracing/TraceContext.js";
 import { withContext, withSpan } from "../tracing/TracerProvider.js";
 import {
@@ -153,11 +154,12 @@ export class EvaluationWorker {
                             const compositeScore = calculateCompositeScore(passive, selfEvalScores);
 
                             // 7. Persiste o EvaluationResult no MongoDB
+                            const versionToPersist = agentVersion || getAgentVersion();
                             const evaluationResult = new EvaluationResult(
                                 runId,
                                 tenantId,
                                 workspaceId,
-                                agentVersion || '1.0.0',
+                                versionToPersist,
                                 passive,
                                 selfEvalScores,
                                 compositeScore,
@@ -166,7 +168,7 @@ export class EvaluationWorker {
 
                             await this.evaluationRepository.save(evaluationResult);
 
-                            const versionLabel = agentVersion || '1.0.0';
+                            const versionLabel = versionToPersist;
                             agentEvaluationCompositeScore.set({ tenantId, version: versionLabel }, compositeScore);
                             agentEvaluationConfidenceAvg.set({ tenantId, version: versionLabel }, selfEvalScores.confidence);
                             agentEvaluationHallucinationAvg.set({ tenantId, version: versionLabel }, selfEvalScores.hallucinationRisk);

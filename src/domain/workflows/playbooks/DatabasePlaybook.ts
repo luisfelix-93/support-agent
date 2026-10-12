@@ -50,7 +50,8 @@ export class DatabasePlaybook implements IInvestigationPlaybook {
   3. Execute ferramentas de consulta de queries lentas (ex: query_slow_queries) para identificar comandos SQL/NoSQL executando com duração excessiva.
   4. Inspecione a presença de table locks ou deadlocks bloqueando threads concorrentes (ex: get_db_locks).
   5. Formule a hipótese de causa raiz (ex: falta de índice em tabela volumosa, pool subdimensionado, transação aberta sem commit ou lock exclusivo).
-  6. Recomende ações corretivas claras e gere o Resumo Executivo da Sessão.`;
+  6. Recomende ações corretivas claras e gere o Resumo Executivo da Sessão.
+  7. NÃO-REDUNDÂNCIA DE SCHEMA: Nunca chame ferramentas de descoberta de esquema (ex: discover_postgres_schema) mais de uma vez para a mesma tabela. Uma vez obtido o esquema, prossiga imediatamente para a formulação da query analítica.`;
     }
 
     getRecommendedTools(): string[] {

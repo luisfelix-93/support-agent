@@ -141,6 +141,14 @@ Runtime desacoplado encarregado de executar o ciclo de vida do agente:
   - Algoritmo de hashing determinístico (`sortKeysRecursively`) que normaliza a ordem das chaves dos parâmetros JSON (`name:sortedParamsJson`).
   - Rastreia chamadas consecutivas: se a mesma assinatura for requisitada repetidamente ($\ge 2$ vezes), o Harness intercepta antes da chamada redundante ao servidor MCP.
   - Injeta aviso de sistema orientando o modelo a sintetizar as evidências obtidas e aciona fallback (`agent.llm_call:loop_detected_fallback`), evitando travamentos, gasto descontrolado de tokens e loops cognitivos.
+- **Detector Anti-Loop Semântico & por Alvo (`getToolTargetKey`)**:
+  - Extrai identificadores de alvos principais (`table_name`, `table`, `query`, `collection_name`, `pod_name`, `service_name`, `endpoint`, etc.) normalizando espaçamentos (`\s+` -> `' '`) e descartando parâmetros cosméticos secundários (`output_format`, `format`, `max_rows`, `limit`, `step`, `pretty`, `verbose`, etc.).
+  - Rastreia `consecutiveTargetCalls`: bloqueia reexecuções redundantes que variem apenas formatação sobre o mesmo recurso já na 2ª tentativa, forçando síntese imediata com os dados já obtidos.
+- **Dreno Gracioso por Proximidade de Timeout Global (`Graceful Timeout Drain`)**:
+  - Parâmetro `timeoutDrainMarginMs` na `ExecutionPolicy` (padrão: 20s, configurável via `TIMEOUT_DRAIN_MARGIN_MS`).
+  - Verifica o tempo restante antes de cada nova ferramenta: `remainingMs = maxRunTimeMs - (Date.now() - startTime)`.
+  - Ao atingir a margem de segurança, bloqueia novas invocações de ferramentas externas e injeta aviso de sistema orientando o LLM a resumir as evidências coletadas em uma chamada com ferramentas vazias `[]` e timeout restrito à margem.
+  - O `AgentRun` é finalizado com status `'completed'` (ou mantendo o resumo diagnóstico) em vez de ser abortado abruptamente como falha genérica (`'failed'`).
 - **`InvestigationEngine`**:
   - Avalia a mensagem inicial do usuário e o histórico de contexto.
   - Consulta o `PlaybookRegistry` e seleciona os playbooks adequados (retorna `null` em modo conversacional comum).

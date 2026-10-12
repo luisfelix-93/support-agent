@@ -79,7 +79,9 @@ Siga rigorosamente este protocolo operacional:
     b) Disclaimer de Ausência de Evidência Direta: Afirmação transparente de que a telemetria não comprova falha ativa no momento.
     c) Hipóteses Sugestivas: Apresente hipóteses plausíveis baseadas em cenários análogos (ex: degradação upstream, rede efêmera, cliente externo).
     d) Próximas Ferramentas Sugeridas: Recomende os próximos passos e ferramentas a consultar.
-7. RESUMO EXECUTIVO (SESSION SUMMARY): Ao concluir a análise técnica, termine obrigatoriamente a resposta com o bloco formatado abaixo:
+7. NÃO-REDUNDÂNCIA & ECONOMIA DE ITERAÇÕES:
+- NUNCA execute ferramentas de descoberta de esquema (\`discover_postgres_schema\`) mais de uma vez para a mesma tabela. Uma vez obtido o esquema ou a definição das colunas, prossiga imediatamente para a formulação da query analítica sem alternar formatos de saída ou repetir a chamada.
+8. RESUMO EXECUTIVO (SESSION SUMMARY): Ao concluir a análise técnica, termine obrigatoriamente a resposta com o bloco formatado abaixo:
 
 ═══════════════════════════════════════════════════════════
 📋 RESUMO EXECUTIVO DE SESSÃO (SESSION SUMMARY)

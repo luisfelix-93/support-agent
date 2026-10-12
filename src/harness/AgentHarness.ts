@@ -58,6 +58,64 @@ export function getToolCallSignature(toolCall: { name: string; parameters?: Reco
     }
 }
 
+export function getToolTargetKey(toolCall: { name: string; parameters?: Record<string, unknown> }): string {
+    const name = toolCall.name || '';
+    const params = toolCall.parameters ?? {};
+
+    // 1. Chaves de recursos específicos conhecidos (alvo primário)
+    const targetKeys = [
+        'table_name', 'table',
+        'query',
+        'collection_name', 'collection',
+        'pod_name', 'pod',
+        'deployment_name', 'deployment',
+        'service_name', 'service',
+        'namespace',
+        'url', 'endpoint', 'path',
+        'id'
+    ];
+
+    for (const key of targetKeys) {
+        if (params[key] !== undefined && params[key] !== null && String(params[key]).trim() !== '') {
+            const normalizedVal = String(params[key]).trim().toLowerCase().replace(/\s+/g, ' ');
+            return `${name}:${key}=${normalizedVal}`;
+        }
+    }
+
+    // 2. Se não houver chave de recurso explícita, normaliza excluindo parâmetros puramente cosméticos/secundários
+    const ignoredCosmeticKeys = new Set([
+        'output_format',
+        'format',
+        'max_rows',
+        'limit',
+        'step',
+        'since_minutes',
+        'timeout',
+        'pretty',
+        'verbose',
+        'schema_name'
+    ]);
+
+    const filteredParams: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(params)) {
+        if (!ignoredCosmeticKeys.has(k)) {
+            filteredParams[k] = v;
+        }
+    }
+
+    if (Object.keys(filteredParams).length > 0) {
+        try {
+            const sorted = sortKeysRecursively(filteredParams);
+            return `${name}:${JSON.stringify(sorted)}`;
+        } catch {
+            return `${name}:${JSON.stringify(filteredParams)}`;
+        }
+    }
+
+    // 3. Ferramentas sem parâmetros ou apenas com parâmetros cosméticos (ex.: list_my_integrations)
+    return name;
+}
+
 export class AgentHarness implements IAgentHarness {
     constructor(
         private readonly contextAssembler: IContextAssembler,
@@ -114,6 +172,7 @@ export class AgentHarness implements IAgentHarness {
                 let status: 'completed' | 'failed' | 'max_iterations' = 'completed';
 
                 let timeoutTriggered = false;
+                let gracefulDrainExecuted = false;
                 const abortController = new AbortController();
                 const globalTimeoutTimer = setTimeout(() => {
                     timeoutTriggered = true;
@@ -121,12 +180,13 @@ export class AgentHarness implements IAgentHarness {
                     log.warn({ maxRunTimeMs: this.executionPolicy.maxRunTimeMs }, 'Timeout global atingido no AgentHarness.');
                 }, this.executionPolicy.maxRunTimeMs);
 
-                const generateLlmWithTimeout = async (ctx: any, tools?: any[]) => {
+                const generateLlmWithTimeout = async (ctx: any, tools?: any[], customTimeoutMs?: number) => {
                     let timer: NodeJS.Timeout | undefined;
+                    const timeoutMs = customTimeoutMs !== undefined ? customTimeoutMs : this.executionPolicy.llmTimeoutMs;
                     const timeoutPromise = new Promise<never>((_, reject) => {
                         timer = setTimeout(() => {
-                            reject(new Error(`Timeout de ${this.executionPolicy.llmTimeoutMs}ms no LLM`));
-                        }, this.executionPolicy.llmTimeoutMs);
+                            reject(new Error(`Timeout de ${timeoutMs}ms no LLM`));
+                        }, timeoutMs);
                     });
 
                     const callStartTime = Date.now();
@@ -290,50 +350,115 @@ export class AgentHarness implements IAgentHarness {
                     let iteration = 0;
                     let lastToolSignature: string | undefined;
                     let consecutiveIdenticalCalls = 0;
+                    let lastToolTargetKey: string | undefined;
+                    let consecutiveTargetCalls = 0;
 
                     while (
                         currentDecision.type === 'tool_call' &&
                         this.executionPolicy.shouldContinue(iteration) &&
                         !timeoutTriggered
                     ) {
-                        const toolCall = currentDecision.tool;
-                        const signature = getToolCallSignature(toolCall);
+                        const elapsedMs = Date.now() - startTime;
+                        const remainingMs = this.executionPolicy.maxRunTimeMs - elapsedMs;
 
-                        if (signature === lastToolSignature) {
-                            consecutiveIdenticalCalls++;
-                            if (consecutiveIdenticalCalls >= this.executionPolicy.maxIdenticalToolCalls) {
-                                log.warn(
-                                    {
-                                        tool: toolCall.name,
-                                        consecutiveIdenticalCalls,
-                                        maxIdenticalToolCalls: this.executionPolicy.maxIdenticalToolCalls
-                                    },
-                                    'Loop/estagnação detectado: ferramenta chamada consecutivamente com parâmetros idênticos. Interrompendo execução para síntese.'
-                                );
-                                rootSpan.setAttribute('agent.loop_detected', true);
+                        if (remainingMs <= this.executionPolicy.timeoutDrainMarginMs) {
+                            log.warn(
+                                {
+                                    elapsedMs,
+                                    remainingMs,
+                                    timeoutDrainMarginMs: this.executionPolicy.timeoutDrainMarginMs,
+                                    iteration
+                                },
+                                'Tempo limite de execução próximo do fim (Graceful Drain ativado). Interrompendo chamadas de ferramentas para síntese.'
+                            );
+                            rootSpan.setAttribute('agent.graceful_drain', true);
 
-                                assembledContext.addMessage(
-                                    new Message(
-                                        crypto.randomUUID(),
-                                        'system',
-                                        'Aviso do Sistema: Chamadas repetidas da mesma ferramenta foram interrompidas para evitar loop de execução. Por favor, resuma as evidências já obtidas e forneça uma resposta conclusiva ao usuário.'
-                                    )
-                                );
+                            assembledContext.addMessage(
+                                new Message(
+                                    crypto.randomUUID(),
+                                    'system',
+                                    'Aviso do Sistema: O tempo limite de execução está próximo do fim. Não utilize mais ferramentas. Resuma imediatamente as evidências, logs e métricas coletados até agora e apresente suas conclusões e recomendações ao operador.'
+                                )
+                            );
 
+                            const drainTimeoutMs = Math.max(1000, remainingMs - 1000);
+                            try {
                                 const fallbackDecision = await withSpan(
-                                    'agent.llm_call:loop_detected_fallback',
-                                    async () => generateLlmWithTimeout(assembledContext, [])
+                                    'agent.llm_call:graceful_drain',
+                                    async () => generateLlmWithTimeout(assembledContext, [], drainTimeoutMs)
                                 );
 
                                 finalResponseText = fallbackDecision.type === 'text'
                                     ? fallbackDecision.content
-                                    : 'Interrompemos a análise para evitar repetição de ações. Resumo das evidências coletadas.';
-                                status = 'max_iterations';
-                                break;
+                                    : 'Tempo limite de execução próximo do fim. Síntese das evidências coletadas até o momento.';
+                            } catch (drainErr) {
+                                log.warn({ err: drainErr }, 'Falha na chamada de síntese do graceful drain. Usando fallback textual.');
+                                finalResponseText = 'A análise foi concluída preventivamente antes do tempo limite. As evidências parciais foram registradas.';
                             }
+
+                            gracefulDrainExecuted = true;
+                            status = 'completed';
+                            break;
+                        }
+
+                        const toolCall = currentDecision.tool;
+                        const signature = getToolCallSignature(toolCall);
+                        const targetKey = getToolTargetKey(toolCall);
+
+                        let isStagnated = false;
+
+                        if (signature === lastToolSignature) {
+                            consecutiveIdenticalCalls++;
                         } else {
                             lastToolSignature = signature;
                             consecutiveIdenticalCalls = 1;
+                        }
+
+                        if (targetKey === lastToolTargetKey) {
+                            consecutiveTargetCalls++;
+                        } else {
+                            lastToolTargetKey = targetKey;
+                            consecutiveTargetCalls = 1;
+                        }
+
+                        if (
+                            consecutiveIdenticalCalls >= this.executionPolicy.maxIdenticalToolCalls ||
+                            consecutiveTargetCalls >= this.executionPolicy.maxIdenticalToolCalls
+                        ) {
+                            isStagnated = true;
+                        }
+
+                        if (isStagnated) {
+                            log.warn(
+                                {
+                                    tool: toolCall.name,
+                                    targetKey,
+                                    consecutiveIdenticalCalls,
+                                    consecutiveTargetCalls,
+                                    maxIdenticalToolCalls: this.executionPolicy.maxIdenticalToolCalls
+                                },
+                                'Loop/estagnação detectado: ferramenta chamada consecutivamente com parâmetros idênticos ou mesmo alvo semântico. Interrompendo execução para síntese.'
+                            );
+                            rootSpan.setAttribute('agent.loop_detected', true);
+
+                            assembledContext.addMessage(
+                                new Message(
+                                    crypto.randomUUID(),
+                                    'system',
+                                    'Aviso do Sistema: Chamadas repetidas da mesma ferramenta foram interrompidas para evitar loop de execução. Por favor, resuma as evidências já obtidas e forneça uma resposta conclusiva ao usuário.'
+                                )
+                            );
+
+                            const fallbackDecision = await withSpan(
+                                'agent.llm_call:loop_detected_fallback',
+                                async () => generateLlmWithTimeout(assembledContext, [])
+                            );
+
+                            finalResponseText = fallbackDecision.type === 'text'
+                                ? fallbackDecision.content
+                                : 'Interrompemos a análise para evitar repetição de ações. Resumo das evidências coletadas.';
+                            status = 'max_iterations';
+                            break;
                         }
 
                         iteration++;
@@ -414,24 +539,69 @@ export class AgentHarness implements IAgentHarness {
                             break;
                         }
 
-                        currentDecision = await withSpan(
-                            'agent.llm_call',
-                            {
-                                attributes: {
-                                    'agent.iteration': iteration,
+                        const elapsedAfterTool = Date.now() - startTime;
+                        const remainingAfterTool = this.executionPolicy.maxRunTimeMs - elapsedAfterTool;
+
+                        if (remainingAfterTool <= this.executionPolicy.timeoutDrainMarginMs) {
+                            log.warn(
+                                {
+                                    elapsedAfterTool,
+                                    remainingAfterTool,
+                                    timeoutDrainMarginMs: this.executionPolicy.timeoutDrainMarginMs,
+                                    iteration
                                 },
-                            },
-                            async () => generateLlmWithTimeout(assembledContext, input.tools)
-                        );
+                                'Tempo limite de execução próximo do fim antes da próxima chamada ao LLM (Graceful Drain). Removendo ferramentas para forçar síntese.'
+                            );
+                            rootSpan.setAttribute('agent.graceful_drain', true);
+
+                            assembledContext.addMessage(
+                                new Message(
+                                    crypto.randomUUID(),
+                                    'system',
+                                    'Aviso do Sistema: O tempo limite de execução está próximo do fim. Não utilize mais ferramentas. Resuma imediatamente as evidências, logs e métricas coletados até agora e apresente suas conclusões e recomendações ao operador.'
+                                )
+                            );
+
+                            const drainTimeoutMs = Math.max(1000, remainingAfterTool - 1000);
+                            try {
+                                currentDecision = await withSpan(
+                                    'agent.llm_call:graceful_drain',
+                                    {
+                                        attributes: {
+                                            'agent.iteration': iteration,
+                                            'agent.is_drain': true,
+                                        },
+                                    },
+                                    async () => generateLlmWithTimeout(assembledContext, [], drainTimeoutMs)
+                                );
+                                gracefulDrainExecuted = true;
+                            } catch (drainErr) {
+                                log.warn({ err: drainErr }, 'Falha na chamada do LLM em graceful drain. Usando resposta padrão.');
+                                finalResponseText = 'A análise foi concluída preventivamente antes do tempo limite. As evidências parciais foram registradas.';
+                                gracefulDrainExecuted = true;
+                                status = 'completed';
+                                break;
+                            }
+                        } else {
+                            currentDecision = await withSpan(
+                                'agent.llm_call',
+                                {
+                                    attributes: {
+                                        'agent.iteration': iteration,
+                                    },
+                                },
+                                async () => generateLlmWithTimeout(assembledContext, input.tools)
+                            );
+                        }
                     }
 
                     // 4. Resolução da resposta final, timeout global ou fallback de iterações
-                    if (timeoutTriggered) {
+                    if (timeoutTriggered && !gracefulDrainExecuted) {
                         log.warn('Execução do AgentHarness abortada por atingir timeout global.');
                         status = 'failed';
                         finalResponseText = finalResponseText || 'Tempo limite de execução atingido. A operação foi interrompida.';
                     } else if (finalResponseText) {
-                        // já definido pelo fallback de circuit breaker ou pelo detector de loop
+                        // já definido pelo fallback de circuit breaker, detector de loop ou graceful drain
                     } else if (currentDecision.type === 'text') {
                         finalResponseText = currentDecision.content;
                         status = 'completed';
