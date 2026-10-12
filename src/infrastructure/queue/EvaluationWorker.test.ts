@@ -184,6 +184,18 @@ describe('EvaluationWorker', () => {
         expect(savedResult.selfEval.reasoning).toContain('Fallback: Erro na chamada do modelo de avaliação.');
     });
 
+    it('deve usar a versão do package.json (1.3.0) caso agentVersion não seja fornecido no job', async () => {
+        worker.start();
+        const processor = vi.mocked(Worker).mock.calls[0][1] as any;
+
+        const dataWithoutVersion = { ...sampleJobData, agentVersion: '' };
+        await processor({ id: 'job-version-fallback', data: dataWithoutVersion });
+
+        expect(evaluationRepository.save).toHaveBeenCalledTimes(1);
+        const savedResult = vi.mocked(evaluationRepository.save).mock.calls[0][0];
+        expect(savedResult.agentVersion).toBe('1.3.0');
+    });
+
     it('deve fechar o worker ao chamar stop()', async () => {
         worker.start();
         await worker.stop();

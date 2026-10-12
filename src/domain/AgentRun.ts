@@ -1,4 +1,5 @@
 import type { LLMCallRecord } from "./LLMCallRecord.js";
+import { getAgentVersion } from "../config/version.js";
 
 export type AgentRunStatus = 'running' | 'completed' | 'failed' | 'max_iterations';
 
@@ -18,7 +19,7 @@ export class AgentRun {
     public costUsd: number = 0;
     public memoriesInjected: number = 0;
     public contextUtilization: number = 0;
-    public agentVersion: string = process.env.AGENT_VERSION || '1.0.0';
+    public agentVersion: string = getAgentVersion();
     public finalResponse?: string;
     public userMessage?: string;
     public playbookIds?: string[];

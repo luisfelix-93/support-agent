@@ -85,26 +85,26 @@
 **Branch:** `fix/harness-timeout-mitigation`  
 **Responsável:** `qa-engineer` / `backend-specialist`  
 **Depende de:** Sub-Fases 11A, 11B e 11C concluídas  
-**Status:** ⏳ Pendente  
+**Status:** Concluída ✅  
 
 ### Implementação & Testes
-- [ ] Executar suíte completa de testes:
-  - [ ] `npm test` (garantir aprovação de 100% dos testes unitários sem regressão)
-  - [ ] `npm run test:integration` (validar integrações do harness e do MCP)
-- [ ] Atualizar documentação técnica:
-  - [ ] `architecture.md` (documentar fluxo de Graceful Timeout Drain e Anti-Loop Semântico)
-  - [ ] `features.md` (documentar a capacidade de síntese defensiva contra timeout)
-  - [ ] `TODO.md`
-- [ ] Criar release notes técnico em `docs/release-notes-harness-timeout-mitigation.md`
+- [x] Executar suíte completa de testes:
+  - [x] `npm test` (garantir aprovação de 100% dos testes unitários sem regressão - 93 arquivos, 733 testes)
+  - [x] `npm run test:integration` (validar integrações do harness e do MCP - 10 arquivos, 19 testes)
+- [x] Atualizar documentação técnica:
+  - [x] `architecture.md` (documentar fluxo de Graceful Timeout Drain e Anti-Loop Semântico)
+  - [x] `features.md` (documentar a capacidade de síntese defensiva contra timeout)
+  - [x] `TODO.md`
+- [x] Criar release notes técnico em `docs/release-notes-harness-timeout-mitigation.md`
 
 ---
 
 ## Definition of Done (Fase 11)
 
-- [ ] Repetições da mesma ferramenta para o mesmo recurso com parâmetros cosméticos alternados são interrompidas na 2ª tentativa
-- [ ] O `AgentHarness` não é abortado sem resposta útil ao se aproximar de `maxRunTimeMs`; o agente realiza o drain gracioso com resumo das evidências
-- [ ] Suíte de testes unitários e de integração 100% aprovada
-- [ ] TypeScript strict sem warnings ou erros de compilação (`npm run build`)
+- [x] Repetições da mesma ferramenta para o mesmo recurso com parâmetros cosméticos alternados são interrompidas na 2ª tentativa
+- [x] O `AgentHarness` não é abortado sem resposta útil ao se aproximar de `maxRunTimeMs`; o agente realiza o drain gracioso com resumo das evidências
+- [x] Suíte de testes unitários e de integração 100% aprovada (93 arquivos unitários, 10 de integração, 752 testes no total)
+- [x] TypeScript strict sem warnings ou erros de compilação (`npm run build`)
 
 ---
 

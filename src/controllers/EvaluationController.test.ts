@@ -136,6 +136,7 @@ describe('EvaluationController', () => {
                 count: 1,
                 limit: 10,
                 skip: 5,
+                agentVersion: '1.3.0',
                 data: [dummyResult],
             });
         });
@@ -163,6 +164,33 @@ describe('EvaluationController', () => {
 
             await controller.getVersionStats(req, res);
 
+            expect(aggregationService.getVersionStats).toHaveBeenCalledWith('1.0.0');
+            expect(res.status).toHaveBeenCalledWith(200);
+            expect(res.json).toHaveBeenCalledWith({ success: true, data: stats });
+        });
+
+        it('deve resolver version "current" ou "latest" para a versão do package.json (1.3.0)', async () => {
+            const stats = {
+                version: '1.3.0',
+                totalRuns: 10,
+                avgCompositeScore: 0.98,
+                avgConfidence: 0.99,
+                avgHallucinationRisk: 0.01,
+                avgToolSuccessRate: 1.0,
+                avgCostUsd: 0.0005,
+                avgLatencyMs: 800,
+                totalCostUsd: 0.005,
+                totalTokens: 1500,
+                period: { from: null, to: null },
+            };
+            vi.mocked(aggregationService.getVersionStats).mockResolvedValueOnce(stats);
+
+            const req: any = { params: { version: 'current' } };
+            const res = mockResponse();
+
+            await controller.getVersionStats(req, res);
+
+            expect(aggregationService.getVersionStats).toHaveBeenCalledWith('1.3.0');
             expect(res.status).toHaveBeenCalledWith(200);
             expect(res.json).toHaveBeenCalledWith({ success: true, data: stats });
         });

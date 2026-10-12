@@ -4,6 +4,7 @@ import { EvaluationResult, type PassiveMetrics, type SelfEvalScores } from "../d
 import type { IEvaluationRepository, FindEvaluationsOptions } from "../domain/ports/IEvaluationRepository.js";
 import type { AggregatedEvaluation } from "../evaluation/types.js";
 import { logger } from "../config/logger.js";
+import { getAgentVersion } from "../config/version.js";
 
 const log = logger.child({ module: 'EvaluationRepository' });
 
@@ -171,7 +172,7 @@ export class EvaluationRepository implements IEvaluationRepository {
             runId: domain.runId,
             tenantId: domain.tenantId,
             workspaceId: domain.workspaceId,
-            agentVersion: domain.agentVersion,
+            agentVersion: domain.agentVersion || getAgentVersion(),
             passive: domain.passive,
             selfEval: domain.selfEval,
             compositeScore: domain.compositeScore,
@@ -184,7 +185,7 @@ export class EvaluationRepository implements IEvaluationRepository {
             doc.runId,
             doc.tenantId,
             doc.workspaceId,
-            doc.agentVersion,
+            doc.agentVersion || getAgentVersion(),
             doc.passive,
             doc.selfEval,
             doc.compositeScore,

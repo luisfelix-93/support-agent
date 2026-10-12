@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import type { IEvaluationRepository } from '../domain/ports/IEvaluationRepository.js';
 import type { AggregationService } from '../evaluation/AggregationService.js';
 import { logger } from '../config/logger.js';
+import { getAgentVersion } from '../config/version.js';
 
 const log = logger.child({ module: 'EvaluationController' });
 
@@ -69,6 +70,7 @@ export class EvaluationController {
                 count: results.length,
                 limit: parsedLimit,
                 skip: parsedSkip,
+                agentVersion: getAgentVersion(),
                 data: results,
             });
         } catch (error) {
@@ -82,11 +84,15 @@ export class EvaluationController {
      * Retorna estatísticas consolidadas agregadas de uma versão específica do agente.
      */
     async getVersionStats(req: Request, res: Response): Promise<void> {
-        const version = Array.isArray(req.params.version) ? req.params.version[0] : req.params.version;
+        let version = Array.isArray(req.params.version) ? req.params.version[0] : req.params.version;
 
         if (!version) {
             res.status(400).json({ error: 'O parâmetro version é obrigatório.' });
             return;
+        }
+
+        if (version === 'current' || version === 'latest') {
+            version = getAgentVersion();
         }
 
         try {

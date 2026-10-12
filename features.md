@@ -243,3 +243,21 @@ O Support Agent implementa um **ciclo de vida formal de sessões de investigaç�
   - `agent_sessions_closed_total{workspaceId, reason="user|timeout"}`: Contabilização de encerramentos ativos vs expirações por inatividade.
   - `agent_session_duration_seconds{workspaceId, reason}`: Histograma com a duração total das investigações de suporte (buckets até 4 horas).
 
+---
+
+## 12. Resiliência Operacional contra Timeouts, Anti-Loop Semântico e Síntese Graciosa
+
+Para eliminar incidentes de estouro de tempo limite global e evitar ciclos improdutivos de exploração de ferramentas, o Support Agent conta com salvaguardas avançadas no runtime `AgentHarness`:
+
+- **Detector Anti-Loop Semântico & por Alvo (`getToolTargetKey`)**:
+  - Extrai o recurso/alvo principal de ferramentas de diagnóstico (`table_name`, `table`, `query`, `collection_name`, `pod_name`, `service_name`, `endpoint`, etc.).
+  - Normaliza espaçamentos e desconsidera variações cosméticas secundárias (`output_format`, `format`, `pretty`, `verbose`, etc.).
+  - Trava chamadas consecutivas redundantes para o mesmo recurso na 2ª tentativa, prevenindo que o LLM alterne entre JSON e Markdown sem agregar evidências novas.
+- **Síntese Graciosa por Proximidade de Timeout Global (`Graceful Timeout Drain`)**:
+  - Monitora o tempo restante antes de cada nova ferramenta: `remainingMs = maxRunTimeMs - (Date.now() - startTime)`.
+  - Quando `remainingMs <= timeoutDrainMarginMs` (padrão: 20s, configurável via `TIMEOUT_DRAIN_MARGIN_MS`), bloqueia novas ferramentas externas e orienta o modelo a produzir a síntese conclusiva das evidências já obtidas.
+  - O atendimento é finalizado com status `'completed'`, entregando o diagnóstico e resumo das evidências ao operador em vez de abortar com falha genérica (`'failed'`).
+- **Diretriz Operacional Anti-Redundância de Schemas**:
+  - Orienta o agente a nunca chamar `discover_postgres_schema` mais de uma vez para a mesma tabela, procedendo imediatamente à consulta analítica.
+
+
