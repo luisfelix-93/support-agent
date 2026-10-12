@@ -859,6 +859,162 @@ describe('AgentHarness', () => {
         });
     });
 
+    describe('Fase 11B: Síntese Graciosa por Proximidade de Timeout Global (Graceful Timeout Drain)', () => {
+        it('deve acionar Graceful Drain ao atingir margem de timeout antes de executar tool e sintetizar resposta', async () => {
+            const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+            const { llmProvider, mcpClient } = makeMocks();
+            const policy = new ExecutionPolicy({
+                maxRunTimeMs: 10000,
+                timeoutDrainMarginMs: 3000,
+            });
+
+            let currentMockTime = 1000000;
+            const dateSpy = vi.spyOn(Date, 'now').mockImplementation(() => currentMockTime);
+
+            // 1ª chamada: LLM pede tool, mas consome tempo suficiente para aproximar do timeout
+            vi.mocked(llmProvider.generateResponse).mockImplementationOnce(async () => {
+                currentMockTime = 1007500; // elapsed = 7500ms, remaining = 2500ms <= 3000ms
+                return {
+                    type: 'tool_call',
+                    tool: {
+                        name: 'query_postgres',
+                        parameters: { query: 'SELECT count(*) FROM logs' },
+                    } as any,
+                };
+            });
+
+            // Chamada de síntese do drain (tools=[])
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'text',
+                content: 'Síntese de emergência: tempo limite próximo do fim.',
+            });
+
+            const harness = new AgentHarness(contextAssembler, undefined, policy);
+            const context = new ChatContext('thread-drain-1', 'ws-1');
+
+            const result = await harness.run({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                threadId: 'thread-drain-1',
+                userMessage: 'Analisar logs com pressa',
+                context,
+                llmProvider,
+                mcpClient,
+                tools: [{ name: 'query_postgres' }],
+            });
+
+            dateSpy.mockRestore();
+
+            expect(result.status).toBe('completed');
+            expect(result.response).toBe('Síntese de emergência: tempo limite próximo do fim.');
+            // A ferramenta NÃO deve ter sido executada pois o tempo restante estava abaixo da margem
+            expect(mcpClient.executeTool).not.toHaveBeenCalled();
+            // A segunda chamada ao LLM deve ter recebido ferramentas vazias []
+            expect(vi.mocked(llmProvider.generateResponse)).toHaveBeenLastCalledWith(
+                expect.anything(),
+                []
+            );
+        });
+
+        it('deve acionar Graceful Drain após execução de tool quando tempo restante atinge a margem', async () => {
+            const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+            const { llmProvider, mcpClient } = makeMocks();
+            const policy = new ExecutionPolicy({
+                maxRunTimeMs: 10000,
+                timeoutDrainMarginMs: 3000,
+            });
+
+            let currentMockTime = 1000000;
+            const dateSpy = vi.spyOn(Date, 'now').mockImplementation(() => currentMockTime);
+
+            // 1ª chamada: tool call
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'tool_call',
+                tool: {
+                    name: 'query_postgres',
+                    parameters: { query: 'SELECT 1' },
+                } as any,
+            });
+
+            // Tool executa e consome tempo aproximando da margem de timeout
+            vi.mocked(mcpClient.executeTool).mockImplementationOnce(async () => {
+                currentMockTime = 1007500; // após tool: elapsed = 7500ms, remaining = 2500ms <= 3000ms
+                return { rows: [{ col: 1 }] };
+            });
+
+            // 2ª chamada: síntese do drain (tools=[])
+            vi.mocked(llmProvider.generateResponse).mockResolvedValueOnce({
+                type: 'text',
+                content: 'Síntese das evidências após execução da primeira query.',
+            });
+
+            const harness = new AgentHarness(contextAssembler, undefined, policy);
+            const context = new ChatContext('thread-drain-2', 'ws-1');
+
+            const result = await harness.run({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                threadId: 'thread-drain-2',
+                userMessage: 'Executar e resumir',
+                context,
+                llmProvider,
+                mcpClient,
+                tools: [{ name: 'query_postgres' }],
+            });
+
+            dateSpy.mockRestore();
+
+            expect(result.status).toBe('completed');
+            expect(result.response).toBe('Síntese das evidências após execução da primeira query.');
+            expect(mcpClient.executeTool).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(llmProvider.generateResponse)).toHaveBeenLastCalledWith(
+                expect.anything(),
+                []
+            );
+        });
+
+        it('deve lidar graciosamente com falha de LLM durante o drain e retornar resposta textual segura com status completed', async () => {
+            const { ExecutionPolicy } = await import('./ExecutionPolicy.js');
+            const { llmProvider, mcpClient } = makeMocks();
+            const policy = new ExecutionPolicy({
+                maxRunTimeMs: 10000,
+                timeoutDrainMarginMs: 3000,
+            });
+
+            let currentMockTime = 1000000;
+            const dateSpy = vi.spyOn(Date, 'now').mockImplementation(() => currentMockTime);
+
+            vi.mocked(llmProvider.generateResponse)
+                .mockImplementationOnce(async () => {
+                    currentMockTime = 1008000; // remaining = 2000ms <= 3000ms
+                    return {
+                        type: 'tool_call',
+                        tool: { name: 'query_postgres', parameters: { query: 'SELECT 1' } } as any,
+                    };
+                })
+                .mockRejectedValueOnce(new Error('LLM indisponível no drain'));
+
+            const harness = new AgentHarness(contextAssembler, undefined, policy);
+            const context = new ChatContext('thread-drain-3', 'ws-1');
+
+            const result = await harness.run({
+                tenantId: 'tenant-1',
+                workspaceId: 'ws-1',
+                threadId: 'thread-drain-3',
+                userMessage: 'Executar teste de resiliência',
+                context,
+                llmProvider,
+                mcpClient,
+                tools: [{ name: 'query_postgres' }],
+            });
+
+            dateSpy.mockRestore();
+
+            expect(result.status).toBe('completed');
+            expect(result.response).toContain('concluída preventivamente');
+        });
+    });
+
     describe('Sanitização de saídas de ferramentas no contexto do LLM', () => {
         it('deve sanitizar payload ruidoso de ferramenta antes de injetar no contexto da próxima iteração', async () => {
             const { llmProvider, mcpClient, agentRunRepository } = makeMocks();

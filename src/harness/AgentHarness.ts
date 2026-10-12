@@ -172,6 +172,7 @@ export class AgentHarness implements IAgentHarness {
                 let status: 'completed' | 'failed' | 'max_iterations' = 'completed';
 
                 let timeoutTriggered = false;
+                let gracefulDrainExecuted = false;
                 const abortController = new AbortController();
                 const globalTimeoutTimer = setTimeout(() => {
                     timeoutTriggered = true;
@@ -179,12 +180,13 @@ export class AgentHarness implements IAgentHarness {
                     log.warn({ maxRunTimeMs: this.executionPolicy.maxRunTimeMs }, 'Timeout global atingido no AgentHarness.');
                 }, this.executionPolicy.maxRunTimeMs);
 
-                const generateLlmWithTimeout = async (ctx: any, tools?: any[]) => {
+                const generateLlmWithTimeout = async (ctx: any, tools?: any[], customTimeoutMs?: number) => {
                     let timer: NodeJS.Timeout | undefined;
+                    const timeoutMs = customTimeoutMs !== undefined ? customTimeoutMs : this.executionPolicy.llmTimeoutMs;
                     const timeoutPromise = new Promise<never>((_, reject) => {
                         timer = setTimeout(() => {
-                            reject(new Error(`Timeout de ${this.executionPolicy.llmTimeoutMs}ms no LLM`));
-                        }, this.executionPolicy.llmTimeoutMs);
+                            reject(new Error(`Timeout de ${timeoutMs}ms no LLM`));
+                        }, timeoutMs);
                     });
 
                     const callStartTime = Date.now();
@@ -356,6 +358,49 @@ export class AgentHarness implements IAgentHarness {
                         this.executionPolicy.shouldContinue(iteration) &&
                         !timeoutTriggered
                     ) {
+                        const elapsedMs = Date.now() - startTime;
+                        const remainingMs = this.executionPolicy.maxRunTimeMs - elapsedMs;
+
+                        if (remainingMs <= this.executionPolicy.timeoutDrainMarginMs) {
+                            log.warn(
+                                {
+                                    elapsedMs,
+                                    remainingMs,
+                                    timeoutDrainMarginMs: this.executionPolicy.timeoutDrainMarginMs,
+                                    iteration
+                                },
+                                'Tempo limite de execução próximo do fim (Graceful Drain ativado). Interrompendo chamadas de ferramentas para síntese.'
+                            );
+                            rootSpan.setAttribute('agent.graceful_drain', true);
+
+                            assembledContext.addMessage(
+                                new Message(
+                                    crypto.randomUUID(),
+                                    'system',
+                                    'Aviso do Sistema: O tempo limite de execução está próximo do fim. Não utilize mais ferramentas. Resuma imediatamente as evidências, logs e métricas coletados até agora e apresente suas conclusões e recomendações ao operador.'
+                                )
+                            );
+
+                            const drainTimeoutMs = Math.max(1000, remainingMs - 1000);
+                            try {
+                                const fallbackDecision = await withSpan(
+                                    'agent.llm_call:graceful_drain',
+                                    async () => generateLlmWithTimeout(assembledContext, [], drainTimeoutMs)
+                                );
+
+                                finalResponseText = fallbackDecision.type === 'text'
+                                    ? fallbackDecision.content
+                                    : 'Tempo limite de execução próximo do fim. Síntese das evidências coletadas até o momento.';
+                            } catch (drainErr) {
+                                log.warn({ err: drainErr }, 'Falha na chamada de síntese do graceful drain. Usando fallback textual.');
+                                finalResponseText = 'A análise foi concluída preventivamente antes do tempo limite. As evidências parciais foram registradas.';
+                            }
+
+                            gracefulDrainExecuted = true;
+                            status = 'completed';
+                            break;
+                        }
+
                         const toolCall = currentDecision.tool;
                         const signature = getToolCallSignature(toolCall);
                         const targetKey = getToolTargetKey(toolCall);
@@ -494,24 +539,69 @@ export class AgentHarness implements IAgentHarness {
                             break;
                         }
 
-                        currentDecision = await withSpan(
-                            'agent.llm_call',
-                            {
-                                attributes: {
-                                    'agent.iteration': iteration,
+                        const elapsedAfterTool = Date.now() - startTime;
+                        const remainingAfterTool = this.executionPolicy.maxRunTimeMs - elapsedAfterTool;
+
+                        if (remainingAfterTool <= this.executionPolicy.timeoutDrainMarginMs) {
+                            log.warn(
+                                {
+                                    elapsedAfterTool,
+                                    remainingAfterTool,
+                                    timeoutDrainMarginMs: this.executionPolicy.timeoutDrainMarginMs,
+                                    iteration
                                 },
-                            },
-                            async () => generateLlmWithTimeout(assembledContext, input.tools)
-                        );
+                                'Tempo limite de execução próximo do fim antes da próxima chamada ao LLM (Graceful Drain). Removendo ferramentas para forçar síntese.'
+                            );
+                            rootSpan.setAttribute('agent.graceful_drain', true);
+
+                            assembledContext.addMessage(
+                                new Message(
+                                    crypto.randomUUID(),
+                                    'system',
+                                    'Aviso do Sistema: O tempo limite de execução está próximo do fim. Não utilize mais ferramentas. Resuma imediatamente as evidências, logs e métricas coletados até agora e apresente suas conclusões e recomendações ao operador.'
+                                )
+                            );
+
+                            const drainTimeoutMs = Math.max(1000, remainingAfterTool - 1000);
+                            try {
+                                currentDecision = await withSpan(
+                                    'agent.llm_call:graceful_drain',
+                                    {
+                                        attributes: {
+                                            'agent.iteration': iteration,
+                                            'agent.is_drain': true,
+                                        },
+                                    },
+                                    async () => generateLlmWithTimeout(assembledContext, [], drainTimeoutMs)
+                                );
+                                gracefulDrainExecuted = true;
+                            } catch (drainErr) {
+                                log.warn({ err: drainErr }, 'Falha na chamada do LLM em graceful drain. Usando resposta padrão.');
+                                finalResponseText = 'A análise foi concluída preventivamente antes do tempo limite. As evidências parciais foram registradas.';
+                                gracefulDrainExecuted = true;
+                                status = 'completed';
+                                break;
+                            }
+                        } else {
+                            currentDecision = await withSpan(
+                                'agent.llm_call',
+                                {
+                                    attributes: {
+                                        'agent.iteration': iteration,
+                                    },
+                                },
+                                async () => generateLlmWithTimeout(assembledContext, input.tools)
+                            );
+                        }
                     }
 
                     // 4. Resolução da resposta final, timeout global ou fallback de iterações
-                    if (timeoutTriggered) {
+                    if (timeoutTriggered && !gracefulDrainExecuted) {
                         log.warn('Execução do AgentHarness abortada por atingir timeout global.');
                         status = 'failed';
                         finalResponseText = finalResponseText || 'Tempo limite de execução atingido. A operação foi interrompida.';
                     } else if (finalResponseText) {
-                        // já definido pelo fallback de circuit breaker ou pelo detector de loop
+                        // já definido pelo fallback de circuit breaker, detector de loop ou graceful drain
                     } else if (currentDecision.type === 'text') {
                         finalResponseText = currentDecision.content;
                         status = 'completed';

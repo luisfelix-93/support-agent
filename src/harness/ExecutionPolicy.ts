@@ -7,6 +7,7 @@ export interface ExecutionPolicyConfig {
     maxIdenticalToolCalls: number;
     maxToolOutputChars: number;
     maxToolOutputLines: number;
+    timeoutDrainMarginMs: number;
 }
 
 export class ExecutionPolicy {
@@ -18,6 +19,7 @@ export class ExecutionPolicy {
     public readonly maxIdenticalToolCalls: number;
     public readonly maxToolOutputChars: number;
     public readonly maxToolOutputLines: number;
+    public readonly timeoutDrainMarginMs: number;
 
     constructor(config?: Partial<ExecutionPolicyConfig>) {
         this.maxIterations = config?.maxIterations ?? (Number(process.env.MAX_TOOL_ITERATIONS) || 12);
@@ -28,6 +30,7 @@ export class ExecutionPolicy {
         this.maxIdenticalToolCalls = config?.maxIdenticalToolCalls ?? (Number(process.env.MAX_IDENTICAL_TOOL_CALLS) || 2);
         this.maxToolOutputChars = config?.maxToolOutputChars ?? (Number(process.env.MAX_TOOL_OUTPUT_CHARS) || 6000);
         this.maxToolOutputLines = config?.maxToolOutputLines ?? (Number(process.env.MAX_TOOL_OUTPUT_LINES) || 50);
+        this.timeoutDrainMarginMs = config?.timeoutDrainMarginMs ?? (Number(process.env.TIMEOUT_DRAIN_MARGIN_MS) || 20000);
     }
 
     shouldContinue(iteration: number): boolean {

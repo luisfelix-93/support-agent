@@ -32,33 +32,34 @@
 
 ## Sub-Fase 11B: Síntese Graciosa por Proximidade de Timeout Global (`Graceful Timeout Drain`)
 
-**Branch:** `feature/harness-timeout-mitigation`  
+**Branch:** `fix/harness-timeout-mitigation`  
 **Responsável:** `backend-specialist`  
 **Depende de:** Sub-Fase 11A  
-**Status:** ⏳ Pendente  
+**Status:** Concluída ✅  
 
 ### Implementação
-- [ ] Atualizar `src/harness/ExecutionPolicy.ts`:
-  - [ ] Adicionar `timeoutDrainMarginMs?: number` (padrão: 20000 ou via variável `TIMEOUT_DRAIN_MARGIN_MS`)
-- [ ] Atualizar o loop iterativo em `src/harness/AgentHarness.ts`:
-  - [ ] Calcular `remainingMs = maxRunTimeMs - (Date.now() - startTime)` antes de solicitar nova ferramenta
-  - [ ] Se `remainingMs <= timeoutDrainMarginMs`, interromper solicitações de novas ferramentas
-  - [ ] Injetar mensagem de aviso de sistema com instrução de síntese imediata
-  - [ ] Chamar `generateLlmWithTimeout` com ferramentas vazias `[]` e timeout restrito à margem restante
-  - [ ] Finalizar o `AgentRun` com status de sucesso/concluído e resposta diagnóstica útil ao operador (evitando status `failed`)
-- [ ] Criar testes unitários em `src/harness/AgentHarness.test.ts`:
-  - [ ] Testar acionamento do Graceful Drain por margem de tempo
-  - [ ] Testar retorno da síntese em vez de falha genérica de timeout
+- [x] Atualizar `src/harness/ExecutionPolicy.ts`:
+  - [x] Adicionar `timeoutDrainMarginMs?: number` (padrão: 20000 ou via variável `TIMEOUT_DRAIN_MARGIN_MS`)
+- [x] Atualizar o loop iterativo em `src/harness/AgentHarness.ts`:
+  - [x] Calcular `remainingMs = maxRunTimeMs - (Date.now() - startTime)` antes de solicitar nova ferramenta
+  - [x] Se `remainingMs <= timeoutDrainMarginMs`, interromper solicitações de novas ferramentas
+  - [x] Injetar mensagem de aviso de sistema com instrução de síntese imediata
+  - [x] Chamar `generateLlmWithTimeout` com ferramentas vazias `[]` e timeout restrito à margem restante
+  - [x] Finalizar o `AgentRun` com status de sucesso/concluído e resposta diagnóstica útil ao operador (evitando status `failed`)
+- [x] Criar testes unitários em `src/harness/AgentHarness.test.ts`:
+  - [x] Testar acionamento do Graceful Drain por margem de tempo
+  - [x] Testar retorno da síntese em vez de falha genérica de timeout
 
 ### Verificação
-- [ ] `npm test -- src/harness/AgentHarness.test.ts` aprovado
-- [ ] `npm run build` compila com 0 erros TypeScript strict
+- [x] `npm test -- src/harness/AgentHarness.test.ts` aprovado (25/25 testes)
+- [x] `npm test -- src/harness/ExecutionPolicy.test.ts` aprovado (4/4 testes)
+- [x] `npm run build` compila com 0 erros TypeScript strict
 
 ---
 
 ## Sub-Fase 11C: Calibração de Configurações, Documentação de Env & Diretrizes do Prompt
 
-**Branch:** `feature/harness-timeout-mitigation`  
+**Branch:** `fix/harness-timeout-mitigation`  
 **Responsável:** `backend-specialist` / `prompt-engineer`  
 **Depende de:** Sub-Fase 11B  
 **Status:** ⏳ Pendente  
