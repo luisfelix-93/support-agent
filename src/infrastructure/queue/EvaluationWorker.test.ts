@@ -6,6 +6,7 @@ import { Worker } from 'bullmq';
 import type { ITenantRepository } from '../../domain/ports/ITenantRepository.js';
 import type { IEvaluationRepository } from '../../domain/ports/IEvaluationRepository.js';
 import type { ILLMProvider } from '../../domain/ports/ILLMProvider.js';
+import { getAgentVersion } from '../../config/version.js';
 
 vi.mock('bullmq', () => {
     return {
@@ -184,7 +185,7 @@ describe('EvaluationWorker', () => {
         expect(savedResult.selfEval.reasoning).toContain('Fallback: Erro na chamada do modelo de avaliação.');
     });
 
-    it('deve usar a versão do package.json (1.3.0) caso agentVersion não seja fornecido no job', async () => {
+    it('deve usar a versão padrão do agente caso agentVersion não seja fornecido no job', async () => {
         worker.start();
         const processor = vi.mocked(Worker).mock.calls[0][1] as any;
 
@@ -193,7 +194,7 @@ describe('EvaluationWorker', () => {
 
         expect(evaluationRepository.save).toHaveBeenCalledTimes(1);
         const savedResult = vi.mocked(evaluationRepository.save).mock.calls[0][0];
-        expect(savedResult.agentVersion).toBe('1.3.0');
+        expect(savedResult.agentVersion).toBe(getAgentVersion());
     });
 
     it('deve fechar o worker ao chamar stop()', async () => {
