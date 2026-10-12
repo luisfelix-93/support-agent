@@ -3,6 +3,7 @@ import { EvaluationController } from './EvaluationController.js';
 import type { IEvaluationRepository } from '../domain/ports/IEvaluationRepository.js';
 import type { AggregationService } from '../evaluation/AggregationService.js';
 import { EvaluationResult } from '../domain/EvaluationResult.js';
+import { getAgentVersion } from '../config/version.js';
 
 describe('EvaluationController', () => {
     let evaluationRepository: IEvaluationRepository;
@@ -136,7 +137,7 @@ describe('EvaluationController', () => {
                 count: 1,
                 limit: 10,
                 skip: 5,
-                agentVersion: '1.3.0',
+                agentVersion: getAgentVersion(),
                 data: [dummyResult],
             });
         });
@@ -169,9 +170,10 @@ describe('EvaluationController', () => {
             expect(res.json).toHaveBeenCalledWith({ success: true, data: stats });
         });
 
-        it('deve resolver version "current" ou "latest" para a versão do package.json (1.3.0)', async () => {
+        it('deve resolver version "current" ou "latest" para a versão atual do agente', async () => {
+            const currentVersion = getAgentVersion();
             const stats = {
-                version: '1.3.0',
+                version: currentVersion,
                 totalRuns: 10,
                 avgCompositeScore: 0.98,
                 avgConfidence: 0.99,
@@ -190,7 +192,7 @@ describe('EvaluationController', () => {
 
             await controller.getVersionStats(req, res);
 
-            expect(aggregationService.getVersionStats).toHaveBeenCalledWith('1.3.0');
+            expect(aggregationService.getVersionStats).toHaveBeenCalledWith(currentVersion);
             expect(res.status).toHaveBeenCalledWith(200);
             expect(res.json).toHaveBeenCalledWith({ success: true, data: stats });
         });
